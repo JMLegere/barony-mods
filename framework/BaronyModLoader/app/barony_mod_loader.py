@@ -1130,6 +1130,48 @@ def current_platform_id() -> str:
     return f"{os_name}-{machine}"
 
 
+def runtime_info_platform_ids(runtime_info: dict[str, Any]) -> list[str]:
+    raw_platforms = runtime_info.get("platforms")
+    if not isinstance(raw_platforms, list):
+        return []
+    if not raw_platforms:
+        return []
+    platform_ids: list[str] = []
+    for entry in raw_platforms:
+        platform_id = entry.get("platform") if isinstance(entry, dict) else None
+        if isinstance(platform_id, str) and platform_id:
+            platform_ids.append(platform_id)
+    return platform_ids
+
+
+def validate_registered_runtime_host_platform(registered_platform: Any) -> ValidationResult:
+    result = ValidationResult("registered runtime platform")
+    current_platform = current_platform_id()
+    if registered_platform != current_platform:
+        result.add(
+            "BML_REGISTERED_RUNTIME_PLATFORM_MISMATCH",
+            "fatal",
+            "Registered runtime platform does not match this host platform.",
+            registeredPlatform=registered_platform,
+            currentPlatform=current_platform,
+        )
+    return result
+
+
+def validate_runtime_info_registered_platform(runtime_info: dict[str, Any], registered_platform: Any) -> ValidationResult:
+    result = ValidationResult("registered runtime info platform")
+    supported_platforms = runtime_info_platform_ids(runtime_info)
+    if registered_platform not in supported_platforms:
+        result.add(
+            "BML_REGISTERED_RUNTIME_INFO_PLATFORM_UNSUPPORTED",
+            "fatal",
+            "Runtime info does not advertise the registered runtime platform.",
+            registeredPlatform=registered_platform,
+            supportedPlatforms=supported_platforms,
+        )
+    return result
+
+
 def validate_runtime_info_metadata(runtime_info: dict[str, Any]) -> ValidationResult:
     result = ValidationResult("runtime info metadata")
     validate_required_string(result, runtime_info, "runtimeId", "BML_RUNTIME_INFO_FIELD_MISSING")
@@ -1214,6 +1256,9 @@ def command_runtime_register(args: argparse.Namespace) -> int:
     if strategy not in SUPPORTED_RUNTIME_STRATEGIES:
         combined.add("BML_RUNTIME_STRATEGY_UNSUPPORTED", "fatal", f"Unsupported runtime strategy: {strategy}")
 
+    platform_id = args.platform or current_platform_id()
+    combined.extend(validate_registered_runtime_host_platform(platform_id))
+
     steam_executable_arg = args.steam_executable or args.executable
     steam_executable = Path(steam_executable_arg).expanduser().resolve() if steam_executable_arg else None
     hook_library = Path(args.hook_library).expanduser().resolve() if args.hook_library else None
@@ -1244,7 +1289,7 @@ def command_runtime_register(args: argparse.Namespace) -> int:
     combined.extend(runtime_load_result)
     if runtime_info is not None:
         combined.extend(validate_runtime_info_metadata(runtime_info))
-
+        combined.extend(validate_runtime_info_registered_platform(runtime_info, platform_id))
     registry, registry_load_result = load_runtime_registry(registry_path, missing_ok=True)
     combined.extend(registry_load_result)
 
@@ -1256,7 +1301,6 @@ def command_runtime_register(args: argparse.Namespace) -> int:
     assert steam_executable is not None
     assert hook_library is not None
     assert hook_manifest is not None
-    platform_id = args.platform or current_platform_id()
     runtime_id = args.id or runtime_registration_id(runtime_info, args.steam_build_id, platform_id, strategy)
     if not PACKAGE_ID_RE.match(runtime_id):
         combined.add("BML_RUNTIME_REGISTRY_ID_INVALID", "fatal", "Runtime id must use letters, numbers, dot, underscore, or dash.", runtimeId=runtime_id)
@@ -2065,7 +2109,8 @@ def validate_registered_runtime(
 ) -> tuple[dict[str, Any] | None, Path | None, Path | None, ValidationResult]:
     runtime_id = runtime.get("id")
     result = ValidationResult(f"registered runtime {runtime_id or '<missing>'}")
-
+    registered_platform = runtime.get("platform")
+    result.extend(validate_registered_runtime_host_platform(registered_platform))
     strategy = runtime.get("runtimeStrategy")
     if strategy != RUNTIME_STRATEGY_INSTALLED_HOOK:
         result.add(
@@ -2122,6 +2167,7 @@ def validate_registered_runtime(
         result.extend(load_result)
         if runtime_info is not None:
             result.extend(validate_runtime_info(runtime_info, package))
+            result.extend(validate_runtime_info_registered_platform(runtime_info, registered_platform))
 
     def compare_sha(path: Path | None, field: str, code_prefix: str, label: str) -> None:
         expected = runtime.get(field)

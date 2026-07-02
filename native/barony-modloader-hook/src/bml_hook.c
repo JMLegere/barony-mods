@@ -71,8 +71,46 @@ typedef struct BmlSymbolProbe {
 
 typedef struct BmlStashHookIntent {
     const char *id;
+    const char *capability;
     const char *description;
+    const char *const *target_symbols;
+    size_t target_symbol_count;
 } BmlStashHookIntent;
+
+typedef struct BmlHookBackend {
+    const char *id;
+    const char *mode;
+    const char *strategy;
+    size_t patch_bytes;
+} BmlHookBackend;
+
+typedef struct BmlTargetAnalysis {
+    const char *symbol;
+    const char *name;
+    const char *kind;
+    const char *status;
+    const char *blocker_code;
+    const char *message;
+    void *address;
+} BmlTargetAnalysis;
+
+typedef struct BmlStashHookAnalysis {
+    const BmlStashHookIntent *intent;
+    const char *status;
+    size_t ready_count;
+    size_t blocked_count;
+    size_t missing_count;
+    BmlTargetAnalysis targets[12];
+} BmlStashHookAnalysis;
+
+typedef struct BmlStashHookPlan {
+    const BmlHookBackend *backend;
+    size_t hook_count;
+    size_t installed_count;
+    size_t ready_count;
+    size_t blocked_count;
+    BmlStashHookAnalysis hooks[8];
+} BmlStashHookPlan;
 
 static int g_bml_initialized = 0;
 static int g_bml_init_result = 1;
@@ -109,14 +147,76 @@ static const BmlRequiredSymbol BML_REQUIRED_SYMBOLS[] = {
 
 _Static_assert((sizeof(BML_REQUIRED_SYMBOLS) / sizeof(BML_REQUIRED_SYMBOLS[0])) <= BML_MAX_REQUIRED_SYMBOLS, "BML symbol probe result capacity is too small");
 
-static const BmlStashHookIntent BML_STASH_HOOK_INTENTIONS[] = {
-    {"persistent_inventory", "Persist Stash inventory entries outside the vanilla run-scoped chest lifetime."},
-    {"void_chest_binding", "Bind Stash storage to Barony void chest inventory entry points without relying on unsafe ABI offsets."},
-    {"close_save_flush", "Flush Stash state when chest close paths complete successfully."},
-    {"placement_lobby", "Place the Stash interaction point in eligible lobby contexts."},
-    {"placement_shop", "Place the Stash interaction point in eligible shop contexts."},
-    {"multiplayer_metadata", "Expose multiplayer version/capability metadata before any shared Stash state is accepted."}
+static const char *const BML_STASH_VOID_CHEST_BINDING_TARGETS[] = {
+    "_Z8actChestP6Entity",
+    "_Z11actChestLidP6Entity",
+    "_ZN6Entity21getChestInventoryListEv",
+    "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_",
+    "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi"
 };
+
+static const char *const BML_STASH_INVENTORY_PERSISTENCE_TARGETS[] = {
+    "_ZN6Entity21getChestInventoryListEv",
+    "_ZN6Entity14addItemToChestEP4ItembS1_",
+    "_ZN6Entity16getItemFromChestEP4Itemib",
+    "_ZN6Entity10closeChestEv",
+    "_ZN6Entity16closeChestServerEv",
+    "_Z7newItem8ItemType6StatusssjbP6list_t",
+    "_Z17list_AddNodeFirstP6list_t",
+    "_Z16list_AddNodeLastP6list_t",
+    "_Z15list_RemoveNodeP6node_t",
+    "_Z12list_FreeAllP6list_t",
+    "stats"
+};
+
+static const char *const BML_STASH_LOBBY_PLACEMENT_TARGETS[] = {
+    "_Z13assignActionsP5map_t",
+    "_Z9newEntityijP6list_tS0_",
+    "_Z19setSpriteAttributesP6EntityS0_S0_",
+    "map",
+    "map_rng",
+    "map_server_rng",
+    "TileEntityList"
+};
+
+static const char *const BML_STASH_SHOP_PLACEMENT_TARGETS[] = {
+    "_Z15generateDungeonPcjSt5tupleIJiiiiEE",
+    "_Z13assignActionsP5map_t",
+    "_Z9newEntityijP6list_tS0_",
+    "_Z19setSpriteAttributesP6EntityS0_S0_",
+    "map",
+    "map_rng",
+    "map_server_rng",
+    "shoparea",
+    "TileEntityList"
+};
+
+static const char *const BML_STASH_MULTIPLAYER_METADATA_TARGETS[] = {
+    "multiplayer",
+    "clientnum"
+};
+
+static const BmlHookBackend BML_STASH_HOOK_BACKEND = {
+    "linux-x86_64-direct-stash-detour",
+    "analyze-only",
+    "abstract-direct-detour-backend",
+    12U
+};
+
+static const BmlStashHookIntent BML_STASH_HOOK_INTENTIONS[] = {
+    {"stash_void_chest_binding", "void_chest_binding", "Bind Stash storage to Barony void chest inventory entry points.", BML_STASH_VOID_CHEST_BINDING_TARGETS, sizeof(BML_STASH_VOID_CHEST_BINDING_TARGETS) / sizeof(BML_STASH_VOID_CHEST_BINDING_TARGETS[0])},
+    {"stash_inventory_persistence", "persistent_inventory", "Persist Stash inventory entries outside the vanilla run-scoped chest lifetime.", BML_STASH_INVENTORY_PERSISTENCE_TARGETS, sizeof(BML_STASH_INVENTORY_PERSISTENCE_TARGETS) / sizeof(BML_STASH_INVENTORY_PERSISTENCE_TARGETS[0])},
+    {"stash_lobby_placement", "placement_lobby", "Place the Stash interaction point in eligible lobby contexts.", BML_STASH_LOBBY_PLACEMENT_TARGETS, sizeof(BML_STASH_LOBBY_PLACEMENT_TARGETS) / sizeof(BML_STASH_LOBBY_PLACEMENT_TARGETS[0])},
+    {"stash_shop_placement", "placement_shop", "Place the Stash interaction point in eligible shop contexts.", BML_STASH_SHOP_PLACEMENT_TARGETS, sizeof(BML_STASH_SHOP_PLACEMENT_TARGETS) / sizeof(BML_STASH_SHOP_PLACEMENT_TARGETS[0])},
+    {"stash_multiplayer_metadata_gate", "multiplayer_version_metadata", "Expose multiplayer version/capability metadata before any shared Stash state is accepted.", BML_STASH_MULTIPLAYER_METADATA_TARGETS, sizeof(BML_STASH_MULTIPLAYER_METADATA_TARGETS) / sizeof(BML_STASH_MULTIPLAYER_METADATA_TARGETS[0])}
+};
+
+_Static_assert((sizeof(BML_STASH_HOOK_INTENTIONS) / sizeof(BML_STASH_HOOK_INTENTIONS[0])) <= (sizeof(((BmlStashHookPlan *)0)->hooks) / sizeof(((BmlStashHookPlan *)0)->hooks[0])), "BML stash hook plan capacity is too small");
+_Static_assert((sizeof(BML_STASH_VOID_CHEST_BINDING_TARGETS) / sizeof(BML_STASH_VOID_CHEST_BINDING_TARGETS[0])) <= (sizeof(((BmlStashHookAnalysis *)0)->targets) / sizeof(((BmlStashHookAnalysis *)0)->targets[0])), "BML stash void chest target capacity is too small");
+_Static_assert((sizeof(BML_STASH_INVENTORY_PERSISTENCE_TARGETS) / sizeof(BML_STASH_INVENTORY_PERSISTENCE_TARGETS[0])) <= (sizeof(((BmlStashHookAnalysis *)0)->targets) / sizeof(((BmlStashHookAnalysis *)0)->targets[0])), "BML stash inventory target capacity is too small");
+_Static_assert((sizeof(BML_STASH_LOBBY_PLACEMENT_TARGETS) / sizeof(BML_STASH_LOBBY_PLACEMENT_TARGETS[0])) <= (sizeof(((BmlStashHookAnalysis *)0)->targets) / sizeof(((BmlStashHookAnalysis *)0)->targets[0])), "BML stash lobby target capacity is too small");
+_Static_assert((sizeof(BML_STASH_SHOP_PLACEMENT_TARGETS) / sizeof(BML_STASH_SHOP_PLACEMENT_TARGETS[0])) <= (sizeof(((BmlStashHookAnalysis *)0)->targets) / sizeof(((BmlStashHookAnalysis *)0)->targets[0])), "BML stash shop target capacity is too small");
+_Static_assert((sizeof(BML_STASH_MULTIPLAYER_METADATA_TARGETS) / sizeof(BML_STASH_MULTIPLAYER_METADATA_TARGETS[0])) <= (sizeof(((BmlStashHookAnalysis *)0)->targets) / sizeof(((BmlStashHookAnalysis *)0)->targets[0])), "BML stash multiplayer target capacity is too small");
 
 static void bml_copy_string(char *dst, size_t dst_size, const char *src) {
     if (dst_size == 0U) {
@@ -565,16 +665,156 @@ static int bml_write_symbol_probe_report(const char *report_path, const BmlRepor
     return 0;
 }
 
-static bool bml_stash_hooks_installed(void) {
+static const BmlSymbolProbeResult *bml_find_symbol_probe_result(const BmlSymbolProbe *probe, const char *symbol) {
+    if (probe == NULL || symbol == NULL) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < probe->required_count; ++index) {
+        const BmlSymbolProbeResult *result = &probe->results[index];
+        if (result->required != NULL && strcmp(result->required->symbol, symbol) == 0) {
+            return result;
+        }
+    }
+    return NULL;
+}
+
+static bool bml_byte_is_short_relative_branch(unsigned char byte) {
+    return byte >= 0x70U && byte <= 0x7fU;
+}
+
+static bool bml_instruction_uses_rip_relative(const unsigned char *code, size_t index, size_t limit) {
+    if (index + 2U >= limit) {
+        return false;
+    }
+    if (code[index] == 0x83U && code[index + 1U] == 0x3dU) {
+        return true;
+    }
+    if (code[index] == 0x48U && index + 2U < limit) {
+        const unsigned char op = code[index + 1U];
+        const unsigned char modrm = code[index + 2U];
+        if ((op == 0x8bU || op == 0x8dU || op == 0x3bU) && (modrm & 0xc7U) == 0x05U) {
+            return true;
+        }
+    }
     return false;
 }
 
-static int bml_write_stash_hook_report(const char *report_path, const BmlReportInfo *info, bool hooks_installed) {
-    const size_t hook_count = sizeof(BML_STASH_HOOK_INTENTIONS) / sizeof(BML_STASH_HOOK_INTENTIONS[0]);
+static void bml_analyze_detour_target(BmlTargetAnalysis *analysis, const BmlSymbolProbe *probe, const char *symbol) {
+    const BmlSymbolProbeResult *probe_result = bml_find_symbol_probe_result(probe, symbol);
+    memset(analysis, 0, sizeof(*analysis));
+    analysis->symbol = symbol;
+    analysis->name = symbol;
+    analysis->kind = "unknown";
+    analysis->status = "missing";
+    analysis->blocker_code = "BML_STASH_HOOK_TARGET_SYMBOL_MISSING";
+    analysis->message = "Required Stash hook target symbol was not resolved.";
+
+    if (probe_result == NULL || probe_result->required == NULL || !probe_result->resolved || probe_result->address == NULL) {
+        return;
+    }
+
+    analysis->name = probe_result->required->logical_name;
+    analysis->kind = probe_result->required->kind;
+    analysis->address = probe_result->address;
+
+    if (strcmp(analysis->kind, "data") == 0) {
+        analysis->status = "ready";
+        analysis->blocker_code = "";
+        analysis->message = "Data symbol resolved; no prologue detour required.";
+        return;
+    }
+
+    const unsigned char *code = (const unsigned char *)probe_result->address;
+    const size_t scan_limit = BML_STASH_HOOK_BACKEND.patch_bytes + 8U;
+    for (size_t index = 0U; index < scan_limit; ++index) {
+        if (bml_instruction_uses_rip_relative(code, index, scan_limit)) {
+            analysis->status = "blocked";
+            analysis->blocker_code = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED";
+            analysis->message = "Target prologue uses RIP-relative addressing; backend must relocate it before patching.";
+            return;
+        }
+        if (code[index] == 0xe8U || code[index] == 0xe9U || bml_byte_is_short_relative_branch(code[index]) ||
+            (code[index] == 0x0fU && index + 1U < scan_limit && code[index + 1U] >= 0x80U && code[index + 1U] <= 0x8fU)) {
+            analysis->status = "blocked";
+            analysis->blocker_code = "BML_DETOUR_RELATIVE_CONTROL_FLOW_UNSUPPORTED";
+            analysis->message = "Target prologue contains relative control flow; backend must relocate branch/call targets before patching.";
+            return;
+        }
+        if (code[index] == 0xc3U) {
+            analysis->status = "blocked";
+            analysis->blocker_code = "BML_DETOUR_EARLY_RETURN_UNSUPPORTED";
+            analysis->message = "Target prologue returns before the backend can reserve a safe patch window.";
+            return;
+        }
+    }
+
+    analysis->status = "blocked";
+    analysis->blocker_code = "BML_DETOUR_INSTRUCTION_DECODER_REQUIRED";
+    analysis->message = "Analyze-only backend requires an instruction decoder/relocator before function prologues can be considered patch-safe.";
+}
+
+static void bml_analyze_stash_hook_plan(BmlStashHookPlan *plan, const BmlSymbolProbe *probe) {
+    memset(plan, 0, sizeof(*plan));
+    plan->backend = &BML_STASH_HOOK_BACKEND;
+    plan->hook_count = sizeof(BML_STASH_HOOK_INTENTIONS) / sizeof(BML_STASH_HOOK_INTENTIONS[0]);
+
+    for (size_t hook_index = 0U; hook_index < plan->hook_count; ++hook_index) {
+        BmlStashHookAnalysis *hook = &plan->hooks[hook_index];
+        hook->intent = &BML_STASH_HOOK_INTENTIONS[hook_index];
+        hook->status = "ready";
+        for (size_t target_index = 0U; target_index < hook->intent->target_symbol_count && target_index < (sizeof(hook->targets) / sizeof(hook->targets[0])); ++target_index) {
+            BmlTargetAnalysis *target = &hook->targets[target_index];
+            bml_analyze_detour_target(target, probe, hook->intent->target_symbols[target_index]);
+            if (strcmp(target->status, "ready") == 0) {
+                hook->ready_count += 1U;
+            } else if (strcmp(target->status, "missing") == 0) {
+                hook->missing_count += 1U;
+            } else {
+                hook->blocked_count += 1U;
+            }
+        }
+        if (hook->missing_count > 0U || hook->blocked_count > 0U) {
+            hook->status = "blocked";
+            plan->blocked_count += 1U;
+        } else {
+            plan->ready_count += 1U;
+        }
+    }
+}
+
+static bool bml_stash_hooks_installed(const BmlStashHookPlan *plan) {
+    (void)plan;
+    return false;
+}
+
+static void bml_write_target_analysis(FILE *file, const BmlTargetAnalysis *target) {
+    fputs("{\"name\": ", file);
+    bml_json_write_escaped(file, target->name);
+    fputs(", \"symbol\": ", file);
+    bml_json_write_escaped(file, target->symbol);
+    fputs(", \"kind\": ", file);
+    bml_json_write_escaped(file, target->kind);
+    fputs(", \"status\": ", file);
+    bml_json_write_escaped(file, target->status);
+    fputs(", \"address\": ", file);
+    bml_write_address_or_null(file, target->address);
+    if (bml_has_value(target->blocker_code)) {
+        fputs(", \"blockerCode\": ", file);
+        bml_json_write_escaped(file, target->blocker_code);
+    }
+    fputs(", \"message\": ", file);
+    bml_json_write_escaped(file, target->message);
+    fputc('}', file);
+}
+
+static int bml_write_stash_hook_report(const char *report_path, const BmlReportInfo *info, const BmlStashHookPlan *plan, bool hooks_installed) {
     FILE *file = fopen(report_path, "wb");
     if (file == NULL) {
         return -1;
     }
+
+    const bool stash_requested = info->has_stash;
+    const size_t emitted_hook_count = stash_requested ? plan->hook_count : 0U;
 
     fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  ", file);
     bml_write_runtime_identity(file, info);
@@ -584,37 +824,55 @@ static int bml_write_stash_hook_report(const char *report_path, const BmlReportI
     bml_json_write_escaped(file, info->stash_version);
     fputs(",\n    \"manifestDetected\": ", file);
     fputs(info->has_stash ? "true" : "false", file);
-    fputs("\n  },\n  \"status\": ", file);
-    bml_json_write_escaped(file, info->has_stash ? (hooks_installed ? "installed" : "failed") : "not_applicable");
-    fprintf(file, ",\n  \"summary\": {\n    \"required\": %zu,\n    \"installed\": %zu,\n    \"notInstalled\": %zu,\n    \"failClosed\": %s\n  },\n  \"hooks\": [",
-            info->has_stash ? hook_count : 0U,
-            hooks_installed && info->has_stash ? hook_count : 0U,
-            !hooks_installed && info->has_stash ? hook_count : 0U,
-            !hooks_installed && info->has_stash ? "true" : "false");
-    for (size_t index = 0U; index < hook_count; ++index) {
-        const BmlStashHookIntent *intent = &BML_STASH_HOOK_INTENTIONS[index];
-        if (index == 0U) {
+    fputs("\n  },\n  \"backend\": {\n    \"id\": ", file);
+    bml_json_write_escaped(file, plan->backend->id);
+    fputs(",\n    \"mode\": ", file);
+    bml_json_write_escaped(file, plan->backend->mode);
+    fputs(",\n    \"strategy\": ", file);
+    bml_json_write_escaped(file, plan->backend->strategy);
+    fprintf(file, ",\n    \"patchBytes\": %zu\n  }", plan->backend->patch_bytes);
+    fputs(",\n  \"status\": ", file);
+    bml_json_write_escaped(file, stash_requested ? (hooks_installed ? "installed" : "failed") : "not_applicable");
+    fprintf(file, ",\n  \"summary\": {\n    \"required\": %zu,\n    \"installed\": %zu,\n    \"ready\": %zu,\n    \"blocked\": %zu,\n    \"notInstalled\": %zu,\n    \"failClosed\": %s\n  },\n  \"hooks\": [",
+            stash_requested ? plan->hook_count : 0U,
+            hooks_installed && stash_requested ? plan->hook_count : 0U,
+            stash_requested ? plan->ready_count : 0U,
+            stash_requested ? plan->blocked_count : 0U,
+            stash_requested ? (hooks_installed ? 0U : plan->hook_count) : 0U,
+            stash_requested && !hooks_installed ? "true" : "false");
+    for (size_t hook_index = 0U; hook_index < emitted_hook_count; ++hook_index) {
+        const BmlStashHookAnalysis *hook = &plan->hooks[hook_index];
+        if (hook_index == 0U) {
             fputs("\n    ", file);
         } else {
             fputs(",\n    ", file);
         }
         fputs("{\"id\": ", file);
-        bml_json_write_escaped(file, intent->id);
+        bml_json_write_escaped(file, hook->intent->id);
+        fputs(", \"capability\": ", file);
+        bml_json_write_escaped(file, hook->intent->capability);
         fputs(", \"required\": ", file);
         fputs(info->has_stash ? "true" : "false", file);
         fputs(", \"status\": ", file);
-        bml_json_write_escaped(file, hooks_installed && info->has_stash ? "installed" : "not-installed");
+        bml_json_write_escaped(file, hooks_installed && info->has_stash ? "installed" : hook->status);
         fputs(", \"description\": ", file);
-        bml_json_write_escaped(file, intent->description);
-        fputc('}', file);
+        bml_json_write_escaped(file, hook->intent->description);
+        fprintf(file, ", \"readyTargets\": %zu, \"blockedTargets\": %zu, \"missingTargets\": %zu, \"targets\": [", hook->ready_count, hook->blocked_count, hook->missing_count);
+        for (size_t target_index = 0U; target_index < hook->intent->target_symbol_count && target_index < (sizeof(hook->targets) / sizeof(hook->targets[0])); ++target_index) {
+            if (target_index != 0U) {
+                fputs(", ", file);
+            }
+            bml_write_target_analysis(file, &hook->targets[target_index]);
+        }
+        fputs("]}", file);
     }
-    if (hook_count > 0U) {
+    if (emitted_hook_count > 0U) {
         fputs("\n  ", file);
     }
     fputs("],\n  \"errors\": [", file);
-    if (info->has_stash && !hooks_installed) {
+    if (stash_requested && !hooks_installed) {
         fputs("\n    {\"code\": \"BML_STASH_HOOKS_NOT_INSTALLED\", \"severity\": \"fatal\", \"message\": ", file);
-        bml_json_write_escaped(file, "Required Stash gameplay hooks are not installed; Stash is intentionally failed closed.");
+        bml_json_write_escaped(file, "Direct Stash hook backend analyzed required targets but did not install all required gameplay hooks; Stash is intentionally failed closed.");
         fputs("}\n  ", file);
     }
     fputs("],\n  \"reportedAt\": ", file);
@@ -715,6 +973,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     size_t error_count = 0U;
     BmlReportInfo info;
     BmlSymbolProbe symbol_probe;
+    BmlStashHookPlan stash_hook_plan;
     bool stash_hooks_installed;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
@@ -769,14 +1028,15 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_HOOK_SYMBOL_MISSING", "One or more required Barony symbols could not be resolved with dlsym(RTLD_DEFAULT).", NULL, NULL);
     }
 
-    stash_hooks_installed = bml_stash_hooks_installed();
+    bml_analyze_stash_hook_plan(&stash_hook_plan, &symbol_probe);
+    stash_hooks_installed = bml_stash_hooks_installed(&stash_hook_plan);
     if (info.has_stash && !stash_hooks_installed) {
-        bml_add_error(errors, &error_count, "BML_STASH_HOOKS_NOT_INSTALLED", "Required Stash gameplay hooks are not installed; Stash is intentionally failed closed.", NULL, NULL);
+        bml_add_error(errors, &error_count, "BML_STASH_HOOKS_NOT_INSTALLED", "Direct Stash hook backend did not install all required gameplay hooks; Stash is intentionally failed closed.", NULL, NULL);
     }
 
     if (bml_mkdir_p(report_dir) != 0 ||
         bml_write_symbol_probe_report(symbol_report_path, &info, &symbol_probe) != 0 ||
-        bml_write_stash_hook_report(stash_hook_report_path, &info, stash_hooks_installed) != 0 ||
+        bml_write_stash_hook_report(stash_hook_report_path, &info, &stash_hook_plan, stash_hooks_installed) != 0 ||
         bml_write_report(report_path, &info, errors, error_count) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;

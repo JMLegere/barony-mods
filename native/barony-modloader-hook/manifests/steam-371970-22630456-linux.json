@@ -334,7 +334,7 @@
   "notes": [
     "Manifest pins the verified local Steam/Linux executable identity for Barony Steam app 371970 build 22630456.",
     "symbols enumerates required dlsym(RTLD_DEFAULT, mangledSymbol) probe targets only; resolved symbols do not mean gameplay hooks are installed.",
-    "hookTargets enumerates required Stash gameplay capabilities and intentionally fails closed until a relocation-safe detour/trampoline layer is implemented and verified."
+    "hookTargets mirrors required Stash gameplay capabilities for the linux-x86_64-direct-stash-detour backend; current backend mode is analyze-only and intentionally fails closed until detour installation is implemented and verified."
   ],
   "hookTargets": [
     {

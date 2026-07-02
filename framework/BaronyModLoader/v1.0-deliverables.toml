@@ -62,7 +62,7 @@ evidence = [
   "dry-run environment includes BML_RUNTIME_MANIFEST, BML_PROFILE_DIR, SteamAppId, SteamGameId, LD_LIBRARY_PATH, and hook preload configuration",
   "Linux hook writes BaronyModLoader/reports/runtime-load-report.json using the canonical schema",
   "Linux hook writes BaronyModLoader/reports/symbol-probe-report.json after resolving required dlsym(RTLD_DEFAULT, mangledSymbol) targets for Steam app 371970 build 22630456",
-  "Linux hook writes BaronyModLoader/reports/stash-hook-report.json with required Stash hook targets not-installed and failClosed=true until relocation-safe detours exist",
+  "Linux hook writes BaronyModLoader/reports/stash-hook-report.json with the abstract direct Stash hook backend, per-target ready/blocked/missing analysis, and failClosed=true until required gameplay hooks are actually installed",
   "mismatched executable provenance, missing required symbols, or uninstalled required Stash hook targets fail closed before runtime-load-report can claim Stash loaded",
 ]
 

@@ -236,7 +236,7 @@ Current Stash-safe failure shape:
     {
       "code": "BML_STASH_HOOKS_NOT_INSTALLED",
       "severity": "fatal",
-      "message": "Stash requires gameplay hook targets that are present in metadata but not installed by a relocation-safe detour layer.",
+      "message": "Direct Stash hook backend did not install all required gameplay hooks; Stash is intentionally failed closed.",
       "action": "block-launch"
     }
   ],
@@ -264,7 +264,7 @@ Canonical path:
 <profile>/BaronyModLoader/reports/stash-hook-report.json
 ```
 
-The report follows `framework/BaronyModLoader/schema/stash-hook-report.schema.json`. It records the required Stash `hookTargets[]` from the hook manifest. In the current option C scaffold every target is required and `not-installed`, so Stash fails closed with `BML_STASH_HOOKS_NOT_INSTALLED`. This is intentional until a relocation-safe detour/trampoline layer is implemented and covered by focused tests. Source patches under `native/barony-modloader-runtime/patches/` remain semantic/reference artifacts only; they are not the v1 installed-executable runtime path.
+The report follows `framework/BaronyModLoader/schema/stash-hook-report.schema.json`. It records the direct Stash hook backend (`id`, `mode`, `strategy`, `patchBytes`), summarizes ready/blocked/not-installed hook groups, and lists per-target readiness for each required Stash hook target. In the current backend mode (`analyze-only`) every target is inspected but no gameplay detour is installed, so Stash fails closed with `BML_STASH_HOOKS_NOT_INSTALLED`. This is intentional until the backend grows a real relocation-safe detour/trampoline installer and focused in-game tests pass. Source patches under `native/barony-modloader-runtime/patches/` remain semantic/reference artifacts only; they are not the v1 installed-executable runtime path.
 
 ## Error contract
 

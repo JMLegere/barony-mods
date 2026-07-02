@@ -8,10 +8,10 @@ Current state:
 
 - `src/bml_hook.c` builds a Linux ELF shared object with a constructor and exported `bml_hook_init` symbol.
 - `build/libbarony_bml.so` is produced by the local `Makefile`.
-- `manifests/steam-371970-22630456-linux.json` pins the local verified Steam/Linux Barony executable identity, required symbol probe targets, and fail-closed Stash hook targets consumed as `BML_HOOK_MANIFEST`.
+- `manifests/steam-371970-22630456-linux.json` mirrors the local verified Steam/Linux Barony executable identity, required symbol probe targets, and fail-closed Stash hook targets passed as `BML_HOOK_MANIFEST`; the current native hook validates the path is readable and uses compiled-in tables for probing/analysis.
 - The hook validates launch inputs and writes `BaronyModLoader/reports/runtime-load-report.json` under `BML_PROFILE_DIR`; executable provenance is still enforced by the app/runtime registry before launch.
 - The hook resolves required installed-binary symbols with `dlsym(RTLD_DEFAULT, mangledSymbol)` and writes `BaronyModLoader/reports/symbol-probe-report.json`.
-- Stash gameplay hooks are enumerated as required hook targets, but they remain fail-closed and write `BaronyModLoader/reports/stash-hook-report.json` until a relocation-safe detour/trampoline layer exists.
+- Stash gameplay hooks are grouped behind the abstract `linux-x86_64-direct-stash-detour` backend. The current backend mode is `analyze-only`: it keeps data symbols `ready`, keeps all function targets `blocked` until instruction decoder/relocator support exists, and still fails closed until a real detour installer is implemented.
 
 Build and test:
 

@@ -96,9 +96,21 @@ Interpretation:
 - `LD_PRELOAD` can load a BML bootstrap library into the process, but internal game calls may not be fully interposable by symbol name alone. For reliable gameplay hooks, expect a detour/trampoline layer or a symbol-address based hook library.
 - Because the executable is PIE, absolute addresses from `nm` must be relocated by the runtime base address.
 
-Option A is now the implemented guardrail: the hook manifest pins Steam app `371970`, build `22630456`, game `v5.0.2`, executable SHA-256 `da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade`, ELF build id `58089d84bce3afb48d5b19df032f7aa89d81b69a`, and a required symbol target list. The native hook resolves those targets in-process and writes `<profile>/BaronyModLoader/reports/symbol-probe-report.json`.
+Option A is now the implemented guardrail: the app/runtime registry and hook manifest pin Steam app `371970`, build `22630456`, game `v5.0.2`, executable SHA-256 `da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade`, ELF build id `58089d84bce3afb48d5b19df032f7aa89d81b69a`, and required symbol targets. The native hook currently checks that `BML_HOOK_MANIFEST` is readable, then resolves its compiled-in probe table (mirrored by the manifest) in-process and writes `<profile>/BaronyModLoader/reports/symbol-probe-report.json`.
 
-Option C is the current Stash safety boundary: required gameplay hooks are represented as `hookTargets` tied to Stash capabilities, but their install status is fail-closed until a relocation-safe detour/trampoline layer exists. The hook writes `<profile>/BaronyModLoader/reports/stash-hook-report.json`; unresolved symbols or uninstalled required hook targets must prevent `runtime-load-report.json` from claiming Stash loaded.
+Option C is the current Stash safety boundary: required gameplay hooks are represented as `hookTargets` tied to Stash capabilities, and the native hook now analyzes those direct Stash targets through the abstract `linux-x86_64-direct-stash-detour` backend. The backend is still `analyze-only`: it reports data targets as `ready`, keeps function targets `blocked` until instruction decoder/relocator support exists, and requires unresolved symbols, blocked detour targets, or uninstalled required hook groups to prevent `runtime-load-report.json` from claiming Stash loaded.
+
+Current Steam/Linux conservative direct-target scan for build `22630456`:
+
+| Hook group | Ready targets | Blocked targets | Interpretation |
+| --- | ---: | ---: | --- |
+| `stash_void_chest_binding` | 0 | 5 | All targets are function prologues; decoder/relocator support is required before any can be patch-safe. |
+| `stash_inventory_persistence` | 1 | 10 | The `stats` data symbol is ready; inventory/list/chest function prologues remain blocked. |
+| `stash_lobby_placement` | 4 | 3 | Data symbols are ready; placement functions remain blocked until prologue relocation exists. |
+| `stash_shop_placement` | 5 | 4 | Data symbols are ready; shared dungeon/action/entity/sprite functions remain blocked. |
+| `stash_multiplayer_metadata_gate` | 2 | 0 | Metadata data symbols are ready, but this hook group alone is not enough to load Stash. |
+
+The scan is intentionally conservative and byte-level. Data symbols can be ready because no prologue detour is required. A function target marked `blocked` is not a dead end; it means the direct backend must learn instruction-aware decoding/relocation/trampolines before it can patch that prologue without corrupting the installed Steam executable.
 
 ## Mod-loader parallels
 
@@ -162,5 +174,5 @@ Current v1 work should not revive `/tmp/barony-src` as a runtime build. Instead:
 2. Keep `native/barony-modloader-hook/` as the first Steam/Linux installed-binary hook runtime.
 3. Treat `runtime-load-report.json` as the launch admission report, not proof of gameplay behavior.
 4. Treat `symbol-probe-report.json` as proof that required installed-binary symbols resolved in the loaded process.
-5. Treat Stash `hookTargets` and `stash-hook-report.json` as fail-closed gameplay hook scaffolding until relocation-safe detours exist.
+5. Treat Stash `hookTargets` and `stash-hook-report.json` as the direct Stash hook readiness report and fail-closed gameplay hook scaffold until relocation-safe detour installation exists.
 6. Use `native/barony-modloader-runtime/patches/` only as source-level semantic reference while porting Stash behavior into the installed-binary hook runtime.

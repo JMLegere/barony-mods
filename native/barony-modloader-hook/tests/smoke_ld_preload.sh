@@ -17,13 +17,20 @@ FAIL_REPORT="$FAIL_REPORT_DIR/runtime-load-report.json"
 FAIL_SYMBOL_REPORT="$FAIL_REPORT_DIR/symbol-probe-report.json"
 FAIL_STASH_REPORT="$FAIL_REPORT_DIR/stash-hook-report.json"
 MISSING_HOOK_MANIFEST="$PROFILE_DIR/missing-hook-manifest.json"
+NO_STASH_PROFILE_DIR="$PROFILE_DIR/no-stash-profile"
+NO_STASH_RUNTIME_MANIFEST="$NO_STASH_PROFILE_DIR/BaronyModLoader/runtime-manifest.json"
+NO_STASH_REPORT_DIR="$NO_STASH_PROFILE_DIR/BaronyModLoader/reports"
+NO_STASH_REPORT="$NO_STASH_REPORT_DIR/runtime-load-report.json"
+NO_STASH_SYMBOL_REPORT="$NO_STASH_REPORT_DIR/symbol-probe-report.json"
+NO_STASH_STASH_REPORT="$NO_STASH_REPORT_DIR/stash-hook-report.json"
+
 
 cleanup() {
   rm -rf "$PROFILE_DIR"
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
+mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
 cat > "$RUNTIME_MANIFEST" <<'JSON'
 {
   "contract": {
@@ -63,6 +70,25 @@ cat > "$RUNTIME_MANIFEST" <<'JSON'
   ]
 }
 JSON
+cat > "$NO_STASH_RUNTIME_MANIFEST" <<'JSON'
+{
+  "contract": {
+    "id": "bml-runtime-contract",
+    "version": "0.1.0"
+  },
+  "launch": {
+    "profileId": "steam-no-stash",
+    "runtimeStrategy": "installed-binary-hook",
+    "gameVersionString": "v5.0.2",
+    "runtime": {
+      "runtimeId": "barony-bml-runtime-base",
+      "runtimeVersion": "0.1.0"
+    }
+  },
+  "mods": []
+}
+JSON
+
 
 cp "$ROOT_DIR/manifests/steam-371970-22630456-linux.json" "$HOOK_MANIFEST"
 
@@ -120,25 +146,96 @@ assert stash_report["schemaVersion"] == "0.1.0"
 assert stash_report["runtime"]["id"] == "barony-bml-runtime-stash"
 assert stash_report["profileId"] == "steam-default"
 assert stash_report["mod"] == {"id": "jml.stash", "version": "0.1.0", "manifestDetected": True}
+assert stash_report["backend"]["id"] == "linux-x86_64-direct-stash-detour"
+assert stash_report["backend"]["mode"] == "analyze-only"
+assert stash_report["backend"]["strategy"] == "abstract-direct-detour-backend"
+assert stash_report["backend"]["patchBytes"] == 12
 assert stash_report["status"] == "failed"
-assert stash_report["summary"]["failClosed"] is True
-assert stash_report["summary"]["required"] == 6
-assert stash_report["summary"]["installed"] == 0
-assert stash_report["summary"]["notInstalled"] == 6
-hook_ids = {hook["id"] for hook in stash_report["hooks"]}
-assert hook_ids == {
-    "persistent_inventory",
-    "void_chest_binding",
-    "close_save_flush",
-    "placement_lobby",
-    "placement_shop",
-    "multiplayer_metadata",
+summary = stash_report["summary"]
+assert summary["failClosed"] is True
+assert summary["required"] == 5
+assert summary["installed"] == 0
+assert summary["ready"] == 1
+assert summary["blocked"] == 4
+assert summary["notInstalled"] == 5
+expected_hook_ids = {
+    "stash_void_chest_binding",
+    "stash_inventory_persistence",
+    "stash_lobby_placement",
+    "stash_shop_placement",
+    "stash_multiplayer_metadata_gate",
 }
+assert len(stash_report["hooks"]) == 5
+hook_ids = {hook["id"] for hook in stash_report["hooks"]}
+assert hook_ids == expected_hook_ids
+all_targets = []
 for hook in stash_report["hooks"]:
     assert hook["required"] is True
-    assert hook["status"] == "not-installed", hook
+    assert hook["capability"], hook
+    assert hook["status"] in {"ready", "blocked"}, hook
+    assert hook["status"] != "installed", hook
+    assert isinstance(hook["targets"], list) and hook["targets"], hook
+    assert hook["readyTargets"] + hook["blockedTargets"] + hook["missingTargets"] == len(hook["targets"]), hook
+    all_targets.extend(hook["targets"])
+function_targets = [target for target in all_targets if target["kind"] == "function"]
+data_targets = [target for target in all_targets if target["kind"] == "data"]
+assert function_targets, all_targets
+assert data_targets, all_targets
+assert all(target["status"] == "blocked" for target in function_targets), function_targets
+assert all(target["status"] == "ready" for target in data_targets), data_targets
+assert all("blockerCode" in target for target in function_targets), function_targets
+assert all("blockerCode" not in target for target in data_targets), data_targets
 assert any(error["code"] == "BML_STASH_HOOKS_NOT_INSTALLED" and error["severity"] == "fatal" for error in stash_report["errors"]), stash_report["errors"]
 print(f"smoke symbol resolved and stash fail-closed ok: {report_path}")
+PY
+
+BML_PROFILE_DIR="$NO_STASH_PROFILE_DIR" \
+BML_RUNTIME_MANIFEST="$NO_STASH_RUNTIME_MANIFEST" \
+BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
+BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
+LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
+/usr/bin/true
+
+python - "$NO_STASH_REPORT" "$NO_STASH_SYMBOL_REPORT" "$NO_STASH_STASH_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+runtime_report_path = pathlib.Path(sys.argv[1])
+symbol_report_path = pathlib.Path(sys.argv[2])
+stash_report_path = pathlib.Path(sys.argv[3])
+for path in (runtime_report_path, symbol_report_path, stash_report_path):
+    if not path.is_file():
+        raise SystemExit(f"missing no-stash report: {path}")
+
+runtime_report = json.loads(runtime_report_path.read_text(encoding="utf-8"))
+symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
+stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+
+assert runtime_report["status"] == "loaded"
+assert runtime_report["loadedMods"] == []
+assert runtime_report["profileId"] == "steam-no-stash"
+assert runtime_report["errors"] == []
+
+assert symbol_report["status"] == "loaded"
+assert symbol_report["profileId"] == "steam-no-stash"
+assert symbol_report["summary"]["missing"] == 0
+assert symbol_report["errors"] == []
+
+assert stash_report["status"] == "not_applicable"
+assert stash_report["profileId"] == "steam-no-stash"
+assert stash_report["mod"] == {"id": "jml.stash", "version": "0.1.0", "manifestDetected": False}
+assert stash_report["summary"] == {
+    "required": 0,
+    "installed": 0,
+    "ready": 0,
+    "blocked": 0,
+    "notInstalled": 0,
+    "failClosed": False,
+}
+assert stash_report["hooks"] == []
+assert stash_report["errors"] == []
+print(f"smoke no-stash not-applicable ok: {runtime_report_path}")
 PY
 
 BML_PROFILE_DIR="$FAIL_PROFILE_DIR" \
@@ -177,7 +274,11 @@ assert symbol_report["summary"]["missing"] == 0
 assert symbol_report["errors"] == []
 
 assert stash_report["status"] == "failed"
+assert stash_report["backend"]["id"] == "linux-x86_64-direct-stash-detour"
 assert stash_report["summary"]["failClosed"] is True
+assert stash_report["summary"]["required"] == 5
+assert stash_report["summary"]["installed"] == 0
+assert stash_report["summary"]["notInstalled"] == 5
 assert any(error["code"] == "BML_STASH_HOOKS_NOT_INSTALLED" and error["severity"] == "fatal" for error in stash_report["errors"]), stash_report["errors"]
 print(f"smoke missing hook manifest failure ok: {runtime_report_path}")
 PY
