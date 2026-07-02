@@ -324,7 +324,7 @@ Acceptance criteria:
 
 ### 8. Build: Steam-backed runtime build
 
-Current status: blocked locally until CMake/build deps are available.
+Current status: completed locally for the current workstation after installing build dependencies. The patched Barony source builds at `/tmp/barony-bml-build/barony`, writes `/tmp/barony-bml-build/runtime-info.json`, registers against Steam build id `22630456`, and can be executed through the BML launcher in `--bml-runtime-info` startup mode. This is local build evidence, not a distributable runtime release.
 
 MVP requirements:
 

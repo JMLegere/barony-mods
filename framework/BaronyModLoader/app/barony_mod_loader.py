@@ -639,18 +639,27 @@ def load_runtime_info(path_arg: str) -> tuple[dict[str, Any] | None, Path, Valid
 
 def runtime_contract_versions(runtime_info: dict[str, Any]) -> set[tuple[str, str]]:
     versions: set[tuple[str, str]] = set()
+
+    def add_contract_value(value: Any, default_contract_id: str | None = None) -> None:
+        if isinstance(value, dict) and isinstance(value.get("versions"), list):
+            contract_id = value.get("id") if isinstance(value.get("id"), str) else default_contract_id
+            for item in value["versions"]:
+                item_contract_id, item_version = parse_contract(item)
+                if item_version:
+                    versions.add((item_contract_id or contract_id or RUNTIME_CONTRACT_ID, item_version))
+            return
+        contract_id, version = parse_contract(value)
+        if contract_id and version:
+            versions.add((contract_id, version))
+
     for key in ("contractVersions", "contracts", "supportedContracts"):
         raw = runtime_info.get(key)
         if raw is None:
             continue
         values = raw if isinstance(raw, list) else [raw]
         for item in values:
-            contract_id, version = parse_contract(item)
-            if contract_id and version:
-                versions.add((contract_id, version))
-    contract_id, version = parse_contract(runtime_info.get("contract"))
-    if contract_id and version:
-        versions.add((contract_id, version))
+            add_contract_value(item)
+    add_contract_value(runtime_info.get("contract"))
     return versions
 
 
