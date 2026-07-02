@@ -1,0 +1,59 @@
+diff --git a/src/barony_mod_loader.cpp b/src/barony_mod_loader.cpp
+index 11a13e8..9e9c0cd 100644
+--- a/src/barony_mod_loader.cpp
++++ b/src/barony_mod_loader.cpp
+@@ -229,6 +229,25 @@ bool writeFile(const std::string& path, const std::string& content)
+ 	return static_cast<bool>(out);
+ }
+ 
++void appendDiagnosticLine(const std::string& event, const std::string& details)
++{
++	if (gStashStateRootPath.empty())
++	{
++		return;
++	}
++	const std::string path = joinPath(gStashStateRootPath, "stash-diagnostics.jsonl");
++	if (!ensureDirectory(directoryName(path)))
++	{
++		return;
++	}
++	std::ofstream out(path.c_str(), std::ios::out | std::ios::app | std::ios::binary);
++	if (!out)
++	{
++		return;
++	}
++	out << "{\"event\":\"" << event << "\"," << details << "}\n";
++}
++
+ bool readFile(const std::string& path, std::string& content)
+ {
+ 	std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+@@ -378,6 +397,7 @@ void configureStashRuntime(const std::string& stateRootPath)
+ 	gStashStateRootPath = stateRootPath;
+ 	gStashInventoryLoaded = false;
+ 	gStashInventoryDirty = false;
++	appendDiagnosticLine("runtime_loaded", "\"stateRoot\":\"" + jsonEscape(gStashStateRootPath) + "\"");
+ }
+ 
+ bool nearbyStashAccessPointExists(double x, double y)
+@@ -556,6 +576,7 @@ bool savePersistentStashInventoryIfDirty()
+ 	{
+ 		return false;
+ 	}
++	appendDiagnosticLine("stash_inventory_saved", "\"path\":\"" + jsonEscape(stashInventoryPath()) + "\"");
+ 	gStashInventoryDirty = false;
+ 	return true;
+ }
+@@ -628,6 +649,12 @@ Entity* requestStashAccessPoint(double x, double y, double yaw, StashAccessPoint
+ 	lid->flags[PASSABLE] = true;
+ 	TileEntityList.addEntity(*lid);
+ 
++	const char* kindName = kind == StashAccessPointKind::LobbyAssist ? "lobby" : "shop";
++	std::ostringstream details;
++	details << "\"kind\":\"" << kindName << "\",\"x\":" << chest->x << ",\"y\":" << chest->y;
++	appendDiagnosticLine("stash_access_point_created", details.str());
++	printlog("[BML] Stash access point created kind=%s x=%.2f y=%.2f", kindName, chest->x, chest->y);
++
+ 	node_t* tempNode = list_AddNodeFirst(&chest->children);
+ 	tempNode->element = nullptr;
+ 	tempNode->deconstructor = &emptyDeconstructor;
