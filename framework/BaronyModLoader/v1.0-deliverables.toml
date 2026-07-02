@@ -44,17 +44,19 @@ evidence = [
 
 [[deliverables]]
 id = "p3_stash_runtime_behavior"
-status = "planned"
+status = "verification-plan-ready_pending-built-game"
 summary = "Runtime patch implements Stash behavior: persistent Void Chest inventory, spell/lobby/shop access, and save/multiplayer metadata."
 required_artifacts = [
   "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
-  "native/barony-modloader-runtime/source-map.toml",
+  "native/barony-modloader-runtime/stash-source-map.toml",
   "native/barony-modloader-runtime/stash-verification-plan.toml",
 ]
 evidence = [
   "source map cites exact Barony files/lines for Void Chest inventory, spell chest creation, lobby assist area, shop generation, and save/load hooks",
-  "behavioral verification plan covers persistence across death/new-run/relaunch, save/resume, spell access, lobby/shop access, and multiplayer mismatch",
-  "when a Barony build is available: run the focused Stash scenario against the patched runtime",
+  "stash-verification-plan.toml parses and records setup, commands/observations, pass/fail criteria, and evidence artifacts for every required Stash scenario",
+  "verification plan covers runtime manifest acceptance, persistence across death/new-run/relaunch, save/resume no-fork/no-duplicate behavior, lobby/shop placement, spell inventory binding, multiplayer mismatch rejection, and disabled behavior",
+  "stash-verification-plan.toml explicitly separates artifact verification from pending built-game behavioral verification",
+  "P3 playable verification remains pending until a patched Barony build runs the focused Stash scenarios and captures the named evidence artifacts",
 ]
 
 [[deliverables]]

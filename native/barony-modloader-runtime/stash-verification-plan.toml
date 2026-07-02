@@ -1,0 +1,392 @@
+# BaronyModLoader P3 Stash runtime verification plan.
+# This is a plan/evidence contract only; it records what must be proven after
+# the P2/P3 source patches are applied to Barony and a playable build exists.
+
+[meta]
+name = "P3 Stash runtime behavior verification plan"
+phase = "p3_stash_runtime_behavior"
+status = "planned_not_executed"
+created = "2026-07-02"
+source_root_reference = "/tmp/barony-src"
+repository_root = "/home/jerry/Workspace/barony-mods"
+runtime_contract = "bml-runtime-contract@0.1.0"
+package_id = "jml.stash"
+package_version = "0.1.0"
+inventory_id = "void_chest_inventory"
+
+[scope]
+artifact_verification = "Static/source-artifact checks that can run in this repository before a Barony build exists. These checks prove the plan and patch artifacts are present and parseable; they do not prove playable Stash behavior."
+built_game_behavioral_verification = "Manual or harness-driven scenarios against a patched Barony executable launched with a generated BML runtime manifest. These scenarios are the only layer that can mark P3 playable behavior verified."
+not_yet_claimed = [
+  "A patched Barony binary has not been built by this artifact.",
+  "No scenario below is marked passed until the named evidence files are captured from a patched build.",
+  "P3 deliverables may be artifact-ready while playable behavior remains pending build verification.",
+]
+
+[verification_status]
+artifact_plan_status = "ready_for_static_parse_check"
+built_game_behavior_status = "pending_patched_barony_build"
+playable_verification_claimed = false
+status_notes = [
+  "This file is the verification contract for future patched-build runs.",
+  "Static artifact checks may mark the plan/patch/source-map reviewable, but cannot mark any built_game_behavioral scenario passed.",
+  "P3 playable verification is complete only after every scenario below has captured its required evidence artifacts from a patched Barony executable.",
+]
+
+[paths]
+p2_patch = "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch"
+p3_patch = "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch"
+stash_source_map = "native/barony-modloader-runtime/stash-source-map.toml"
+verification_plan = "native/barony-modloader-runtime/stash-verification-plan.toml"
+example_package = "framework/BaronyModLoader/example-stash-package.json"
+runtime_info_fixture = "framework/BaronyModLoader/fixtures/runtime-info.stash.json"
+loader_cli = "framework/BaronyModLoader/app/barony_mod_loader.py"
+
+[artifact_verification]
+status = "planned_static_check"
+verification_layer = "artifact"
+purpose = "Confirm the review artifacts exist, parse, and describe the Stash source hooks before any playable claim is made."
+setup = [
+  "Run from /home/jerry/Workspace/barony-mods.",
+  "Do not treat these checks as gameplay verification.",
+]
+commands = [
+  "python -c \"import tomllib; [tomllib.load(open(path, 'rb')) for path in ('native/barony-modloader-runtime/stash-verification-plan.toml', 'native/barony-modloader-runtime/stash-source-map.toml', 'framework/BaronyModLoader/v1.0-deliverables.toml')]\"",
+  "test -f native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+  "test -f native/barony-modloader-runtime/stash-source-map.toml",
+  "test -f native/barony-modloader-runtime/stash-verification-plan.toml",
+  "python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate framework/BaronyModLoader/fixtures/runtime-info.stash.json --package framework/BaronyModLoader/example-stash-package.json",
+]
+pass_criteria = [
+  "TOML artifacts parse without exception.",
+  "P3 patch, source map, and verification plan artifacts are present.",
+  "The Stash runtime-info fixture validates for the example Stash package and advertises the six canonical capabilities.",
+  "v1.0-deliverables.toml lists this verification plan as P3 evidence without claiming built-game verification is complete.",
+]
+fail_criteria = [
+  "Any TOML parse error.",
+  "Any required P3 artifact is missing.",
+  "Deliverables status/evidence implies playable verification passed before the behavioral scenarios produce evidence.",
+]
+evidence_artifacts = [
+  "native/barony-modloader-runtime/stash-verification-plan.toml",
+  "framework/BaronyModLoader/v1.0-deliverables.toml",
+  "native/barony-modloader-runtime/stash-source-map.toml",
+  "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+]
+artifact_verification_limits = [
+  "Does not prove the patched Barony executable builds.",
+  "Does not prove a runtime manifest is accepted by the game process.",
+  "Does not prove Void Chest behavior, persistence, placement, spell binding, multiplayer rejection, or disabled behavior.",
+]
+
+[built_game_setup]
+status = "pending_patched_build"
+purpose = "Common setup for every built-game scenario below."
+required_environment = [
+  "BARONY_SRC: clean Barony checkout at the source revision used for /tmp/barony-src.",
+  "BARONY_BIN: patched Barony executable produced from BARONY_SRC after applying the P2 and P3 patches.",
+  "BML_PROFILE: disposable profile directory for this verification run.",
+  "BML_MANIFEST: runtime manifest generated for the Stash package in BML_PROFILE.",
+  "EVIDENCE_DIR: directory where screenshots, logs, reports, save files, and state snapshots are copied.",
+]
+setup_commands = [
+  "cd $BARONY_SRC",
+  "git apply /home/jerry/Workspace/barony-mods/native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+  "git apply /home/jerry/Workspace/barony-mods/native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+  "build Barony using the project-supported build command; save the exact command to $EVIDENCE_DIR/build-command.txt",
+  "python /home/jerry/Workspace/barony-mods/framework/BaronyModLoader/app/barony_mod_loader.py profile create $BML_PROFILE --id p3-stash-verification --barony-executable $BARONY_BIN --runtime-info /home/jerry/Workspace/barony-mods/framework/BaronyModLoader/fixtures/runtime-info.stash.json",
+  "python /home/jerry/Workspace/barony-mods/framework/BaronyModLoader/app/barony_mod_loader.py launch-plan $BML_PROFILE --package /home/jerry/Workspace/barony-mods/framework/BaronyModLoader/example-stash-package.json --runtime-info /home/jerry/Workspace/barony-mods/framework/BaronyModLoader/fixtures/runtime-info.stash.json --out $BML_MANIFEST",
+  "$BARONY_BIN --bml-runtime-manifest $BML_MANIFEST",
+]
+required_observability = [
+  "runtime-load-report.json records contract id, package id, package version, status, and error code.",
+  "Stash runtime log or event trace records inventory load, inventory save, Void Chest open source, placement decisions, and multiplayer compatibility decisions.",
+  "Screenshots or video are captured for visible lobby/shop/spell access point checks.",
+  "State snapshots are copied before and after death, new run, save/resume, relaunch, and disable checks.",
+]
+common_fail_criteria = [
+  "Crash, hang, or assertion before the scenario observation is complete.",
+  "Runtime-load-report.json is missing or reports failed when the scenario expects Stash enabled.",
+  "Any Stash inventory state diverges between the visible chest inventory and the persisted state snapshot.",
+]
+
+[[scenarios]]
+id = "runtime_manifest_accepted"
+requirement = "The patched runtime accepts a valid BML runtime manifest for Stash before gameplay starts."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use the common built_game_setup with a generated Stash manifest at $BML_MANIFEST.",
+  "Start from an empty disposable profile directory.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $BML_MANIFEST",
+  "Observe that startup continues past manifest validation to the normal title/menu flow.",
+  "Observe runtime-load-report.json in the profile BaronyModLoader directory.",
+  "Observe the report status is loaded, code is BML_OK, contract is bml-runtime-contract@0.1.0, and mod id/version are jml.stash@0.1.0.",
+]
+pass_criteria = [
+  "Process reaches the normal title/menu flow with Stash enabled.",
+  "runtime-load-report.json exists and records loaded/BML_OK for the generated manifest.",
+  "The report lists all six canonical capabilities: persistent_storage, persistent_inventory, void_chest_binding, placement_lobby, placement_shop, multiplayer_version_metadata.",
+]
+fail_criteria = [
+  "The runtime ignores the manifest path and starts without a load report.",
+  "The runtime reports failed, missing capability, unsupported contract, or missing Stash package for the valid manifest.",
+  "Gameplay starts with partial Stash behavior after a manifest validation failure.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/runtime-manifest.stash.json",
+  "$EVIDENCE_DIR/runtime-load-report.accepted.json",
+  "$EVIDENCE_DIR/startup-log.accepted.txt",
+  "$EVIDENCE_DIR/title-menu-after-manifest.png",
+]
+
+[[scenarios]]
+id = "item_persists_death_new_run_relaunch"
+requirement = "An item stored through a Stash Void Chest access point persists across death, starting a new run, and closing/relaunching the process."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use a fresh disposable BML profile and a fresh save slot.",
+  "Enable Stash with the generated runtime manifest.",
+  "Choose a unique verification item or stack that is easy to identify by type/count/status in logs and screenshots.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $BML_MANIFEST",
+  "Start a run, obtain the unique verification item, open a Stash-bound Void Chest, deposit the item, and close the chest.",
+  "Capture a screenshot of the chest after deposit and copy the persisted stash state snapshot to $EVIDENCE_DIR/stash-after-deposit.json.",
+  "Die or intentionally end the run through normal gameplay, return to a new run using the same profile, open any Stash Void Chest access point, and observe the same item is present once.",
+  "Exit the game completely, relaunch with the same manifest/profile, open a Stash Void Chest access point again, and observe the same item is still present once.",
+]
+pass_criteria = [
+  "The deposited item is absent from player inventory after deposit and present in void_chest_inventory after close.",
+  "After death and a new run, the same item appears exactly once in the Stash inventory.",
+  "After process relaunch, the same item appears exactly once in the Stash inventory.",
+  "Persisted item fields needed by Barony item identity are preserved: type, status, beatitude, count, appearance, identified state, owner, and metadata when present.",
+]
+fail_criteria = [
+  "The item is lost after death, new run, or relaunch.",
+  "The item duplicates after any transition.",
+  "The item remains in player inventory after a successful deposit.",
+  "Persisted item state is corrupted or normalized incorrectly.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/stash-after-deposit.json",
+  "$EVIDENCE_DIR/stash-after-death-new-run.json",
+  "$EVIDENCE_DIR/stash-after-relaunch.json",
+  "$EVIDENCE_DIR/deposit-screenshot.png",
+  "$EVIDENCE_DIR/new-run-stash-screenshot.png",
+  "$EVIDENCE_DIR/relaunch-stash-screenshot.png",
+  "$EVIDENCE_DIR/stash-events.persistence.jsonl",
+]
+
+[[scenarios]]
+id = "save_resume_no_fork_or_duplicate"
+requirement = "Saving and resuming a game keeps one authoritative Stash inventory and does not fork or duplicate entries."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use a fresh disposable BML profile and a fresh save slot with Stash enabled.",
+  "Deposit two distinct verification items into a Stash Void Chest, close the chest, and copy the persisted state snapshot.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $BML_MANIFEST",
+  "Deposit item A and item B into Stash, close the chest, save the game through normal Barony save flow, and exit to menu or process.",
+  "Resume the saved game with the same profile and manifest.",
+  "Open a Stash Void Chest access point, remove item A, close the chest, save, exit, and resume again.",
+  "Open a Stash Void Chest access point and observe item B remains exactly once and item A is absent unless it is in the player inventory exactly once.",
+]
+pass_criteria = [
+  "Only one authoritative void_chest_inventory state is loaded on resume.",
+  "Item counts after resume match the last closed Stash state, not an older save snapshot plus a newer profile snapshot.",
+  "Removing an item after resume updates the same persisted inventory and does not resurrect the item on the next resume.",
+]
+fail_criteria = [
+  "The resumed save shows a forked older inventory instead of the latest closed Stash state.",
+  "Any deposited item appears both in Stash and player inventory without player action.",
+  "Any deposited item appears more than once after save/resume.",
+  "The save file and profile state alternately overwrite each other across resumes.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/stash-before-save.json",
+  "$EVIDENCE_DIR/stash-after-first-resume.json",
+  "$EVIDENCE_DIR/stash-after-remove-and-save.json",
+  "$EVIDENCE_DIR/stash-after-second-resume.json",
+  "$EVIDENCE_DIR/save-resume-screenshots/",
+  "$EVIDENCE_DIR/stash-events.save-resume.jsonl",
+]
+
+[[scenarios]]
+id = "lobby_access_near_assist_area"
+requirement = "A permanent Stash access point appears near the lobby assist shrine/assist items."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use Stash enabled and start or enter the lobby/map that contains the assist shrine area.",
+  "Start from a clean lobby state so pre-existing entities cannot be mistaken for the placed access point.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $BML_MANIFEST",
+  "Enter the lobby and navigate to the assist shrine/assist item area.",
+  "Observe one purple Void Chest/Stash access entity placed on a valid nearby free tile.",
+  "Open the access point and confirm it opens inventory id void_chest_inventory.",
+  "Capture a screenshot showing the assist shrine/assist items and the access point in the same frame or annotated map coordinates for both.",
+]
+pass_criteria = [
+  "Exactly one lobby Stash access point is created by the placement_lobby module.",
+  "The access point is near the assist shrine/assist items and not blocking a required shrine/item interaction tile.",
+  "Opening the access point exposes the same void_chest_inventory used by other Stash access paths.",
+  "Placement is deterministic for the same lobby layout and profile state.",
+]
+fail_criteria = [
+  "No lobby access point appears with Stash enabled.",
+  "More than one lobby access point appears from one launch/profile state.",
+  "The access point is far from the assist area, unreachable, or blocks required lobby interactions.",
+  "The lobby access point opens a different inventory from the Stash inventory.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/lobby-assist-stash-access.png",
+  "$EVIDENCE_DIR/lobby-placement-log.jsonl",
+  "$EVIDENCE_DIR/lobby-access-open-inventory.png",
+]
+
+[[scenarios]]
+id = "shop_access_every_safe_generated_shop"
+requirement = "Every generated shop gets exactly one Stash access point when a safe shop tile exists."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use Stash enabled and run deterministic seeds or a harness that visits multiple generated shop rooms.",
+  "Record the seed, level, shop bounds, safe tile candidates, and placed access point coordinate for every generated shop inspected.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $BML_MANIFEST",
+  "For each generated shop encountered, inspect the shop area after room/entity placement completes.",
+  "For each shop with at least one safe free shop floor tile, observe exactly one purple Void Chest/Stash access point inside that shop area.",
+  "For any shop without a safe tile, observe a placement log entry that explicitly records no placement for that shop and the reason.",
+  "Open at least one shop access point and confirm it uses inventory id void_chest_inventory.",
+]
+pass_criteria = [
+  "Every generated shop with a safe tile has exactly one Stash access point.",
+  "No generated shop with a safe tile has zero access points.",
+  "No generated shop has more than one Stash access point from the placement_shop module.",
+  "No access point is placed on a blocked, hazardous, occupied, or out-of-shop tile.",
+  "Shops with no safe tile are skipped with an explicit nonfatal log entry.",
+]
+fail_criteria = [
+  "Any safe generated shop is missing its access point.",
+  "Any shop receives duplicate access points.",
+  "An access point is placed on an unsafe tile or outside the shop bounds.",
+  "A no-safe-tile shop fails silently or blocks the whole run despite its configured continue policy.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/shop-placement-summary.csv",
+  "$EVIDENCE_DIR/shop-placement-log.jsonl",
+  "$EVIDENCE_DIR/shop-access-screenshots/",
+  "$EVIDENCE_DIR/shop-access-open-inventory.png",
+]
+
+[[scenarios]]
+id = "spell_void_chest_same_inventory"
+requirement = "A Void Chest created by the Void Chest spell opens the same Stash inventory as lobby/shop/permanent access points."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use Stash enabled and a character/save that can cast SPELL_VOID_CHEST or otherwise create the engine spell-created Void Chest through normal gameplay/harness controls.",
+  "Ensure the Stash inventory already contains one unique marker item deposited through a lobby or shop access point.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $BML_MANIFEST",
+  "Open a permanent Stash access point, deposit marker item S, close the chest, and save the state snapshot.",
+  "Cast the Void Chest spell, open the spell-created Void Chest before its timer expires, and observe marker item S is present.",
+  "Deposit marker item T through the spell-created Void Chest, close it, then open a permanent Stash access point and observe both S and T are present exactly once.",
+]
+pass_criteria = [
+  "The spell-created Void Chest binds to inventory id void_chest_inventory while Stash is enabled.",
+  "Items deposited through permanent access and spell-created access are visible through both paths exactly once.",
+  "The spell chest visual/timer behavior remains the normal Barony Void Chest behavior except for sharing the Stash inventory.",
+]
+fail_criteria = [
+  "The spell-created Void Chest opens an empty or separate inventory while Stash inventory has items.",
+  "Items deposited through the spell chest are lost, duplicated, or isolated from permanent access points.",
+  "The spell-created chest no longer respects its normal visual/timer behavior.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/spell-before-cast-stash.json",
+  "$EVIDENCE_DIR/spell-created-open-screenshot.png",
+  "$EVIDENCE_DIR/spell-after-deposit-stash.json",
+  "$EVIDENCE_DIR/permanent-access-after-spell-deposit.png",
+  "$EVIDENCE_DIR/stash-events.spell-binding.jsonl",
+]
+
+[[scenarios]]
+id = "multiplayer_mismatch_rejected_before_divergence"
+requirement = "A multiplayer/client Stash state mismatch is rejected before host/client inventory divergence can occur."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use two disposable profiles: host profile H with Stash manifest jml.stash@0.1.0 and client profile C with an intentionally mismatched manifest.",
+  "Create mismatch variants one at a time: missing jml.stash package, different package version, different runtime contract version, and different inventory schema version.",
+  "Preload host Stash with one marker item so divergence would be visible if an incompatible client joined.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $HOST_BML_MANIFEST",
+  "$BARONY_BIN --bml-runtime-manifest $CLIENT_MISMATCHED_BML_MANIFEST",
+  "Start a multiplayer host with profile H, then attempt to join with profile C for each mismatch variant.",
+  "Observe the client is rejected during compatibility/handshake before gameplay inventory sync or chest interaction is allowed.",
+  "After each rejected attempt, reopen host Stash and verify the marker item remains exactly once and host state snapshot checksum is unchanged.",
+]
+pass_criteria = [
+  "Every mismatch variant is rejected before the client enters gameplay or receives authority to mutate void_chest_inventory.",
+  "Host and client both record a clear compatibility failure reason including the mismatched field.",
+  "Host Stash state is byte-for-byte unchanged by each rejected client attempt or logically identical if timestamps are expected to differ.",
+]
+fail_criteria = [
+  "An incompatible client reaches gameplay with Stash enabled.",
+  "An incompatible client can open, sync, or mutate void_chest_inventory before rejection.",
+  "The host Stash state changes after a rejected join attempt.",
+  "The rejection reason is missing or ambiguous enough that operators cannot identify the mismatch.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/multiplayer/host-runtime-manifest.json",
+  "$EVIDENCE_DIR/multiplayer/client-missing-stash-manifest.json",
+  "$EVIDENCE_DIR/multiplayer/client-version-mismatch-manifest.json",
+  "$EVIDENCE_DIR/multiplayer/client-schema-mismatch-manifest.json",
+  "$EVIDENCE_DIR/multiplayer/host-log.jsonl",
+  "$EVIDENCE_DIR/multiplayer/client-log.jsonl",
+  "$EVIDENCE_DIR/multiplayer/host-stash-before.json",
+  "$EVIDENCE_DIR/multiplayer/host-stash-after-rejections.json",
+]
+
+[[scenarios]]
+id = "disable_stash_removes_behavior_without_leftovers"
+requirement = "Disabling Stash removes Stash behavior and leaves no hardcoded lobby/shop/spell/persistence leftovers."
+verification_layer = "built_game_behavioral"
+setup = [
+  "Use the same patched executable, but launch with a valid BML runtime manifest whose mods array is empty or with no BML manifest, depending on the disable path being verified.",
+  "Use a profile that previously had Stash enabled and a separate clean profile to distinguish disabled behavior from stale state files.",
+]
+commands_and_observations = [
+  "$BARONY_BIN --bml-runtime-manifest $BML_DISABLED_MANIFEST",
+  "Enter the lobby assist shrine/assist item area and observe no Stash-specific permanent access point is placed.",
+  "Generate or visit shops and observe no Stash-specific shop access point is placed by the placement_shop module.",
+  "Cast the normal Void Chest spell and observe only vanilla spell-created Void Chest behavior; it must not load the profile-persistent Stash inventory when Stash is disabled.",
+  "Close and relaunch with Stash disabled, then confirm no stash/void_chest_inventory state file is created or modified by disabled gameplay.",
+]
+pass_criteria = [
+  "Runtime reports no active Stash mod for the disabled manifest and still starts normally.",
+  "No lobby or shop permanent Stash access points appear while Stash is disabled.",
+  "Spell-created Void Chest behavior is vanilla/nonpersistent and does not expose prior Stash inventory.",
+  "Existing Stash state files from earlier enabled runs are not deleted, loaded, mutated, or exposed while disabled.",
+  "There are no hardcoded jml.stash placements, inventory bindings, or storage writes outside the enabled manifest path.",
+]
+fail_criteria = [
+  "Any Stash access point appears while Stash is disabled.",
+  "A spell-created Void Chest opens the persisted Stash inventory while Stash is disabled.",
+  "Disabled gameplay creates or mutates stash/void_chest_inventory state.",
+  "The runtime requires Stash-specific files or capabilities even when no Stash mod is active.",
+]
+evidence_artifacts = [
+  "$EVIDENCE_DIR/disabled-runtime-manifest.json",
+  "$EVIDENCE_DIR/disabled-runtime-load-report.json",
+  "$EVIDENCE_DIR/disabled-lobby-no-access.png",
+  "$EVIDENCE_DIR/disabled-shop-no-access.png",
+  "$EVIDENCE_DIR/disabled-spell-void-chest.png",
+  "$EVIDENCE_DIR/disabled-state-before-after-checksums.txt",
+  "$EVIDENCE_DIR/disabled-stash-events.jsonl",
+]

@@ -1,0 +1,683 @@
+diff --git a/src/actchest.cpp b/src/actchest.cpp
+index 4fb153b..a63a3e6 100644
+--- a/src/actchest.cpp
++++ b/src/actchest.cpp
+@@ -20,6 +20,7 @@
+ #include "player.hpp"
+ #include "prng.hpp"
+ #include "mod_tools.hpp"
++#include "barony_mod_loader.hpp"
+ 
+ /*
+  * Chest theme ideas:
+@@ -1298,6 +1299,10 @@ void Entity::closeChest()
+ 			players[chestOpener]->inventoryUI.chestGUI.closeChest();
+ 		}
+ 	}
++	if ( chestVoidState != 0 && multiplayer != CLIENT && BaronyModLoader::isStashRuntimeActive() )
++	{
++		BaronyModLoader::savePersistentStashInventoryIfDirty();
++	}
+ }
+ 
+ void Entity::closeChestServer()
+@@ -1308,6 +1313,10 @@ void Entity::closeChestServer()
+ 		openedChest[chestOpener] = NULL;
+ 		players[chestOpener]->inventoryUI.chestGUI.closeChest();
+ 	}
++	if ( chestVoidState != 0 && BaronyModLoader::isStashRuntimeActive() )
++	{
++		BaronyModLoader::savePersistentStashInventoryIfDirty();
++	}
+ }
+ 
+ Item* Entity::addItemToVoidChest(int player, Item* item, bool forceNewStack, Item* specificDestinationStack)
+@@ -1384,6 +1393,9 @@ Item* Entity::addItemToChest(Item* item, bool forceNewStack, Item* specificDesti
+ 
+ 	//Add the item to the chest's inventory.
+ 	list_t* inventory = getChestInventoryList();
++	const bool bmlStashInventory = chestVoidState != 0
++		&& inventory != nullptr
++		&& inventory == BaronyModLoader::getStashInventory();
+ 
+ 	node_t* t_node = NULL;
+ 	if ( !forceNewStack )
+@@ -1397,6 +1409,10 @@ Item* Entity::addItemToChest(Item* item, bool forceNewStack, Item* specificDesti
+ 				if (!itemCompare(item, item2, false) )
+ 				{
+ 					item2->count += item->count;
++					if ( bmlStashInventory )
++					{
++						BaronyModLoader::markStashInventoryDirty();
++					}
+ 					return item2;
+ 				}
+ 			}
+@@ -1405,6 +1421,10 @@ Item* Entity::addItemToChest(Item* item, bool forceNewStack, Item* specificDesti
+ 				if ( specificDestinationStack == item2 )
+ 				{
+ 					item2->count += item->count;
++					if ( bmlStashInventory )
++					{
++						BaronyModLoader::markStashInventoryDirty();
++					}
+ 					return item2;
+ 				}
+ 			}
+@@ -1414,6 +1434,10 @@ Item* Entity::addItemToChest(Item* item, bool forceNewStack, Item* specificDesti
+ 	item->node = list_AddNodeLast(inventory);
+ 	item->node->element = item;
+ 	item->node->deconstructor = &defaultDeconstructor;
++	if ( bmlStashInventory )
++	{
++		BaronyModLoader::markStashInventoryDirty();
++	}
+ 
+ 	if ( !players[chestOpener]->isLocalPlayer() && multiplayer == SERVER )
+ 	{
+@@ -1613,6 +1637,10 @@ Item* Entity::getItemFromChest(Item* item, int amount, bool getInfoOnly)
+ 	}
+ 
+ 	int player = getChestOpenerFromEntity(*this);
++	const bool bmlStashMutation = !getInfoOnly
++		&& multiplayer != CLIENT
++		&& chestVoidState != 0
++		&& BaronyModLoader::isStashRuntimeActive();
+ 
+ 	if ( players[player]->isLocalPlayer() && multiplayer == CLIENT )
+ 	{
+@@ -1675,6 +1703,10 @@ Item* Entity::getItemFromChest(Item* item, int amount, bool getInfoOnly)
+ 		{
+ 			list_RemoveNode(item->node);
+ 		}
++		if ( bmlStashMutation )
++		{
++			BaronyModLoader::markStashInventoryDirty();
++		}
+ 	}
+ 	return newitem;
+ }
+@@ -1712,6 +1744,12 @@ list_t* Entity::getChestInventoryList()
+ 	{
+ 		if ( chestVoidState != 0 )
+ 		{
++			// SPELL_VOID_CHEST in magic/castSpell.cpp already routes through chestVoidState.
++			// BML only swaps that established Void Chest binding to persistent Stash storage when active.
++			if ( list_t* stashInventory = BaronyModLoader::getStashInventory() )
++			{
++				return stashInventory;
++			}
+ 			return &stats[0]->void_chest_inventory;
+ 		}
+ 		else
+@@ -1781,7 +1819,12 @@ Item* Entity::addItemToVoidChestServer(int player, Item* item, bool forceNewStac
+ 	node_t* t_node = NULL;
+ 
+ 	//Add the item to the chest's inventory.
+-	list_t* inventory = &stats[0]->void_chest_inventory;
++	list_t* inventory = BaronyModLoader::getStashInventory();
++	const bool bmlStashInventory = inventory != nullptr;
++	if ( !inventory )
++	{
++		inventory = &stats[0]->void_chest_inventory;
++	}
+ 
+ 	if ( !inventory )
+ 	{
+@@ -1867,6 +1910,10 @@ Item* Entity::addItemToVoidChestServer(int player, Item* item, bool forceNewStac
+ 							anyItemsInserted = qty > 0;
+ 							item2->count += qty;
+ 							item->count -= qty;
++							if ( bmlStashInventory && qty > 0 )
++							{
++								BaronyModLoader::markStashInventoryDirty();
++							}
+ 						}
+ 						if ( item->count <= 0 )
+ 						{
+@@ -1883,6 +1930,10 @@ Item* Entity::addItemToVoidChestServer(int player, Item* item, bool forceNewStac
+ 						anyItemsInserted = qty > 0;
+ 						item2->count += qty;
+ 						item->count -= qty;
++						if ( bmlStashInventory && qty > 0 )
++						{
++							BaronyModLoader::markStashInventoryDirty();
++						}
+ 						if ( item->count <= 0 )
+ 						{
+ 							return item2;
+@@ -1948,6 +1999,10 @@ Item* Entity::addItemToVoidChestServer(int player, Item* item, bool forceNewStac
+ 	item->node = list_AddNodeLast(inventory);
+ 	item->node->element = item;
+ 	item->node->deconstructor = &defaultDeconstructor;
++	if ( bmlStashInventory )
++	{
++		BaronyModLoader::markStashInventoryDirty();
++	}
+ 
+ 	return item;
+ }
+@@ -1964,6 +2019,9 @@ Item* Entity::addItemToChestServer(Item* item, bool forceNewStack, Item* specifi
+ 
+ 	//Add the item to the chest's inventory.
+ 	list_t* inventory = getChestInventoryList();
++	const bool bmlStashInventory = chestVoidState != 0
++		&& inventory != nullptr
++		&& inventory == BaronyModLoader::getStashInventory();
+ 
+ 	if (!inventory)
+ 	{
+@@ -1981,6 +2039,10 @@ Item* Entity::addItemToChestServer(Item* item, bool forceNewStack, Item* specifi
+ 				if ( !itemCompare(item, item2, false) )
+ 				{
+ 					item2->count += item->count;
++					if ( bmlStashInventory )
++					{
++						BaronyModLoader::markStashInventoryDirty();
++					}
+ 					return item2;
+ 				}
+ 			}
+@@ -1989,6 +2051,10 @@ Item* Entity::addItemToChestServer(Item* item, bool forceNewStack, Item* specifi
+ 				if ( specificDestinationStack == item2 )
+ 				{
+ 					item2->count += item->count;
++					if ( bmlStashInventory )
++					{
++						BaronyModLoader::markStashInventoryDirty();
++					}
+ 					return item2;
+ 				}
+ 			}
+@@ -1998,6 +2064,10 @@ Item* Entity::addItemToChestServer(Item* item, bool forceNewStack, Item* specifi
+ 	item->node = list_AddNodeLast(inventory);
+ 	item->node->element = item;
+ 	item->node->deconstructor = &defaultDeconstructor;
++	if ( bmlStashInventory )
++	{
++		BaronyModLoader::markStashInventoryDirty();
++	}
+ 	return item;
+ }
+ 
+@@ -2011,7 +2081,12 @@ bool Entity::removeItemFromVoidChestServer(int player, Item* item, int count)
+ 	Item* item2 = NULL;
+ 	node_t* t_node = NULL;
+ 
+-	list_t* inventory = &stats[0]->void_chest_inventory;
++	list_t* inventory = BaronyModLoader::getStashInventory();
++	const bool bmlStashInventory = inventory != nullptr;
++	if ( !inventory )
++	{
++		inventory = &stats[0]->void_chest_inventory;
++	}
+ 	if ( !inventory )
+ 	{
+ 		return false;
+@@ -2038,17 +2113,29 @@ bool Entity::removeItemFromVoidChestServer(int player, Item* item, int count)
+ 				{
+ 					list_RemoveNode(item2->node);
+ 				}
++				if ( bmlStashInventory )
++				{
++					BaronyModLoader::markStashInventoryDirty();
++				}
+ 			}
+ 			else if ( count == item2->count )
+ 			{
+ 				//Grab all items from the chest.
+ 				list_RemoveNode(item2->node);
++				if ( bmlStashInventory )
++				{
++					BaronyModLoader::markStashInventoryDirty();
++				}
+ 			}
+ 			else if ( count > item2->count )
+ 			{
+ 				count -= item2->count;
+ 				//Grab items that we can, and then look for more. 
+ 				list_RemoveNode(item2->node);
++				if ( bmlStashInventory )
++				{
++					BaronyModLoader::markStashInventoryDirty();
++				}
+ 				removedItems = true;
+ 				continue;
+ 			}
+diff --git a/src/barony_mod_loader.cpp b/src/barony_mod_loader.cpp
+index f67d53f..11a13e8 100644
+--- a/src/barony_mod_loader.cpp
++++ b/src/barony_mod_loader.cpp
+@@ -1,5 +1,13 @@
+ #include "barony_mod_loader.hpp"
+ 
++#include "main.hpp"
++#include "game.hpp"
++#include "stat.hpp"
++#include "entity.hpp"
++#include "items.hpp"
++#include "prng.hpp"
++
++#include <algorithm>
+ #include <cerrno>
+ #include <cstdio>
+ #include <cstdlib>
+@@ -36,6 +44,16 @@ const char* kCapabilities[] = {
+ 	"multiplayer_version_metadata"
+ };
+ 
++const char* kDefaultStateRoot = "BaronyModLoader/state";
++const char* kStashInventoryFileName = "stash-inventory-v1.tsv";
++const char* kStashInventorySchema = "stash-inventory-v1";
++
++list_t gStashInventory = { nullptr, nullptr };
++bool gStashRuntimeActive = false;
++bool gStashInventoryLoaded = false;
++bool gStashInventoryDirty = false;
++std::string gStashStateRootPath;
++
+ const char* kRuntimeInfoJson = R"json({
+   "runtimeId": "barony-bml-runtime-stash",
+   "runtimeVersion": "0.1.0",
+@@ -97,7 +115,7 @@ const char* kRuntimeInfoJson = R"json({
+     "requiresValidatedManifest": true,
+     "rejectsUnknownRequiredCapabilities": true,
+     "partialStashLoadAllowed": false,
+-    "gameplayHooksImplemented": false
++    "gameplayHooksImplemented": true
+   }
+ })json";
+ 
+@@ -271,6 +289,116 @@ std::string reportPathForManifest(const std::string& manifestText, const std::st
+ 	return defaultReportPath(manifestPath);
+ }
+ 
++std::string stateRootPathForManifest(const std::string& manifestText, const std::string& outputDir)
++{
++	std::string stateRoot;
++	if (extractStringField(manifestText, "stateRoot", stateRoot) && !stateRoot.empty())
++	{
++		return joinPath(outputDir, stateRoot);
++	}
++	return joinPath(outputDir, kDefaultStateRoot);
++}
++
++std::string stashInventoryPath()
++{
++	return joinPath(gStashStateRootPath, kStashInventoryFileName);
++}
++
++void resetStashRuntimeState()
++{
++	gStashRuntimeActive = false;
++	gStashInventoryDirty = false;
++	gStashInventoryLoaded = false;
++	list_FreeAll(&gStashInventory);
++	gStashInventory.first = nullptr;
++	gStashInventory.last = nullptr;
++}
++
++bool readPersistentInventoryFile(const std::string& path, list_t* inventory)
++{
++	std::string content;
++	if (!readFile(path, content))
++	{
++		return false;
++	}
++
++	std::istringstream rows(content);
++	std::string row;
++	while (std::getline(rows, row))
++	{
++		if (row.empty() || row[0] == '#')
++		{
++			continue;
++		}
++		int type = 0;
++		int status = 0;
++		int beatitude = 0;
++		int count = 0;
++		Uint32 appearance = 0;
++		int identified = 0;
++		std::istringstream fields(row);
++		if (fields >> type >> status >> beatitude >> count >> appearance >> identified)
++		{
++			newItem(static_cast<ItemType>(type),
++				static_cast<Status>(status),
++				static_cast<Sint16>(beatitude),
++				static_cast<Sint16>(std::max(1, count)),
++				appearance,
++				identified != 0,
++				inventory);
++		}
++	}
++	return true;
++}
++
++std::string persistentInventoryFileContents(list_t* inventory)
++{
++	std::ostringstream out;
++	out << "# bml-stash-inventory-v1\n";
++	for (node_t* node = inventory ? inventory->first : nullptr; node != nullptr; node = node->next)
++	{
++		Item* item = static_cast<Item*>(node->element);
++		if (!item)
++		{
++			continue;
++		}
++		out << static_cast<int>(item->type) << ' '
++			<< static_cast<int>(item->status) << ' '
++			<< static_cast<int>(item->beatitude) << ' '
++			<< static_cast<int>(item->count) << ' '
++			<< item->appearance << ' '
++			<< (item->identified ? 1 : 0) << "\n";
++	}
++	return out.str();
++}
++
++void configureStashRuntime(const std::string& stateRootPath)
++{
++	gStashRuntimeActive = true;
++	gStashStateRootPath = stateRootPath;
++	gStashInventoryLoaded = false;
++	gStashInventoryDirty = false;
++}
++
++bool nearbyStashAccessPointExists(double x, double y)
++{
++	for (node_t* node = map.entities ? map.entities->first : nullptr; node != nullptr; node = node->next)
++	{
++		Entity* entity = static_cast<Entity*>(node->element);
++		if (!entity || entity->behavior != &actChest || entity->chestVoidState == 0)
++		{
++			continue;
++		}
++		const double dx = entity->x - x;
++		const double dy = entity->y - y;
++		if ((dx * dx + dy * dy) < (32.0 * 32.0))
++		{
++			return true;
++		}
++	}
++	return false;
++}
++
+ std::string runtimeReportJson(const std::string& manifestPath, const std::string& status, const std::string& errorCode, const std::string& errorMessage)
+ {
+ 	std::ostringstream out;
+@@ -337,6 +465,7 @@ int writeRuntimeInfo(const std::string& outputPath)
+ 
+ RuntimeManifestLoadResult loadRuntimeManifest(const std::string& manifestPath, const std::string& outputDir)
+ {
++	resetStashRuntimeState();
+ 	const std::string fallbackReportPath = defaultReportPath(manifestPath);
+ 	std::string manifestText;
+ 	if (!readFile(manifestPath, manifestText))
+@@ -362,7 +491,147 @@ RuntimeManifestLoadResult loadRuntimeManifest(const std::string& manifestPath, c
+ 		}
+ 	}
+ 
+-	return writeReportResult(manifestPath, reportPath, "loaded", "BML_OK", "");
++	const RuntimeManifestLoadResult result = writeReportResult(manifestPath, reportPath, "loaded", "BML_OK", "");
++	if (result.loaded)
++	{
++		configureStashRuntime(stateRootPathForManifest(manifestText, outputDir));
++	}
++	return result;
++}
++
++bool isStashRuntimeActive()
++{
++	return gStashRuntimeActive;
++}
++
++void loadPersistentStashInventoryIfNeeded()
++{
++	if (!gStashRuntimeActive || gStashInventoryLoaded)
++	{
++		return;
++	}
++
++	list_FreeAll(&gStashInventory);
++	gStashInventory.first = nullptr;
++	gStashInventory.last = nullptr;
++	readPersistentInventoryFile(stashInventoryPath(), &gStashInventory);
++	gStashInventoryLoaded = true;
++	gStashInventoryDirty = false;
++}
++
++list_t* getStashInventory()
++{
++	if (!gStashRuntimeActive)
++	{
++		return nullptr;
++	}
++	loadPersistentStashInventoryIfNeeded();
++	return &gStashInventory;
++}
++
++void markStashInventoryDirty()
++{
++	if (gStashRuntimeActive)
++	{
++		gStashInventoryDirty = true;
++	}
++}
++
++bool savePersistentStashInventoryIfDirty()
++{
++	if (!gStashRuntimeActive)
++	{
++		return true;
++	}
++	loadPersistentStashInventoryIfNeeded();
++	if (!gStashInventoryDirty)
++	{
++		return true;
++	}
++	if (!ensureDirectory(gStashStateRootPath))
++	{
++		return false;
++	}
++	if (!writeFile(stashInventoryPath(), persistentInventoryFileContents(&gStashInventory)))
++	{
++		return false;
++	}
++	gStashInventoryDirty = false;
++	return true;
++}
++
++std::string runtimeMetadataValue()
++{
++	return std::string("runtime=") + kRuntimeId
++		+ ";runtime_version=" + kRuntimeVersion
++		+ ";inventory_schema=" + kStashInventorySchema
++		+ ";capabilities=persistent_storage,persistent_inventory,void_chest_binding,placement_lobby,placement_shop,multiplayer_version_metadata";
++}
++
++bool saveMetadataMatchesActiveRuntime(const std::string& metadata)
++{
++	return metadata.empty() || metadata == runtimeMetadataValue();
++}
++
++Entity* requestStashAccessPoint(Entity* anchor, StashAccessPointKind kind)
++{
++	if (!anchor)
++	{
++		return nullptr;
++	}
++	const double offset = kind == StashAccessPointKind::LobbyAssist ? 32.0 : 0.0;
++	return requestStashAccessPoint(anchor->x + offset, anchor->y, anchor->yaw, kind);
++}
++
++Entity* requestStashAccessPoint(double x, double y, double yaw, StashAccessPointKind kind)
++{
++	if (!gStashRuntimeActive || multiplayer == CLIENT || !map.entities)
++	{
++		return nullptr;
++	}
++	if (nearbyStashAccessPointExists(x, y))
++	{
++		return nullptr;
++	}
++
++	Entity* chest = newEntity(1791, 1, map.entities, nullptr);
++	chest->x = x;
++	chest->y = y;
++	chest->z = 6;
++	chest->sizex = 3;
++	chest->sizey = 2;
++	chest->yaw = yaw;
++	chest->behavior = &actChest;
++	chest->sprite = 1791;
++	chest->chestInit = 1;
++	chest->chestHealth = 9999;
++	chest->chestMaxHealth = 9999;
++	chest->chestOldHealth = chest->chestHealth;
++	chest->chestLocked = 0;
++	chest->chestPreventLockpickCapstoneExploit = 1;
++	chest->chestLockpickHealth = 0;
++	chest->chestVoidState = -1; // Permanent Stash access; spell-created Void Chests still use their timer.
++	chest->seedEntityRNG(map_server_rng.getU32());
++
++	Entity* lid = newEntity(1790, 0, map.entities, nullptr);
++	lid->parent = chest->getUID();
++	chest->parent = lid->getUID();
++	lid->x = chest->x;
++	lid->y = chest->y - 3;
++	lid->z = chest->z - 2.75;
++	lid->focalx = 3;
++	lid->focalz = -.75;
++	lid->yaw = chest->yaw;
++	lid->sizex = 2;
++	lid->sizey = 2;
++	lid->behavior = &actChestLid;
++	lid->flags[PASSABLE] = true;
++	TileEntityList.addEntity(*lid);
++
++	node_t* tempNode = list_AddNodeFirst(&chest->children);
++	tempNode->element = nullptr;
++	tempNode->deconstructor = &emptyDeconstructor;
++	return chest;
+ }
+ 
+ } // namespace BaronyModLoader
+diff --git a/src/barony_mod_loader.hpp b/src/barony_mod_loader.hpp
+index c2f00de..a6d0102 100644
+--- a/src/barony_mod_loader.hpp
++++ b/src/barony_mod_loader.hpp
+@@ -3,9 +3,21 @@
+ 
+ #include <string>
+ 
++struct list_t;
++class Entity;
++
+ namespace BaronyModLoader
+ {
+ 
++enum class StashAccessPointKind
++{
++	LobbyAssist,
++	GeneratedShop
++};
++
++// P3 implements the six canonical Stash capabilities advertised by the P2 handshake:
++// persistent_storage, persistent_inventory, void_chest_binding, placement_lobby,
++// placement_shop, and multiplayer_version_metadata.
+ struct RuntimeManifestLoadResult
+ {
+ 	bool loaded;
+@@ -19,6 +31,16 @@ struct RuntimeManifestLoadResult
+ int writeRuntimeInfo(const std::string& outputPath);
+ RuntimeManifestLoadResult loadRuntimeManifest(const std::string& manifestPath, const std::string& outputDir);
+ 
++bool isStashRuntimeActive();
++list_t* getStashInventory();
++void loadPersistentStashInventoryIfNeeded();
++void markStashInventoryDirty();
++bool savePersistentStashInventoryIfDirty();
++std::string runtimeMetadataValue();
++bool saveMetadataMatchesActiveRuntime(const std::string& metadata);
++Entity* requestStashAccessPoint(Entity* anchor, StashAccessPointKind kind);
++Entity* requestStashAccessPoint(double x, double y, double yaw, StashAccessPointKind kind);
++
+ } // namespace BaronyModLoader
+ 
+ #endif // BARONY_MOD_LOADER_HPP
+diff --git a/src/maps.cpp b/src/maps.cpp
+index 0ae7725..7c01130 100644
+--- a/src/maps.cpp
++++ b/src/maps.cpp
+@@ -28,6 +28,7 @@
+ #include "mod_tools.hpp"
+ #include "menu.hpp"
+ #include "ui/MainMenu.hpp"
++#include "barony_mod_loader.hpp"
+ 
+ int startfloor = 0;
+ BaronyRNG map_rng;
+@@ -2633,6 +2634,17 @@ int generateDungeon(char* levelset, Uint32 seed, std::tuple<int, int, int, int>
+ 				}
+ 			}
+ 
++			if ( c == 2 && shoplevel )
++			{
++				const int stashTileX = x + (tempMap->width > 2 ? tempMap->width - 2 : 1);
++				const int stashTileY = y + (tempMap->height > 2 ? tempMap->height - 2 : 1);
++				BaronyModLoader::requestStashAccessPoint(
++					stashTileX * 16 + 8,
++					stashTileY * 16 + 8,
++					0.0,
++					BaronyModLoader::StashAccessPointKind::GeneratedShop);
++			}
++
+ 			if ( foundSubRoom )
+ 			{
+ 				// copy the entities from subroom
+@@ -10251,6 +10263,7 @@ void assignActions(map_t* map)
+ 				//entity->focalx = 0.75;
+ 				entity->yaw = 0.0;// (270)* PI / 180.0;
+ 				entity->seedEntityRNG(map_rng.getU32());
++				BaronyModLoader::requestStashAccessPoint(entity, BaronyModLoader::StashAccessPointKind::LobbyAssist);
+ 				break;
+ 			case 208:
+ 			case 209:
+diff --git a/src/scores.cpp b/src/scores.cpp
+index 4290406..d3830b2 100644
+--- a/src/scores.cpp
++++ b/src/scores.cpp
+@@ -27,6 +27,7 @@
+ #include "mod_tools.hpp"
+ #include "lobbies.hpp"
+ #include "shops.hpp"
++#include "barony_mod_loader.hpp"
+ #ifdef USE_PLAYFAB
+ #include "playfab.hpp"
+ #endif
+@@ -6035,6 +6036,10 @@ int SaveGameInfo::populateFromSession(const int playernum)
+ 	}
+ 
+ 	info->map_messages = ::Player::Minimap_t::mapDetails;
++	if ( BaronyModLoader::isStashRuntimeActive() )
++	{
++		info->additional_data.push_back(std::make_pair("bml_runtime", BaronyModLoader::runtimeMetadataValue()));
++	}
+ 	if ( gameModeManager.currentSession.challengeRun.isActive() )
+ 	{
+ 		info->additional_data.push_back(std::make_pair("game_scenario", gameModeManager.currentSession.challengeRun.scenarioStr));
+@@ -6421,7 +6426,13 @@ int loadGame(int player, const SaveGameInfo& info) {
+ 			gameModeManager.currentSession.seededRun.seedString = info.customseed_string;
+ 			for ( auto& pair : info.additional_data )
+ 			{
+-				if ( pair.first == "game_scenario" )
++				if ( pair.first == "bml_runtime" && !BaronyModLoader::saveMetadataMatchesActiveRuntime(pair.second) )
++				{
++					printlog("[BaronyModLoader]: save runtime metadata '%s' does not match active runtime '%s'",
++						pair.second.c_str(),
++						BaronyModLoader::runtimeMetadataValue().c_str());
++				}
++				else if ( pair.first == "game_scenario" )
+ 				{
+ 					gameModeManager.currentSession.challengeRun.setup(pair.second);
+ 					if ( gameModeManager.currentSession.challengeRun.isActive() )

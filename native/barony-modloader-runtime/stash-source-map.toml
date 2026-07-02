@@ -1,0 +1,296 @@
+# BaronyModLoader P3 Stash runtime source map.
+# Evidence source: /tmp/barony-src on 2026-07-02.
+# Scope: source artifact only; no built-runtime or playable-game behavior is claimed here.
+
+[barony]
+source_root = "/tmp/barony-src"
+patch = "patches/0002-bml-stash-runtime.patch"
+phase = "p3_stash_runtime"
+contract_id = "bml-stash-runtime-contract"
+contract_version = "0.1.0"
+capabilities = [
+  "persistent_storage",
+  "persistent_inventory",
+  "void_chest_binding",
+  "placement_lobby",
+  "placement_shop",
+  "multiplayer_version_metadata",
+]
+
+[artifact_verification]
+source_map_file = "native/barony-modloader-runtime/stash-source-map.toml"
+parser = "python3 tomllib.load"
+runtime_behavior_verified = false
+notes = [
+  "This file records Barony source evidence and intended P3 patch behavior only.",
+  "Playable runtime validation belongs in native/barony-modloader-runtime/stash-verification-plan.toml and must not be inferred from this parse check.",
+]
+
+[[capability]]
+id = "persistent_storage"
+purpose = "Persist the Stash payload across runs using Barony save/load surfaces and explicit compatibility metadata."
+
+[[capability]]
+id = "persistent_inventory"
+purpose = "Keep the shared Stash contents as item inventory data, reusing Barony item serialization and list ownership rules."
+
+[[capability]]
+id = "void_chest_binding"
+purpose = "Route all Void Chest access paths to the same Stash inventory while preserving vanilla Void Chest affordances."
+
+[[capability]]
+id = "placement_lobby"
+purpose = "Add deterministic permanent purple Void Chest Stash access in the lobby assist area."
+
+[[capability]]
+id = "placement_shop"
+purpose = "Add deterministic permanent purple Void Chest Stash access to every generated shop."
+
+[[capability]]
+id = "multiplayer_version_metadata"
+purpose = "Keep Stash saves compatible and server-authoritative in multiplayer/versioned save cases."
+
+[[runtime_source_map]]
+name = "void_chest_inventory_declaration_save_load"
+capability_ids = ["persistent_storage", "persistent_inventory", "multiplayer_version_metadata"]
+source_files = [
+  "src/stat.hpp:466",
+  "src/scores.hpp:675-707",
+  "src/scores.cpp:5922-5937",
+  "src/scores.cpp:6615-6627",
+]
+observed_behavior = "Stat declares list_t void_chest_inventory; SaveGameInfo::Player::stat_t declares and serializes a void_chest_inventory item vector; save code copies each stats[c]->void_chest_inventory item into that vector; load code reconstructs items into stats[statsPlayer]->void_chest_inventory."
+intended_p3_change = "Treat the existing void_chest_inventory serialization shape as the Stash payload boundary, persist the shared Stash through save/load, and add explicit metadata/version handling so P3 Stash data can be distinguished from absent or legacy data."
+risks = [
+  "Vanilla storage is player-stat scoped; a shared Stash must choose one authoritative inventory source and avoid duplicating or losing items across players.",
+  "Item ownership must remain compatible with Barony list_t/newItem lifecycle during save/load reconstruction.",
+  "Metadata that is mandatory on load could reject older saves; metadata that is absent on save could make P3 Stash state indistinguishable from vanilla void_chest_inventory state.",
+]
+verification_evidence = [
+  "Read /tmp/barony-src/src/stat.hpp:466: list_t void_chest_inventory is declared on Stat.",
+  "Read /tmp/barony-src/src/scores.hpp:675-707: SaveGameInfo::Player::stat_t includes std::vector<item_t> void_chest_inventory and serializes property \"void_chest_inventory\".",
+  "Read /tmp/barony-src/src/scores.cpp:5922-5937: save path iterates stats[c]->void_chest_inventory and pushes serialized item_t records.",
+  "Read /tmp/barony-src/src/scores.cpp:6615-6627: load path creates newItem entries in stats[statsPlayer]->void_chest_inventory.",
+]
+
+[[runtime_source_map]]
+name = "void_chest_inventory_binding_getter_add_item"
+capability_ids = ["void_chest_binding", "persistent_inventory"]
+source_files = [
+  "src/actchest.cpp:1705-1716",
+  "src/actchest.cpp:1773-1785",
+  "src/actchest.cpp:817-843",
+  "src/actchest.cpp:1015-1027",
+]
+observed_behavior = "Entity::getChestInventoryList returns nullptr on clients, then for actChest entities with chestVoidState != 0 returns &stats[0]->void_chest_inventory; Entity::addItemToVoidChestServer separately writes to &stats[0]->void_chest_inventory; the purple chest/lid sprites are driven by chestVoidState; positive chestVoidState counts down and expires when not held open."
+intended_p3_change = "Redirect both getter and server add-item sites to the same persistent Stash inventory source, keep the purple Void Chest sprite state for Stash access, and restrict timer changes to permanent P3 placements rather than all temporary Void Chest behavior."
+risks = [
+  "Changing only the getter or only the add-item site would split read/write inventory state and could drop items.",
+  "Client-side getter behavior currently returns nullptr; Stash binding must remain server-authoritative and not introduce client-authoritative item writes.",
+  "Timer or sprite changes can accidentally make ordinary temporary spell access permanent or visually desynchronize the chest from its actual binding.",
+]
+verification_evidence = [
+  "Read /tmp/barony-src/src/actchest.cpp:1705-1716: getter returns &stats[0]->void_chest_inventory when chestVoidState != 0.",
+  "Read /tmp/barony-src/src/actchest.cpp:1773-1785: addItemToVoidChestServer initializes inventory to &stats[0]->void_chest_inventory.",
+  "Read /tmp/barony-src/src/actchest.cpp:817-843: sprite 188 swaps to 1791 and lid sprite to 1790 while chestVoidState != 0; sprite 1791 reverts when chestVoidState == 0.",
+  "Read /tmp/barony-src/src/actchest.cpp:1015-1027: chestVoidState decrements, is clamped while open, and erupts/updates when it reaches zero.",
+]
+
+[[runtime_source_map]]
+name = "close_save_on_close_sites"
+capability_ids = ["persistent_storage", "persistent_inventory", "void_chest_binding", "multiplayer_version_metadata"]
+source_files = [
+  "src/actchest.cpp:1249-1309",
+]
+observed_behavior = "Entity::closeChest handles local/client/server close transitions, sends the CCLS packet from client to server or server to remote client, clears chestStatus, clears openedChest, and closes the local chest GUI; Entity::closeChestServer clears server chestStatus/openedChest and closes the GUI."
+intended_p3_change = "Use closeChest/closeChestServer as the post-interaction flush boundary for Stash mutations, writing only from the authoritative side and only for Void Chest/Stash-relevant interactions."
+risks = [
+  "Saving before server-side item transfer validation completes can persist rejected or partial inventory state.",
+  "Both client and server close paths can run; duplicate writes or client-authoritative writes would risk multiplayer divergence.",
+  "Unfiltered save-on-close could add avoidable I/O for ordinary chests.",
+]
+verification_evidence = [
+  "Read /tmp/barony-src/src/actchest.cpp:1249-1309: closeChest and closeChestServer are centralized chest-close candidates that expose client/server authority boundaries.",
+]
+
+[[runtime_source_map]]
+name = "spell_created_void_chest_route"
+capability_ids = ["void_chest_binding", "persistent_inventory"]
+source_files = [
+  "src/magic/castSpell.cpp:4355-4384",
+  "src/actchest.cpp:1015-1027",
+]
+observed_behavior = "SPELL_VOID_CHEST targets an existing actChest, optionally calls magicOnEntityHit when chestVoidState was zero, then sets target->chestVoidState = TICKS_PER_SECOND * 5, updates skill 17, and spawns void particles; actchest timer logic then makes that access temporary unless the chest is held open."
+intended_p3_change = "Ensure spell-routed Void Chest access opens the same Stash inventory as permanent P3 placements while preserving the vanilla five-second temporary access window for spell use."
+risks = [
+  "A blanket timer disable would turn a temporary spell into a permanent world placement and alter spell balance.",
+  "Leaving spell access bound to vanilla stats[0]->void_chest_inventory while permanent placements use another stash source would create two Void Chest inventories.",
+  "Spell effects touch an existing chest entity; placement code must not assume every Stash access point was newly spawned by P3.",
+]
+verification_evidence = [
+  "Read /tmp/barony-src/src/magic/castSpell.cpp:4355-4384: SPELL_VOID_CHEST routes through target actChest and sets chestVoidState to TICKS_PER_SECOND * 5.",
+  "Read /tmp/barony-src/src/actchest.cpp:1015-1027: the chestVoidState timer provides the expiration path for spell-created Void Chest access.",
+]
+
+[[runtime_source_map]]
+name = "lobby_assist_shrine_anchor"
+capability_ids = ["placement_lobby", "void_chest_binding", "persistent_inventory"]
+source_files = [
+  "src/maps.cpp:10242-10254",
+]
+observed_behavior = "assignActions case 201 offsets an entity, sizes it, assigns actAssistShrine, makes it non-passable, sets z, sprite 1484, yaw, and RNG seed, then breaks."
+intended_p3_change = "Use the assist-shrine action case as the lobby assist-area anchor for adding a permanent purple Void Chest Stash access point near the shrine without replacing the shrine behavior."
+risks = [
+  "Action case 201 may appear outside the intended lobby context; Stash placement must guard map/context so it does not place chests in unintended maps.",
+  "A nearby permanent chest must not block shrine interaction, pathing, or the existing assist-area layout.",
+  "Attaching Stash access to the shrine entity itself could corrupt assist shrine behavior if sprite/behavior fields are overwritten rather than creating or placing a separate chest access point.",
+]
+verification_evidence = [
+  "Read /tmp/barony-src/src/maps.cpp:10242-10254: action case 201 is the assist shrine setup anchor with actAssistShrine and sprite 1484.",
+]
+
+[[runtime_source_map]]
+name = "generated_shop_detection_shoparea_entity_copy"
+capability_ids = ["placement_shop", "void_chest_binding", "persistent_inventory"]
+source_files = [
+  "src/maps.cpp:1303-1312",
+  "src/maps.cpp:1475-1535",
+  "src/maps.cpp:1999-2004",
+  "src/maps.cpp:2569-2575",
+  "src/maps.cpp:2610-2634",
+]
+observed_behavior = "Map generation decides shoplevel, loads a shop/shop-roomgen subroom into shopmap, selects shopmap as tempMap when c == 2 && shoplevel, marks interior generated tiles as shoparea, and copies each tempMap entity into map.entities with translated coordinates and generation room coordinates."
+intended_p3_change = "Detect the generated-shop path and add one permanent purple Void Chest Stash access point to each generated shop at a point that preserves shoparea ownership, room coordinates, collision expectations, and copied template entities."
+risks = [
+  "Injecting too early may create a chest that is not copied or is missing generated-room metadata.",
+  "Injecting too late may miss shoparea marking or create duplicate chests if generation retries/re-enters shop copy code.",
+  "Using only the shoplevel flag can over-place in non-shop contexts; using only entity copy can miss rooms with no suitable copied anchor.",
+  "A placed chest outside shoparea can fail merchant/shop interaction assumptions or block generated room navigation.",
+]
+verification_evidence = [
+  "Read /tmp/barony-src/src/maps.cpp:1303-1312: shoplevel is set by gameplayCustomManager or random level conditions.",
+  "Read /tmp/barony-src/src/maps.cpp:1475-1535: shop subroom files are counted, selected, and loaded into shopmap while shoplevel is true.",
+  "Read /tmp/barony-src/src/maps.cpp:1999-2004: generated shop branch sets tempMap = &shopmap when c == 2 && shoplevel.",
+  "Read /tmp/barony-src/src/maps.cpp:2569-2575: generated shop interior tiles are marked in shoparea.",
+  "Read /tmp/barony-src/src/maps.cpp:2610-2634: entities from tempMap are copied into map.entities with translated x/y and mapGenerationRoomX/Y.",
+]
+
+[[runtime_source_map]]
+name = "multiplayer_save_metadata_consideration"
+capability_ids = ["multiplayer_version_metadata", "persistent_storage", "persistent_inventory", "void_chest_binding"]
+source_files = [
+  "src/scores.hpp:675-707",
+  "src/scores.cpp:5922-5937",
+  "src/scores.cpp:6615-6627",
+  "src/actchest.cpp:1249-1309",
+  "src/actchest.cpp:1705-1716",
+  "src/actchest.cpp:1773-1785",
+]
+observed_behavior = "Save/load already serializes void_chest_inventory as player stat data, getChestInventoryList refuses client-side inventory access, addItemToVoidChestServer is server-named, and closeChest includes explicit client/server packet routing."
+intended_p3_change = "Add or route P3 Stash metadata so saves can record Stash compatibility/version presence, and keep Stash item mutation/persistence server-authoritative in multiplayer."
+risks = [
+  "If metadata is not written, future code cannot distinguish P3 Stash saves from vanilla void_chest_inventory saves.",
+  "If metadata is not optional on load, older saves can fail or have their void_chest_inventory misread.",
+  "If clients can flush or mutate Stash independently, multiplayer sessions can diverge from the server-authoritative inventory.",
+]
+verification_evidence = [
+  "Read /tmp/barony-src/src/scores.hpp:675-707, src/scores.cpp:5922-5937, and src/scores.cpp:6615-6627: save/load path is the natural place for versioned Stash compatibility metadata.",
+  "Read /tmp/barony-src/src/actchest.cpp:1249-1309: close paths expose client/server authority boundaries for save-on-close flushing.",
+  "Read /tmp/barony-src/src/actchest.cpp:1705-1716 and 1773-1785: inventory access and add-item server route already distinguish client/server behavior.",
+]
+
+[[source_evidence_index]]
+file = "src/stat.hpp"
+lines = "466"
+observed = "Stat has list_t void_chest_inventory."
+used_by = ["void_chest_inventory_declaration_save_load"]
+
+[[source_evidence_index]]
+file = "src/actchest.cpp"
+lines = "1705-1716"
+observed = "Entity::getChestInventoryList returns &stats[0]->void_chest_inventory for actChest entities with chestVoidState != 0 and returns nullptr for clients."
+used_by = ["void_chest_inventory_binding_getter_add_item", "multiplayer_save_metadata_consideration"]
+
+[[source_evidence_index]]
+file = "src/actchest.cpp"
+lines = "1773-1785"
+observed = "Entity::addItemToVoidChestServer selects &stats[0]->void_chest_inventory as the insertion inventory."
+used_by = ["void_chest_inventory_binding_getter_add_item", "multiplayer_save_metadata_consideration"]
+
+[[source_evidence_index]]
+file = "src/actchest.cpp"
+lines = "1249-1309"
+observed = "Entity::closeChest and Entity::closeChestServer centralize chest closing and client/server CCLS routing."
+used_by = ["close_save_on_close_sites", "multiplayer_save_metadata_consideration"]
+
+[[source_evidence_index]]
+file = "src/actchest.cpp"
+lines = "817-843"
+observed = "Void Chest visuals switch between regular chest sprites and purple Void Chest sprites according to chestVoidState."
+used_by = ["void_chest_inventory_binding_getter_add_item"]
+
+[[source_evidence_index]]
+file = "src/actchest.cpp"
+lines = "1015-1027"
+observed = "chestVoidState decrements, is held positive while the chest is open, then expires and emits update/particle effects."
+used_by = ["void_chest_inventory_binding_getter_add_item", "spell_created_void_chest_route"]
+
+[[source_evidence_index]]
+file = "src/magic/castSpell.cpp"
+lines = "4355-4384"
+observed = "SPELL_VOID_CHEST targets an actChest and sets target->chestVoidState = TICKS_PER_SECOND * 5."
+used_by = ["spell_created_void_chest_route"]
+
+[[source_evidence_index]]
+file = "src/scores.hpp"
+lines = "675-707"
+observed = "SaveGameInfo::Player::stat_t contains std::vector<item_t> void_chest_inventory and serializes property \"void_chest_inventory\"."
+used_by = ["void_chest_inventory_declaration_save_load", "multiplayer_save_metadata_consideration"]
+
+[[source_evidence_index]]
+file = "src/scores.cpp"
+lines = "5922-5937"
+observed = "Save path serializes each item from stats[c]->void_chest_inventory."
+used_by = ["void_chest_inventory_declaration_save_load", "multiplayer_save_metadata_consideration"]
+
+[[source_evidence_index]]
+file = "src/scores.cpp"
+lines = "6615-6627"
+observed = "Load path reconstructs void_chest_inventory items into stats[statsPlayer]->void_chest_inventory."
+used_by = ["void_chest_inventory_declaration_save_load", "multiplayer_save_metadata_consideration"]
+
+[[source_evidence_index]]
+file = "src/maps.cpp"
+lines = "10242-10254"
+observed = "assignActions case 201 configures an actAssistShrine entity with sprite 1484."
+used_by = ["lobby_assist_shrine_anchor"]
+
+[[source_evidence_index]]
+file = "src/maps.cpp"
+lines = "1303-1312"
+observed = "Map generation decides whether the current level is a shop level."
+used_by = ["generated_shop_detection_shoparea_entity_copy"]
+
+[[source_evidence_index]]
+file = "src/maps.cpp"
+lines = "1475-1535"
+observed = "When shoplevel is true, shop subroom maps are discovered, selected, and loaded into shopmap."
+used_by = ["generated_shop_detection_shoparea_entity_copy"]
+
+[[source_evidence_index]]
+file = "src/maps.cpp"
+lines = "1999-2004"
+observed = "Generated shop branch selects tempMap = &shopmap for c == 2 && shoplevel."
+used_by = ["generated_shop_detection_shoparea_entity_copy"]
+
+[[source_evidence_index]]
+file = "src/maps.cpp"
+lines = "2569-2575"
+observed = "Generated shop interior tiles are marked firstroomtile and shoparea."
+used_by = ["generated_shop_detection_shoparea_entity_copy"]
+
+[[source_evidence_index]]
+file = "src/maps.cpp"
+lines = "2610-2634"
+observed = "Generated room entities are copied from tempMap into map.entities with translated position and room coordinates."
+used_by = ["generated_shop_detection_shoparea_entity_copy"]
