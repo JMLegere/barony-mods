@@ -223,7 +223,7 @@
               "baseRevision": { "type": "string", "minLength": 1 },
               "path": { "$ref": "#/$defs/relativePath" },
               "required": { "type": "boolean" },
-              "providesCapabilities": { "$ref": "#/$defs/capabilityIdSet" },
+              "providesCapabilities": { "$ref": "#/$defs/capabilityIdList" },
               "reviewStance": { "type": "string" }
             }
           }
@@ -347,6 +347,12 @@
         { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "placement_shop" }, "required": { "const": true } } } },
         { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "multiplayer_version_metadata" }, "required": { "const": true } } } }
       ]
+    },
+    "capabilityIdList": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/capabilityId" },
+      "uniqueItems": true
     },
     "capabilityIdSet": {
       "type": "array",
