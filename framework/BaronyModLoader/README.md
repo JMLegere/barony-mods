@@ -155,6 +155,9 @@ After building the native BML-enabled Barony runtime, run the current Stash smok
 python framework/BaronyModLoader/scenarios/stash_smoke.py
 ```
 
+If you open Barony directly from Steam, you are opening the stock Steam executable and Stash will not appear. Use this scenario, or the BML `launch` command it wraps, so the BML-enabled runtime is selected and the Stash manifest is loaded.
+
+
 By default it expects the development runtime files created by the native build workflow:
 
 ```text
@@ -186,6 +189,15 @@ The default display values are chosen for the current Linux desktop session (`DI
 ```sh
 python framework/BaronyModLoader/scenarios/stash_smoke.py --display :0 --wayland-display wayland-0
 ```
+
+For a visual/manual check, leave the launched game open:
+
+```sh
+python framework/BaronyModLoader/scenarios/stash_smoke.py --interactive
+```
+
+Close Barony when finished; the scenario will then verify the runtime report and diagnostics.
+
 
 The stricter assertions are available once those behaviors are driven by the scenario:
 

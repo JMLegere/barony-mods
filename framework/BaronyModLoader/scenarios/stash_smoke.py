@@ -147,12 +147,12 @@ def create_profile(profile: Path, runtime_info: Path) -> None:
     ])
 
 
-def launch_for_window(
+def launch_game(
     profile: Path,
     installed_package: Path,
     registry: Path,
     runtime_id: str,
-    seconds: int,
+    seconds: int | None,
     barony_args: list[str],
     display: str | None,
     wayland_display: str | None,
@@ -186,6 +186,8 @@ def launch_for_window(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+    if seconds is None:
+        return proc.wait()
     time.sleep(seconds)
     if proc.poll() is None:
         proc.terminate()
@@ -232,6 +234,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runtime-executable", type=Path, default=DEFAULT_RUNTIME_EXECUTABLE)
     parser.add_argument("--runtime-info", type=Path, default=DEFAULT_RUNTIME_INFO)
     parser.add_argument("--seconds", type=int, default=35, help="How long to let Barony run before terminating it.")
+    parser.add_argument("--interactive", action="store_true", help="Leave Barony running until you close it manually.")
     parser.add_argument("--display", default=os.environ.get("DISPLAY") or ":1")
     parser.add_argument("--wayland-display", default=os.environ.get("WAYLAND_DISPLAY") or "wayland-1")
     parser.add_argument("--keep-workspace", action="store_true")
@@ -283,12 +286,19 @@ def main() -> int:
     print(f"package: {installed_package}")
     print(f"barony args: {' '.join(barony_args)}")
 
-    return_code = launch_for_window(
+    if args.interactive:
+        print("interactive mode: close Barony to finish the scenario.")
+        print("important: this launches the BML-enabled runtime, not the stock Steam executable.")
+        seconds = None
+    else:
+        seconds = args.seconds
+
+    return_code = launch_game(
         profile,
         installed_package,
         registry,
         runtime_id,
-        args.seconds,
+        seconds,
         barony_args,
         args.display,
         args.wayland_display,
@@ -298,7 +308,7 @@ def main() -> int:
     placements = [event for event in events if event.get("event") == "stash_access_point_created"]
     saves = [event for event in events if event.get("event") == "stash_inventory_saved"]
     print("scenario result: PASS")
-    print(f"process return code after timed termination: {return_code}")
+    print(f"process return code: {return_code}")
     print(f"runtime status: {report['status']} ({report['errorCode']})")
     print(f"placements: {json.dumps(placements, indent=2)}")
     print(f"inventory saves: {json.dumps(saves, indent=2)}")
