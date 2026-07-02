@@ -141,3 +141,4 @@ These may be revisited later if real mods justify them. They are not required to
 
 - `vision.md` defines the product vision, user/modder value, prior-art influence, and phased scope.
 - `architecture.md` defines the system layers, app/runtime split, package/runtime contracts, first module set, and Stash reference flow.
+- `mvp-v1-long-term-plan.md` defines the long-term-aligned MVP plan for Stash and BaronyModLoader v1.0: Steam-backed runtime sidecar, app launcher, runtime registry, Stash modules, verification, and explicit post-v1 scope.
