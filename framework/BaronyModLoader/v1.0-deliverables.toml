@@ -10,7 +10,7 @@ objective = "A usable v1.0 BaronyModLoader path for the Stash reference mod, wit
 [[deliverables]]
 id = "p1_loader_app"
 status = "implemented"
-summary = "Python stdlib CLI validates packages/runtimes, creates profiles, and generates runtime manifests."
+summary = "Python stdlib CLI validates packages/runtimes, detects Steam Barony installs, creates profiles, and generates runtime manifests."
 required_artifacts = [
   "framework/BaronyModLoader/app/barony_mod_loader.py",
   "framework/BaronyModLoader/schema/package.schema.json",
@@ -22,6 +22,8 @@ evidence = [
   "python framework/BaronyModLoader/app/barony_mod_loader.py package validate framework/BaronyModLoader/example-stash-package.json",
   "python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate framework/BaronyModLoader/fixtures/runtime-info.stash.json --package framework/BaronyModLoader/example-stash-package.json",
   "profile create + launch-plan command produces runtime-manifest.json with canonical capabilities",
+  "python framework/BaronyModLoader/app/barony_mod_loader.py steam detect reports appid 371970, local Steam build id, install path, executable, and stockExecutablePatched=false",
+  "profile create --steam records the Steam install and launch-plan emits steam:371970:<buildid> as gameInstallId",
 ]
 
 [[deliverables]]
@@ -80,6 +82,22 @@ evidence = [
   "python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json",
   "python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-profile --mod-id jml.stash",
   "release manifest records app version, runtime version, Barony source revision, patch artifacts, package checksum, rollback notes, and pending built-game verification status",
+]
+
+[[deliverables]]
+id = "p5_steam_install_target"
+status = "implemented_pending-runtime-build"
+summary = "BaronyModLoader targets the Steam install cleanly by detecting appmanifest/build metadata and recording Steam-backed profiles without mutating the stock executable."
+required_artifacts = [
+  "framework/BaronyModLoader/app/barony_mod_loader.py",
+  "framework/BaronyModLoader/README.md",
+  "framework/BaronyModLoader/architecture.md",
+]
+evidence = [
+  "python framework/BaronyModLoader/app/barony_mod_loader.py steam detect",
+  "profile create --steam produces runtime.gameSource=steam and runtime.steam.buildId",
+  "launch-plan for a Steam-backed profile emits gameInstallId=steam:371970:<buildid>",
+  "Steam-backed Stash still requires a matching BML runtime executable; the stock Steam barony.x86_64 is detected as stockExecutablePatched=false",
 ]
 
 [[deliverables]]

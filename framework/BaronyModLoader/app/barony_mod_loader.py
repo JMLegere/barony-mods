@@ -31,6 +31,11 @@ RUNTIME_CONTRACT = f"{RUNTIME_CONTRACT_ID}@{RUNTIME_CONTRACT_VERSION}"
 PACKAGE_MANIFEST_NAME = "bml-package.json"
 PACKAGE_INSTALL_DIRECTORIES = ("content", "assets", "native", "migrations")
 DETERMINISTIC_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+STEAM_BARONY_APP_ID = "371970"
+STEAM_BARONY_EXECUTABLE = "barony.x86_64"
+STEAM_LIBRARY_RELATIVE_INSTALL = Path("common") / "Barony"
+STEAM_MANIFEST_NAME = f"appmanifest_{STEAM_BARONY_APP_ID}.acf"
+
 
 CANONICAL_STASH_CAPABILITIES = (
     "persistent_storage",
@@ -109,6 +114,104 @@ def write_json_file(path: Path, payload: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=False)
         handle.write("\n")
+
+def steam_manifest_candidates() -> list[Path]:
+    home = Path.home()
+    candidates = [
+        home / ".local/share/Steam/steamapps" / STEAM_MANIFEST_NAME,
+        home / ".steam/steam/steamapps" / STEAM_MANIFEST_NAME,
+        home / ".var/app/com.valvesoftware.Steam/data/Steam/steamapps" / STEAM_MANIFEST_NAME,
+        home / "snap/steam/common/.local/share/Steam/steamapps" / STEAM_MANIFEST_NAME,
+    ]
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.expanduser()
+        key = resolved.resolve() if resolved.exists() else resolved.absolute()
+        if key not in seen:
+            seen.add(key)
+            unique.append(resolved)
+    return unique
+
+
+def parse_steam_acf(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    pattern = re.compile(r'^\s*"([^"]+)"\s+"([^"]*)"\s*$')
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            match = pattern.match(line)
+            if match:
+                values[match.group(1)] = match.group(2)
+    return values
+
+
+def steam_manifest_for_install(install_path: Path) -> Path | None:
+    parts = install_path.resolve().parts
+    if "steamapps" not in parts:
+        return None
+    steamapps = Path(*parts[: parts.index("steamapps") + 1])
+    candidate = steamapps / STEAM_MANIFEST_NAME
+    return candidate if candidate.exists() else None
+
+
+def detect_steam_install(manifest_arg: str | None = None, install_arg: str | None = None) -> tuple[dict[str, Any] | None, ValidationResult]:
+    result = ValidationResult("Steam Barony install")
+    manifest_path: Path | None = None
+    manifest: dict[str, str] = {}
+
+    if manifest_arg:
+        manifest_path = Path(manifest_arg).expanduser()
+        if not manifest_path.exists():
+            result.add("BML_STEAM_MANIFEST_MISSING", "fatal", "Steam appmanifest does not exist.", path=str(manifest_path))
+            return None, result
+        manifest = parse_steam_acf(manifest_path)
+    elif install_arg:
+        guessed = steam_manifest_for_install(Path(install_arg).expanduser())
+        if guessed:
+            manifest_path = guessed
+            manifest = parse_steam_acf(guessed)
+    else:
+        for candidate in steam_manifest_candidates():
+            if candidate.exists():
+                manifest_path = candidate
+                manifest = parse_steam_acf(candidate)
+                break
+
+    if install_arg:
+        install_path = Path(install_arg).expanduser()
+    elif manifest_path:
+        install_dir = manifest.get("installdir") or "Barony"
+        install_path = manifest_path.parent / "common" / install_dir
+    else:
+        install_path = Path.home() / ".local/share/Steam/steamapps" / STEAM_LIBRARY_RELATIVE_INSTALL
+
+    install_path = install_path.resolve() if install_path.exists() else install_path.absolute()
+    executable = install_path / STEAM_BARONY_EXECUTABLE
+
+    if not install_path.exists():
+        result.add("BML_STEAM_INSTALL_MISSING", "fatal", "Steam Barony install directory was not found.", path=str(install_path))
+    if not executable.exists():
+        result.add("BML_STEAM_EXECUTABLE_MISSING", "fatal", "Steam Barony executable was not found.", path=str(executable))
+
+    if manifest and manifest.get("appid") not in {None, STEAM_BARONY_APP_ID}:
+        result.add("BML_STEAM_APP_ID_MISMATCH", "error", "Steam manifest appid is not Barony.", appid=manifest.get("appid"))
+
+    payload = {
+        "source": "steam",
+        "appId": STEAM_BARONY_APP_ID,
+        "name": manifest.get("name", "Barony"),
+        "buildId": manifest.get("buildid"),
+        "manifestPath": str(manifest_path.resolve()) if manifest_path and manifest_path.exists() else None,
+        "installPath": str(install_path),
+        "executable": str(executable),
+        "assetsRoot": str(install_path),
+        "compatibility": {
+            "stockExecutablePatched": False,
+            "requiresBmlRuntimeExecutable": True,
+            "runtimeUsesSteamAssets": True,
+        },
+    }
+    return payload, result
 
 
 def is_semverish(value: Any) -> bool:
@@ -1321,6 +1424,14 @@ def command_version(_args: argparse.Namespace) -> int:
     print("python stdlib standalone skeleton")
     return 0
 
+def command_steam_detect(args: argparse.Namespace) -> int:
+    steam_install, result = detect_steam_install(args.manifest, args.install)
+    if result.problems:
+        print_report(result, heading="Steam Barony detection")
+    if steam_install is not None:
+        print(json.dumps({"status": "found" if result.ok else "invalid", "steam": steam_install}, indent=2))
+    return 0 if result.ok else 1
+
 
 def command_package_validate(args: argparse.Namespace) -> int:
     package, load_result = load_package(args.path)
@@ -1355,9 +1466,27 @@ def command_profile_create(args: argparse.Namespace) -> int:
     manifests_dir = bml_root / "manifests"
     state_dir = bml_root / "state"
     warnings: list[str] = []
+    steam_install: dict[str, Any] | None = None
+    game_source = "manual"
 
-    barony_executable = Path(args.barony_executable).expanduser()
-    barony_executable_abs = barony_executable.resolve() if barony_executable.exists() else Path(args.barony_executable).expanduser().absolute()
+    if getattr(args, "steam", False):
+        game_source = "steam"
+        steam_install, steam_result = detect_steam_install(args.steam_manifest, args.steam_install)
+        if not steam_result.ok:
+            print_report(steam_result, heading="Steam Barony detection")
+            return 1
+        for problem in steam_result.problems:
+            warnings.append(format_problem(problem))
+        selected_executable = args.barony_executable or (steam_install or {}).get("executable")
+    else:
+        selected_executable = args.barony_executable
+
+    if not selected_executable:
+        print("FAILED: profile create requires --barony-executable unless --steam can detect the Steam install.", file=sys.stderr)
+        return 2
+
+    barony_executable = Path(str(selected_executable)).expanduser()
+    barony_executable_abs = barony_executable.resolve() if barony_executable.exists() else barony_executable.absolute()
     if not barony_executable.exists():
         warnings.append(f"[BML_PROFILE_EXECUTABLE_MISSING] WARNING: Barony executable does not exist yet: {barony_executable_abs}")
 
@@ -1394,8 +1523,10 @@ def command_profile_create(args: argparse.Namespace) -> int:
         },
         "activeMods": [],
         "runtime": {
+            "gameSource": game_source,
             "baronyExecutable": str(barony_executable_abs),
             "runtimeInfo": runtime_info_abs,
+            "steam": steam_install,
         },
     }
     write_json_file(profile_json_path(profile_dir), profile_payload)
@@ -1441,8 +1572,14 @@ def build_runtime_manifest(
     package: LoadedPackage,
     runtime_info: dict[str, Any],
 ) -> dict[str, Any]:
+    profile_runtime = profile.get("runtime", {})
     profile_id = profile.get("profile", {}).get("id")
-    barony_executable = profile.get("runtime", {}).get("baronyExecutable")
+    barony_executable = profile_runtime.get("baronyExecutable") if isinstance(profile_runtime, dict) else None
+    steam_install = profile_runtime.get("steam") if isinstance(profile_runtime, dict) and isinstance(profile_runtime.get("steam"), dict) else None
+    game_install_id = "profile-local"
+    if steam_install:
+        build_id = steam_install.get("buildId") or "unknown-build"
+        game_install_id = f"steam:{STEAM_BARONY_APP_ID}:{build_id}"
     required_capabilities = [
         {
             "id": entry.get("id"),
@@ -1462,13 +1599,15 @@ def build_runtime_manifest(
         },
         "launch": {
             "profileId": profile_id,
-            "gameInstallId": "profile-local",
+            "gameInstallId": game_install_id,
+            "gameSource": profile_runtime.get("gameSource", "manual") if isinstance(profile_runtime, dict) else "manual",
             "baronyExecutable": str(Path(barony_executable).expanduser().absolute()) if barony_executable else None,
             "createdAt": utc_now(),
             "runtime": {
                 "runtimeId": runtime_info.get("runtimeId"),
                 "runtimeVersion": runtime_info.get("runtimeVersion"),
             },
+            "steam": steam_install,
         },
         "mods": [
             {
@@ -1548,6 +1687,13 @@ def build_parser() -> argparse.ArgumentParser:
     version_parser = subparsers.add_parser("version", help="Print app and runtime contract version information.")
     version_parser.set_defaults(func=command_version)
 
+    steam_parser = subparsers.add_parser("steam", help="Steam Barony install discovery commands.")
+    steam_subparsers = steam_parser.add_subparsers(dest="steam_command", required=True)
+    steam_detect = steam_subparsers.add_parser("detect", help="Detect the installed Steam copy of Barony.")
+    steam_detect.add_argument("--manifest", help="Optional appmanifest_371970.acf path.")
+    steam_detect.add_argument("--install", help="Optional Steam Barony install directory.")
+    steam_detect.set_defaults(func=command_steam_detect)
+
     package_parser = subparsers.add_parser("package", help="Package commands.")
     package_subparsers = package_parser.add_subparsers(dest="package_command", required=True)
     package_validate = package_subparsers.add_parser("validate", help="Validate a package directory or JSON manifest file.")
@@ -1580,7 +1726,10 @@ def build_parser() -> argparse.ArgumentParser:
     profile_create = profile_subparsers.add_parser("create", help="Create a profile-local BaronyModLoader/profile.json.")
     profile_create.add_argument("profile_dir", help="Profile directory to create or update.")
     profile_create.add_argument("--id", dest="profile_id", required=True, help="Stable profile id.")
-    profile_create.add_argument("--barony-executable", required=True, help="Selected Barony executable path. It may be created later.")
+    profile_create.add_argument("--barony-executable", help="Selected Barony executable path. Required unless --steam detects it.")
+    profile_create.add_argument("--steam", action="store_true", help="Detect and record the installed Steam copy of Barony as the game source.")
+    profile_create.add_argument("--steam-install", help="Optional Steam Barony install directory for --steam.")
+    profile_create.add_argument("--steam-manifest", help="Optional Steam appmanifest_371970.acf path for --steam.")
     profile_create.add_argument("--runtime-info", help="Optional runtime-info JSON path to record in the profile.")
     profile_create.set_defaults(func=command_profile_create)
     profile_enable = profile_subparsers.add_parser("enable", help="Enable an installed package in a profile.")

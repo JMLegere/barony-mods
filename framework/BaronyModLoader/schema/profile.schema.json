@@ -10,7 +10,7 @@
     "profile": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "name"],
+      "required": ["id"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "name": { "type": "string", "minLength": 1 },
@@ -30,16 +30,16 @@
     },
     "paths": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["profileRoot", "activeMods", "runtimeManifest", "validationReport", "appLog", "runtimeLoadReport", "runtimeLog"],
+      "additionalProperties": true,
+      "required": ["profileRoot", "bmlRoot", "logs", "reports", "manifests", "state", "runtimeManifest"],
       "properties": {
         "profileRoot": { "type": "string", "minLength": 1 },
-        "activeMods": { "$ref": "#/$defs/profilePath" },
-        "runtimeManifest": { "$ref": "#/$defs/profilePath" },
-        "validationReport": { "$ref": "#/$defs/profilePath" },
-        "appLog": { "$ref": "#/$defs/profilePath" },
-        "runtimeLoadReport": { "$ref": "#/$defs/profilePath" },
-        "runtimeLog": { "$ref": "#/$defs/profilePath" }
+        "bmlRoot": { "type": "string", "minLength": 1 },
+        "logs": { "type": "string", "minLength": 1 },
+        "reports": { "type": "string", "minLength": 1 },
+        "manifests": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "runtimeManifest": { "type": "string", "minLength": 1 }
       }
     },
     "activeMods": {
@@ -47,7 +47,7 @@
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["id", "version", "packagePath", "manifestPath", "loadOrder", "enabled", "capabilities", "modules"],
+        "required": ["id", "version", "packagePath"],
         "properties": {
           "id": { "$ref": "#/$defs/packageId" },
           "version": { "$ref": "#/$defs/version" },
@@ -56,6 +56,7 @@
           "checksumSet": { "type": "string", "minLength": 1 },
           "loadOrder": { "type": "integer", "minimum": 0 },
           "enabled": { "type": "boolean" },
+          "enabledAt": { "$ref": "#/$defs/dateTime" },
           "capabilities": {
             "type": "array",
             "items": { "$ref": "#/$defs/capabilityRequest" }
@@ -71,24 +72,33 @@
     "runtime": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["runtimeId", "runtimeVersion", "contractVersion", "gameRevision", "executable", "capabilities"],
+      "required": ["gameSource", "baronyExecutable"],
       "properties": {
-        "runtimeId": { "$ref": "#/$defs/id" },
-        "runtimeVersion": { "$ref": "#/$defs/version" },
-        "contractVersion": { "$ref": "#/$defs/version" },
-        "gameRevision": { "type": "string", "minLength": 1 },
-        "executable": { "type": "string", "minLength": 1 },
-        "capabilities": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/runtimeCapability" },
-          "allOf": [
-            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "persistent_storage" } } } },
-            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "persistent_inventory" } } } },
-            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "void_chest_binding" } } } },
-            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "placement_lobby" } } } },
-            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "placement_shop" } } } },
-            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "multiplayer_version_metadata" } } } }
-          ]
+        "gameSource": { "type": "string", "enum": ["manual", "steam"] },
+        "baronyExecutable": { "type": "string", "minLength": 1 },
+        "runtimeInfo": { "type": ["string", "null"] },
+        "steam": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "properties": {
+            "source": { "const": "steam" },
+            "appId": { "const": "371970" },
+            "name": { "type": "string" },
+            "buildId": { "type": ["string", "null"] },
+            "manifestPath": { "type": ["string", "null"] },
+            "installPath": { "type": "string", "minLength": 1 },
+            "executable": { "type": "string", "minLength": 1 },
+            "assetsRoot": { "type": "string", "minLength": 1 },
+            "compatibility": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "stockExecutablePatched": { "const": false },
+                "requiresBmlRuntimeExecutable": { "type": "boolean" },
+                "runtimeUsesSteamAssets": { "type": "boolean" }
+              }
+            }
+          }
         }
       }
     },

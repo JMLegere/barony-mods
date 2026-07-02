@@ -46,12 +46,38 @@ BaronyModLoader should be designed as a real standalone framework from the begin
 
 This is not a rejection of a larger future SDK. It is a sequencing rule: BaronyModLoader should have the architecture of a full framework while implementing only the concrete modules Stash needs first.
 
+## Steam compatibility stance
+
+BaronyModLoader should work with the Steam version of Barony, but not by blindly binary-patching the stock Steam executable. The intended clean path is:
+
+1. Detect the installed Steam copy of Barony and record its app id, build id, install path, executable, and asset root.
+2. Use the Steam install as the owned game/data/assets source.
+3. Select or build a matching BaronyModLoader-enabled runtime executable for that Steam build.
+4. Launch that framework-enabled runtime against the Steam install/profile metadata.
+
+The current CLI can detect Jeremy's Steam install (`appid 371970`, local build id `22630456`) and create a Steam-backed BML profile. Stock `barony.x86_64` is not considered patched or Stash-capable until a matching BML runtime executable is built/selected.
+
+This keeps the user experience aimed at the Steam version while avoiding the fragile route of modifying the retail binary in place.
+
 ## Executable CLI workflow
 
-The current app slice is a Python standard-library CLI. From the repository root, the expected local commands are:
+The current app slice is a Python standard-library CLI. From the repository root, the expected local Steam commands are:
 
 ```sh
 python framework/BaronyModLoader/app/barony_mod_loader.py version
+python framework/BaronyModLoader/app/barony_mod_loader.py steam detect
+python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-steam-profile --id steam-default --steam --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
+```
+
+For non-Steam or not-yet-built runtime paths, pass the executable explicitly:
+
+```sh
+python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --barony-executable /path/to/barony --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
+```
+
+Then the package workflow is:
+
+```sh
 python framework/BaronyModLoader/app/barony_mod_loader.py package validate framework/BaronyModLoader/example-stash-package.json
 python framework/BaronyModLoader/app/barony_mod_loader.py package validate mods/stash
 python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out .tmp/Stash-0.1.0.bmlpkg
@@ -60,7 +86,6 @@ python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate frame
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime info framework/BaronyModLoader/fixtures/runtime-info.stash.json
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.loaded.json
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.failed.json
-python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --barony-executable /path/to/barony --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
 python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0
 python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
 python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json

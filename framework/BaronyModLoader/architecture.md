@@ -67,6 +67,19 @@ Responsibilities:
   - Locate Barony installs, source/build directories, and supported platform targets.
   - Detect whether an install is vanilla, framework-enabled, or incompatible.
 
+
+#### Steam install target
+
+The primary player target is the Steam version of Barony. The loader should treat the Steam install as the canonical owned game install and asset root, starting with app id `371970`.
+
+The loader may detect and record the stock Steam executable, install directory, appmanifest path, and Steam build id, but v1 should not mutate the retail executable in place. Stash requires engine behavior changes, so a Steam-backed profile needs a BaronyModLoader-enabled runtime executable that is compatible with the detected Steam build and uses the Steam install for data/assets.
+
+This makes the compatibility model explicit:
+
+- **Stock Steam Barony**: discovered and launchable as vanilla, but not Stash-capable.
+- **Steam-backed BML runtime**: preferred modded path; built/selected for the detected Steam build and pointed at the Steam install/profile metadata.
+- **Source/build directory**: development path for producing and verifying the Steam-backed BML runtime.
+
 - **Profiles**
   - Maintain isolated mod enablement sets.
   - Associate a profile with a Barony install/build, framework version, package set, and launch options.

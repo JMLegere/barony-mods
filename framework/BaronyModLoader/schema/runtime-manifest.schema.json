@@ -30,7 +30,7 @@
       "required": ["profileId", "gameInstallId", "baronyExecutable", "createdAt"],
       "properties": {
         "profileId": { "$ref": "#/$defs/id" },
-        "gameInstallId": { "$ref": "#/$defs/id" },
+        "gameInstallId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
         "baronyExecutable": { "$ref": "#/$defs/absolutePath" },
         "createdAt": { "type": "string", "format": "date-time" },
         "runtimeLoadReport": { "$ref": "#/$defs/profilePath" },
