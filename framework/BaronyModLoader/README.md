@@ -86,14 +86,18 @@ python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate frame
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime info framework/BaronyModLoader/fixtures/runtime-info.stash.json
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.loaded.json
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.failed.json
-python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0
-python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
-python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
-python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-profile --mod-id jml.stash
-python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
+python framework/BaronyModLoader/app/barony_mod_loader.py runtime register --registry .tmp/bml-runtime-registry.json --id steam-371970-22630456-dev --executable /path/to/barony-bml.x86_64 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --steam-build-id 22630456
+python framework/BaronyModLoader/app/barony_mod_loader.py runtime list --registry .tmp/bml-runtime-registry.json
+python framework/BaronyModLoader/app/barony_mod_loader.py runtime inspect steam-371970-22630456-dev --registry .tmp/bml-runtime-registry.json
+python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-steam-profile --package .tmp/bml-package-store/jml.stash/0.1.0
+python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-steam-profile
+python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-steam-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-steam-profile/BaronyModLoader/runtime-manifest.json
+python framework/BaronyModLoader/app/barony_mod_loader.py launch .tmp/bml-steam-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --registry .tmp/bml-runtime-registry.json --runtime steam-371970-22630456-dev --dry-run -- --example-barony-arg
+python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-steam-profile --mod-id jml.stash
+python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-steam-profile
 ```
 
-`package install` stores the package under the selected package store and prints the installed package path. The `profile enable` and `launch-plan` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, and writes a launch-plan/runtime-manifest JSON contract. It does not by itself verify a playable patched Barony runtime or Stash gameplay behavior.
+`package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, registers BML runtime executables, writes runtime-manifest/active-mods artifacts, and can dry-run or execute a selected runtime command. It does not by itself verify a playable patched Barony runtime or Stash gameplay behavior until a real BML-enabled Barony executable is built and registered.
 
 ## Inspiration without premature scope
 

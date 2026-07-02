@@ -12,10 +12,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import platform
 import re
 import shutil
 import tempfile
 import zipfile
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,6 +39,7 @@ STEAM_BARONY_EXECUTABLE = "barony.x86_64"
 STEAM_LIBRARY_RELATIVE_INSTALL = Path("common") / "Barony"
 STEAM_MANIFEST_NAME = f"appmanifest_{STEAM_BARONY_APP_ID}.acf"
 
+DEFAULT_RUNTIME_REGISTRY_PATH = Path.home() / ".local" / "share" / APP_ID / "runtime-registry.json"
 
 CANONICAL_STASH_CAPABILITIES = (
     "persistent_storage",
@@ -1017,6 +1021,194 @@ def command_runtime_info(args: argparse.Namespace) -> int:
             print(f"  {format_problem(problem)}")
     return 0 if result.ok else 1
 
+def runtime_registry_path(path_arg: str | None) -> Path:
+    if path_arg:
+        return Path(path_arg).expanduser().resolve()
+    return DEFAULT_RUNTIME_REGISTRY_PATH
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def current_platform_id() -> str:
+    machine = platform.machine() or "unknown"
+    if sys.platform.startswith("linux"):
+        os_name = "linux"
+    elif sys.platform == "darwin":
+        os_name = "macos"
+    elif sys.platform.startswith(("win32", "cygwin", "msys")):
+        os_name = "windows"
+    else:
+        os_name = sys.platform or "unknown"
+    return f"{os_name}-{machine}"
+
+
+def validate_runtime_info_metadata(runtime_info: dict[str, Any]) -> ValidationResult:
+    result = ValidationResult("runtime info metadata")
+    validate_required_string(result, runtime_info, "runtimeId", "BML_RUNTIME_INFO_FIELD_MISSING")
+    validate_required_string(result, runtime_info, "runtimeVersion", "BML_RUNTIME_INFO_FIELD_MISSING", semver=True)
+
+    contract_versions = runtime_contract_versions(runtime_info)
+    if (RUNTIME_CONTRACT_ID, RUNTIME_CONTRACT_VERSION) not in contract_versions:
+        result.add(
+            "BML_RUNTIME_CONTRACT_UNSUPPORTED",
+            "fatal",
+            "Runtime does not advertise the active BaronyModLoader runtime contract.",
+            required=RUNTIME_CONTRACT,
+            supported=[f"{cid}@{version}" for cid, version in sorted(contract_versions)],
+        )
+
+    available = runtime_capabilities(runtime_info)
+    if not available:
+        result.add("BML_RUNTIME_CAPABILITIES_MISSING", "fatal", "Runtime info must declare a capabilities list or object.")
+    for cap_id in sorted(available):
+        replacement = OUTDATED_CAPABILITY_ALIASES.get(cap_id)
+        if replacement:
+            result.add(
+                "BML_RUNTIME_CAPABILITY_OUTDATED",
+                "error",
+                f"Runtime advertises outdated capability id {cap_id!r}; use canonical v0 id(s): {', '.join(replacement)}.",
+                capability=cap_id,
+                replacement=list(replacement),
+            )
+    return result
+
+
+def load_runtime_registry(path: Path, *, missing_ok: bool) -> tuple[dict[str, Any], ValidationResult]:
+    result = ValidationResult(f"runtime registry {path}")
+    if not path.exists():
+        if missing_ok:
+            return {
+                "schemaVersion": SCHEMA_VERSION,
+                "app": {"id": APP_ID, "version": APP_VERSION},
+                "createdAt": utc_now(),
+                "updatedAt": utc_now(),
+                "runtimes": [],
+            }, result
+        result.add("BML_RUNTIME_REGISTRY_MISSING", "fatal", f"Runtime registry not found: {path}", hint="Run runtime register first.")
+        return {}, result
+    if not path.is_file():
+        result.add("BML_RUNTIME_REGISTRY_NOT_FILE", "fatal", f"Runtime registry path is not a file: {path}")
+        return {}, result
+    try:
+        payload = parse_json_file(path)
+    except json.JSONDecodeError as exc:
+        result.add("BML_RUNTIME_REGISTRY_PARSE_FAILED", "fatal", f"Runtime registry is not valid JSON: {path}", line=exc.lineno, column=exc.colno, error=exc.msg)
+        return {}, result
+    except OSError as exc:
+        result.add("BML_RUNTIME_REGISTRY_READ_FAILED", "fatal", f"Could not read runtime registry: {exc}")
+        return {}, result
+    if not isinstance(payload, dict):
+        result.add("BML_RUNTIME_REGISTRY_INVALID", "fatal", "Runtime registry root must be a JSON object.")
+        return {}, result
+    if not isinstance(payload.get("runtimes"), list):
+        result.add("BML_RUNTIME_REGISTRY_RUNTIMES_INVALID", "fatal", "Runtime registry must include a runtimes array.")
+    return payload, result
+
+
+def runtime_registration_id(runtime_info: dict[str, Any], steam_build_id: str | None, platform_id: str) -> str:
+    base = str(runtime_info.get("runtimeId") or "bml-runtime")
+    suffix = f"steam-{STEAM_BARONY_APP_ID}-{steam_build_id}" if steam_build_id else "manual"
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{base}-{suffix}-{platform_id}").strip("-")
+
+
+def runtime_registry_capability_entries(runtime_info: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"id": cap_id, "version": version}
+        for cap_id, version in sorted(runtime_capabilities(runtime_info).items())
+    ]
+
+
+def command_runtime_register(args: argparse.Namespace) -> int:
+    registry_path = runtime_registry_path(args.registry)
+    executable = Path(args.executable).expanduser().resolve()
+    combined = ValidationResult("runtime registration")
+
+    if not executable.exists():
+        combined.add("BML_RUNTIME_EXECUTABLE_MISSING", "fatal", f"Runtime executable not found: {executable}")
+    elif not executable.is_file():
+        combined.add("BML_RUNTIME_EXECUTABLE_NOT_FILE", "fatal", f"Runtime executable path is not a file: {executable}")
+
+    runtime_info, runtime_info_path, runtime_load_result = load_runtime_info(args.runtime_info)
+    combined.extend(runtime_load_result)
+    if runtime_info is not None:
+        combined.extend(validate_runtime_info_metadata(runtime_info))
+
+    registry, registry_load_result = load_runtime_registry(registry_path, missing_ok=True)
+    combined.extend(registry_load_result)
+
+    if not combined.ok:
+        print_report(combined, heading="Runtime registration")
+        return 1
+
+    assert runtime_info is not None
+    platform_id = args.platform or current_platform_id()
+    runtime_id = args.id or runtime_registration_id(runtime_info, args.steam_build_id, platform_id)
+    if not PACKAGE_ID_RE.match(runtime_id):
+        combined.add("BML_RUNTIME_REGISTRY_ID_INVALID", "fatal", "Runtime id must use letters, numbers, dot, underscore, or dash.", runtimeId=runtime_id)
+        print_report(combined, heading="Runtime registration")
+        return 1
+
+    now = utc_now()
+    registration = {
+        "id": runtime_id,
+        "steamAppId": args.steam_app_id,
+        "steamBuildId": args.steam_build_id,
+        "platform": platform_id,
+        "runtimeVersion": runtime_info.get("runtimeVersion"),
+        "runtimeContract": RUNTIME_CONTRACT,
+        "executable": str(executable),
+        "runtimeInfo": str(runtime_info_path),
+        "sha256": file_sha256(executable),
+        "capabilities": runtime_registry_capability_entries(runtime_info),
+        "registeredAt": now,
+    }
+
+    existing = [entry for entry in registry.get("runtimes", []) if not (isinstance(entry, dict) and entry.get("id") == runtime_id)]
+    registry.update(
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "app": {"id": APP_ID, "version": APP_VERSION},
+            "updatedAt": now,
+            "runtimes": [*existing, registration],
+        }
+    )
+    registry.setdefault("createdAt", now)
+    write_json_file(registry_path, registry)
+    print(json.dumps({"status": "registered", "registry": str(registry_path), "runtime": registration}, indent=2))
+    return 0
+
+
+def command_runtime_list(args: argparse.Namespace) -> int:
+    registry_path = runtime_registry_path(args.registry)
+    registry, result = load_runtime_registry(registry_path, missing_ok=False)
+    if not result.ok:
+        print_report(result, heading="Runtime registry")
+        return 1
+    runtimes = [entry for entry in registry.get("runtimes", []) if isinstance(entry, dict)]
+    print(json.dumps({"registry": str(registry_path), "runtimeCount": len(runtimes), "runtimes": runtimes}, indent=2))
+    return 0
+
+
+def command_runtime_inspect(args: argparse.Namespace) -> int:
+    registry_path = runtime_registry_path(args.registry)
+    registry, result = load_runtime_registry(registry_path, missing_ok=False)
+    if not result.ok:
+        print_report(result, heading="Runtime registry")
+        return 1
+    for runtime in registry.get("runtimes", []):
+        if isinstance(runtime, dict) and runtime.get("id") == args.runtime_id:
+            print(json.dumps({"registry": str(registry_path), "runtime": runtime}, indent=2))
+            return 0
+    result.add("BML_RUNTIME_REGISTRY_ID_MISSING", "fatal", f"Runtime id not found in registry: {args.runtime_id}")
+    print_report(result, heading="Runtime registry")
+    return 1
+
 
 
 def safe_archive_name(name: str) -> str | None:
@@ -1571,6 +1763,7 @@ def build_runtime_manifest(
     profile_dir: Path,
     package: LoadedPackage,
     runtime_info: dict[str, Any],
+    runtime_executable: Path | None = None,
 ) -> dict[str, Any]:
     profile_runtime = profile.get("runtime", {})
     profile_id = profile.get("profile", {}).get("id")
@@ -1602,6 +1795,7 @@ def build_runtime_manifest(
             "gameInstallId": game_install_id,
             "gameSource": profile_runtime.get("gameSource", "manual") if isinstance(profile_runtime, dict) else "manual",
             "baronyExecutable": str(Path(barony_executable).expanduser().absolute()) if barony_executable else None,
+            "bmlRuntimeExecutable": str(runtime_executable) if runtime_executable else None,
             "createdAt": utc_now(),
             "runtime": {
                 "runtimeId": runtime_info.get("runtimeId"),
@@ -1621,6 +1815,195 @@ def build_runtime_manifest(
             }
         ],
     }
+
+def write_launch_artifacts(
+    profile: dict[str, Any],
+    profile_dir: Path,
+    package: LoadedPackage,
+    runtime_info: dict[str, Any],
+    out_path: Path,
+    runtime_executable: Path | None = None,
+) -> tuple[dict[str, Any], Path]:
+    bml_root = bml_profile_root(profile_dir)
+    log_dir = bml_root / "logs"
+    report_dir = bml_root / "reports"
+    state_dir = bml_root / "state"
+    manifest_dir = bml_root / "manifests"
+    for directory in (log_dir, report_dir, state_dir, manifest_dir, out_path.parent):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    manifest = build_runtime_manifest(profile, profile_dir, package, runtime_info, runtime_executable)
+    manifest["launch"].update(
+        {
+            "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
+            "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
+            "runtimeLog": "BaronyModLoader/logs/runtime.log",
+            "stateRoot": "BaronyModLoader/state/",
+        }
+    )
+    write_json_file(out_path, manifest)
+
+    active_mods_path = active_mods_json_path(profile_dir)
+    write_json_file(
+        active_mods_path,
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "profileId": profile.get("profile", {}).get("id"),
+            "generatedAt": manifest["launch"]["createdAt"],
+            "mods": [
+                {
+                    "id": package.manifest.get("id"),
+                    "version": package.manifest.get("version"),
+                    "packagePath": str(package.manifest_path),
+                    "runtimeManifest": str(out_path),
+                }
+            ],
+        },
+    )
+    return manifest, active_mods_path
+
+
+def write_launcher_failure(profile_dir: Path, result: ValidationResult) -> None:
+    try:
+        failure_path = bml_profile_root(profile_dir) / "logs" / "launcher-failure.json"
+        write_json_file(
+            failure_path,
+            {
+                "schemaVersion": SCHEMA_VERSION,
+                "app": {"id": APP_ID, "version": APP_VERSION},
+                "createdAt": utc_now(),
+                "subject": result.subject,
+                "problems": [
+                    {"code": problem.code, "severity": problem.severity, "message": problem.message, "details": problem.details}
+                    for problem in result.problems
+                ],
+            },
+        )
+    except OSError:
+        pass
+
+
+def profile_steam_install(profile: dict[str, Any]) -> dict[str, Any] | None:
+    runtime = profile.get("runtime")
+    if not isinstance(runtime, dict):
+        return None
+    steam = runtime.get("steam")
+    return steam if isinstance(steam, dict) else None
+
+
+def validate_profile_steam_install(profile: dict[str, Any]) -> ValidationResult:
+    result = ValidationResult("profile Steam install")
+    steam = profile_steam_install(profile)
+    if steam is None:
+        return result
+    detected, detect_result = detect_steam_install(steam.get("manifestPath"), steam.get("installPath"))
+    result.extend(detect_result)
+    if detected is None:
+        return result
+    if detected.get("appId") != steam.get("appId"):
+        result.add("BML_STEAM_APP_MISMATCH", "fatal", "Detected Steam app id no longer matches the profile.", profileAppId=steam.get("appId"), detectedAppId=detected.get("appId"))
+    if detected.get("buildId") != steam.get("buildId"):
+        result.add("BML_STEAM_BUILD_MISMATCH", "fatal", "Detected Steam build id no longer matches the profile.", profileBuildId=steam.get("buildId"), detectedBuildId=detected.get("buildId"))
+    if Path(str(detected.get("installPath"))).resolve() != Path(str(steam.get("installPath"))).resolve():
+        result.add("BML_STEAM_INSTALL_MISMATCH", "fatal", "Detected Steam install path no longer matches the profile.", profileInstallPath=steam.get("installPath"), detectedInstallPath=detected.get("installPath"))
+    return result
+
+
+def validate_registered_runtime(
+    runtime: dict[str, Any],
+    profile: dict[str, Any],
+    package: LoadedPackage,
+) -> tuple[dict[str, Any] | None, Path | None, Path | None, ValidationResult]:
+    runtime_id = runtime.get("id")
+    result = ValidationResult(f"registered runtime {runtime_id or '<missing>'}")
+
+    executable_value = runtime.get("executable")
+    executable = Path(str(executable_value)).expanduser().resolve() if isinstance(executable_value, str) and executable_value else None
+    if executable is None:
+        result.add("BML_REGISTERED_RUNTIME_EXECUTABLE_MISSING", "fatal", "Registered runtime is missing executable path.")
+    elif not executable.exists():
+        result.add("BML_REGISTERED_RUNTIME_EXECUTABLE_NOT_FOUND", "fatal", f"Registered runtime executable no longer exists: {executable}")
+    elif not executable.is_file():
+        result.add("BML_REGISTERED_RUNTIME_EXECUTABLE_NOT_FILE", "fatal", f"Registered runtime executable is not a file: {executable}")
+
+    runtime_info_value = runtime.get("runtimeInfo")
+    runtime_info_path = Path(str(runtime_info_value)).expanduser().resolve() if isinstance(runtime_info_value, str) and runtime_info_value else None
+    runtime_info: dict[str, Any] | None = None
+    if runtime_info_path is None:
+        result.add("BML_REGISTERED_RUNTIME_INFO_MISSING", "fatal", "Registered runtime is missing runtimeInfo path.")
+    else:
+        runtime_info, runtime_info_path, load_result = load_runtime_info(str(runtime_info_path))
+        result.extend(load_result)
+        if runtime_info is not None:
+            result.extend(validate_runtime_info(runtime_info, package))
+
+    expected_sha = runtime.get("sha256")
+    if executable is not None and executable.exists() and executable.is_file() and isinstance(expected_sha, str):
+        actual_sha = file_sha256(executable)
+        if actual_sha != expected_sha:
+            result.add("BML_REGISTERED_RUNTIME_SHA_MISMATCH", "fatal", "Registered runtime executable checksum changed.", expected=expected_sha, actual=actual_sha)
+
+    steam = profile_steam_install(profile)
+    if steam is not None:
+        if runtime.get("steamAppId") != steam.get("appId"):
+            result.add("BML_REGISTERED_RUNTIME_STEAM_APP_MISMATCH", "fatal", "Runtime was not registered for this Steam app.", runtimeSteamAppId=runtime.get("steamAppId"), profileSteamAppId=steam.get("appId"))
+        if runtime.get("steamBuildId") != steam.get("buildId"):
+            result.add("BML_REGISTERED_RUNTIME_STEAM_BUILD_MISMATCH", "fatal", "Runtime was not registered for this Steam build.", runtimeSteamBuildId=runtime.get("steamBuildId"), profileSteamBuildId=steam.get("buildId"))
+
+    return runtime_info, runtime_info_path, executable, result
+
+
+def select_registered_runtime(
+    registry: dict[str, Any],
+    profile: dict[str, Any],
+    package: LoadedPackage,
+    requested_runtime_id: str | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None, Path | None, ValidationResult]:
+    result = ValidationResult("runtime selection")
+    runtimes = [entry for entry in registry.get("runtimes", []) if isinstance(entry, dict)]
+    if requested_runtime_id:
+        runtimes = [entry for entry in runtimes if entry.get("id") == requested_runtime_id]
+        if not runtimes:
+            result.add("BML_RUNTIME_REGISTRY_ID_MISSING", "fatal", f"Runtime id not found in registry: {requested_runtime_id}")
+            return None, None, None, None, result
+
+    for runtime in runtimes:
+        runtime_info, runtime_info_path, executable, runtime_result = validate_registered_runtime(runtime, profile, package)
+        if runtime_result.ok and runtime_info is not None and executable is not None:
+            return runtime, runtime_info, runtime_info_path, executable, result
+        result.extend(runtime_result)
+
+    if not result.problems:
+        result.add("BML_RUNTIME_REGISTRY_NO_COMPATIBLE_RUNTIME", "fatal", "No registered runtime is compatible with this profile/package.", hint="Build and register a BML runtime for the detected Steam build.")
+    return None, None, None, None, result
+
+
+def launch_working_directory(profile: dict[str, Any], executable: Path) -> Path:
+    steam = profile_steam_install(profile)
+    if steam and isinstance(steam.get("installPath"), str):
+        return Path(steam["installPath"]).expanduser().resolve()
+    return executable.parent
+
+
+def launch_environment(profile: dict[str, Any], profile_dir: Path, manifest_path: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    env["BML_PROFILE_DIR"] = str(profile_dir)
+    env["BML_RUNTIME_MANIFEST"] = str(manifest_path)
+    steam = profile_steam_install(profile)
+    if steam:
+        env["SteamAppId"] = str(steam.get("appId") or STEAM_BARONY_APP_ID)
+        env["SteamGameId"] = str(steam.get("appId") or STEAM_BARONY_APP_ID)
+        install_path = steam.get("installPath")
+        if isinstance(install_path, str) and install_path:
+            old_library_path = env.get("LD_LIBRARY_PATH")
+            env["LD_LIBRARY_PATH"] = install_path if not old_library_path else f"{install_path}:{old_library_path}"
+    return env
+
+
+def normalize_barony_args(raw_args: list[str]) -> list[str]:
+    if raw_args and raw_args[0] == "--":
+        return raw_args[1:]
+    return raw_args
 
 
 def command_launch_plan(args: argparse.Namespace) -> int:
@@ -1652,29 +2035,109 @@ def command_launch_plan(args: argparse.Namespace) -> int:
     else:
         out_path = bml_profile_root(profile_dir) / "runtime-manifest.json"
 
-    manifest = build_runtime_manifest(profile, profile_dir, package, runtime_info)
-    write_json_file(out_path, manifest)
+    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, package, runtime_info, out_path)
 
-    active_mods_path = bml_profile_root(profile_dir) / "active-mods.json"
-    write_json_file(
-        active_mods_path,
-        {
-            "schemaVersion": SCHEMA_VERSION,
-            "profileId": profile.get("profile", {}).get("id"),
-            "generatedAt": manifest["launch"]["createdAt"],
-            "mods": [
-                {
-                    "id": package.manifest.get("id"),
-                    "version": package.manifest.get("version"),
-                    "packagePath": str(package.manifest_path),
-                    "runtimeManifest": str(out_path),
-                }
-            ],
-        },
-    )
-
-    print(json.dumps({"status": "created", "runtimeManifest": str(out_path), "runtimeInfo": str(runtime_info_path)}, indent=2))
+    print(json.dumps({"status": "created", "runtimeManifest": str(out_path), "activeMods": str(active_mods_path), "runtimeInfo": str(runtime_info_path), "createdAt": manifest["launch"]["createdAt"]}, indent=2))
     return 0
+
+def command_launch(args: argparse.Namespace) -> int:
+    combined = ValidationResult("launch validation")
+
+    profile, profile_dir, profile_result = load_profile(args.profile_dir)
+    combined.extend(profile_result)
+
+    package, package_load_result = load_package(args.package)
+    combined.extend(package_load_result)
+    if package is not None:
+        combined.extend(validate_package(package))
+
+    registry_path = runtime_registry_path(args.registry)
+    registry, registry_result = load_runtime_registry(registry_path, missing_ok=False)
+    combined.extend(registry_result)
+
+    if profile is not None:
+        combined.extend(validate_profile_steam_install(profile))
+
+    selected_runtime: dict[str, Any] | None = None
+    runtime_info: dict[str, Any] | None = None
+    runtime_info_path: Path | None = None
+    runtime_executable: Path | None = None
+    if profile is not None and package is not None and registry_result.ok:
+        selected_runtime, runtime_info, runtime_info_path, runtime_executable, selection_result = select_registered_runtime(
+            registry,
+            profile,
+            package,
+            args.runtime,
+        )
+        combined.extend(selection_result)
+
+    if args.out:
+        out_path = Path(args.out).expanduser().resolve()
+    else:
+        out_path = bml_profile_root(profile_dir) / "runtime-manifest.json"
+
+    if not combined.ok:
+        print_report(combined, heading="Launch validation")
+        write_launcher_failure(profile_dir, combined)
+        return 1
+
+    assert profile is not None
+    assert package is not None
+    assert selected_runtime is not None
+    assert runtime_info is not None
+    assert runtime_info_path is not None
+    assert runtime_executable is not None
+
+    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, package, runtime_info, out_path, runtime_executable)
+    barony_args = normalize_barony_args(args.barony_args)
+    command = [
+        str(runtime_executable),
+        "--bml-runtime-manifest",
+        str(out_path),
+        "--bml-profile-root",
+        str(profile_dir),
+        *barony_args,
+    ]
+    cwd = launch_working_directory(profile, runtime_executable)
+    env = launch_environment(profile, profile_dir, out_path)
+    launch_log = bml_profile_root(profile_dir) / "logs" / "launcher-runtime.log"
+
+    launch_payload = {
+        "status": "dry-run" if args.dry_run else "launching",
+        "registry": str(registry_path),
+        "runtime": selected_runtime.get("id"),
+        "runtimeInfo": str(runtime_info_path),
+        "runtimeManifest": str(out_path),
+        "activeMods": str(active_mods_path),
+        "cwd": str(cwd),
+        "command": command,
+        "environment": {
+            key: env[key]
+            for key in ("SteamAppId", "SteamGameId", "BML_PROFILE_DIR", "BML_RUNTIME_MANIFEST", "LD_LIBRARY_PATH")
+            if key in env
+        },
+        "launchLog": str(launch_log),
+    }
+    if args.dry_run:
+        print(json.dumps(launch_payload, indent=2))
+        return 0
+
+    try:
+        with launch_log.open("w", encoding="utf-8") as log_handle:
+            log_handle.write(json.dumps({"createdAt": manifest["launch"]["createdAt"], "command": command, "cwd": str(cwd)}, indent=2))
+            log_handle.write("\n\n")
+            completed = subprocess.run(command, cwd=str(cwd), env=env, stdout=log_handle, stderr=subprocess.STDOUT, check=False)
+    except OSError as exc:
+        failure = ValidationResult("launch execution")
+        failure.add("BML_LAUNCH_EXEC_FAILED", "fatal", f"Could not execute runtime: {exc}")
+        print_report(failure, heading="Launch execution")
+        write_launcher_failure(profile_dir, failure)
+        return 1
+
+    launch_payload["status"] = "exited"
+    launch_payload["returnCode"] = completed.returncode
+    print(json.dumps(launch_payload, indent=2))
+    return int(completed.returncode)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1720,6 +2183,22 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_info = runtime_subparsers.add_parser("info", help="Summarize runtime-info JSON capabilities.")
     runtime_info.add_argument("runtime_info", help="Path to runtime-info JSON.")
     runtime_info.set_defaults(func=command_runtime_info)
+    runtime_register = runtime_subparsers.add_parser("register", help="Register a BML-enabled Barony runtime executable.")
+    runtime_register.add_argument("--registry", help=f"Runtime registry path. Defaults to {DEFAULT_RUNTIME_REGISTRY_PATH}.")
+    runtime_register.add_argument("--id", help="Stable runtime id. Defaults to a runtime/build/platform-derived id.")
+    runtime_register.add_argument("--executable", required=True, help="BML-enabled Barony runtime executable path.")
+    runtime_register.add_argument("--runtime-info", required=True, help="Runtime-info JSON path for this executable.")
+    runtime_register.add_argument("--steam-app-id", default=STEAM_BARONY_APP_ID, help="Steam app id this runtime targets.")
+    runtime_register.add_argument("--steam-build-id", help="Steam build id this runtime targets.")
+    runtime_register.add_argument("--platform", help="Platform id. Defaults to the current OS/machine.")
+    runtime_register.set_defaults(func=command_runtime_register)
+    runtime_list = runtime_subparsers.add_parser("list", help="List registered BML runtime executables.")
+    runtime_list.add_argument("--registry", help=f"Runtime registry path. Defaults to {DEFAULT_RUNTIME_REGISTRY_PATH}.")
+    runtime_list.set_defaults(func=command_runtime_list)
+    runtime_inspect = runtime_subparsers.add_parser("inspect", help="Inspect one registered BML runtime executable.")
+    runtime_inspect.add_argument("runtime_id", help="Registered runtime id.")
+    runtime_inspect.add_argument("--registry", help=f"Runtime registry path. Defaults to {DEFAULT_RUNTIME_REGISTRY_PATH}.")
+    runtime_inspect.set_defaults(func=command_runtime_inspect)
 
     profile_parser = subparsers.add_parser("profile", help="Profile commands.")
     profile_subparsers = profile_parser.add_subparsers(dest="profile_command", required=True)
@@ -1751,12 +2230,30 @@ def build_parser() -> argparse.ArgumentParser:
     launch_plan.add_argument("--out", help="Output runtime-manifest.json path. Defaults to <profile>/BaronyModLoader/runtime-manifest.json.")
     launch_plan.set_defaults(func=command_launch_plan)
 
+    launch = subparsers.add_parser("launch", help="Select a registered runtime, write launch artifacts, and start Barony.")
+    launch.add_argument("profile_dir", help="Profile directory created by profile create.")
+    launch.add_argument("--package", required=True, help="Installed package directory or direct package manifest JSON path.")
+    launch.add_argument("--registry", help=f"Runtime registry path. Defaults to {DEFAULT_RUNTIME_REGISTRY_PATH}.")
+    launch.add_argument("--runtime", help="Explicit registered runtime id. Defaults to the first compatible runtime.")
+    launch.add_argument("--out", help="Output runtime-manifest.json path. Defaults to <profile>/BaronyModLoader/runtime-manifest.json.")
+    launch.add_argument("--dry-run", action="store_true", help="Validate and print the launch command without starting Barony.")
+    launch.set_defaults(func=command_launch)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    barony_args: list[str] | None = None
+    if raw_argv and raw_argv[0] == "launch" and "--" in raw_argv:
+        separator = raw_argv.index("--")
+        barony_args = raw_argv[separator + 1 :]
+        raw_argv = raw_argv[:separator]
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
+    if getattr(args, "command", None) == "launch":
+        args.barony_args = barony_args or []
     return int(args.func(args))
 
 

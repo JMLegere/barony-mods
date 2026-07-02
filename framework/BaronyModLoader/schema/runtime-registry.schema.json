@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://baronymodloader.local/schema/runtime-registry.schema.json",
+  "title": "BaronyModLoader v0 runtime registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "app", "createdAt", "updatedAt", "runtimes"],
+  "properties": {
+    "schemaVersion": { "const": "0.1.0" },
+    "app": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "const": "BaronyModLoader" },
+        "version": { "$ref": "#/$defs/version" }
+      }
+    },
+    "createdAt": { "$ref": "#/$defs/dateTime" },
+    "updatedAt": { "$ref": "#/$defs/dateTime" },
+    "runtimes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/runtime" }
+    }
+  },
+  "$defs": {
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "dateTime": { "type": "string", "format": "date-time" },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "absolutePath": { "type": "string", "pattern": "^(?:/|[A-Za-z]:[\\\\/]).+" },
+    "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "capabilityId": {
+      "type": "string",
+      "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata"]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/capabilityId" },
+        "version": { "type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "platform", "runtimeVersion", "runtimeContract", "executable", "runtimeInfo", "sha256", "capabilities", "registeredAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "steamAppId": { "type": ["string", "null"] },
+        "steamBuildId": { "type": ["string", "null"] },
+        "platform": { "type": "string", "minLength": 1 },
+        "runtimeVersion": { "$ref": "#/$defs/version" },
+        "runtimeContract": { "const": "bml-runtime-contract@0.1.0" },
+        "executable": { "$ref": "#/$defs/absolutePath" },
+        "runtimeInfo": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/capability" }, "minItems": 1 },
+        "registeredAt": { "$ref": "#/$defs/dateTime" }
+      }
+    }
+  }
+}

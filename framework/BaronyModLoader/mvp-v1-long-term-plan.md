@@ -131,7 +131,7 @@ python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/b
 
 ### 3. App: runtime registry
 
-Current status: planned.
+Current status: implemented in the app CLI for registration, listing, inspection, checksum capture, Steam build matching, and package capability selection.
 
 Purpose: bridge the current gap between Steam install detection and actually launching a BML-enabled runtime.
 
@@ -177,7 +177,7 @@ Acceptance criteria:
 
 ### 4. App: real launch command
 
-Current status: planned; `launch-plan` exists but does not start Barony.
+Current status: implemented in the app CLI for registered runtime selection, manifest/active-mods/log artifact creation, dry-run diagnostics, and process execution against a shim runtime; playable Barony runtime verification is still pending.
 
 MVP implementation:
 
