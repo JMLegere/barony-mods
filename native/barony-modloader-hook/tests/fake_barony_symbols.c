@@ -1,5 +1,32 @@
 /* Test-only ELF symbol provider for native hook smoke tests. */
 
+int bml_fake_detour_counter __asm__("bml_fake_detour_counter") __attribute__((visibility("protected"))) = 0;
+
+int bml_fake_detour_target(void);
+
+__asm__(
+    ".text\n"
+    ".globl bml_fake_detour_target\n"
+    ".type bml_fake_detour_target, @function\n"
+    "bml_fake_detour_target:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  incl bml_fake_detour_counter(%rip)\n"
+    "  mov $41, %eax\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size bml_fake_detour_target, .-bml_fake_detour_target\n");
+
 #define BML_FAKE_FUNCTION(c_name, elf_name) \
     void c_name(void) __asm__(elf_name); \
     void c_name(void) {}

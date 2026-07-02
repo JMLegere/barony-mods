@@ -29,8 +29,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BML_APP = REPO_ROOT / "framework" / "BaronyModLoader" / "app" / "barony_mod_loader.py"
 STASH_PACKAGE_SOURCE = REPO_ROOT / "mods" / "stash"
 DEFAULT_WORKSPACE = Path("/tmp/barony-bml-stash-smoke")
-DEFAULT_RUNTIME_EXECUTABLE = Path("/tmp/barony-bml-build/barony")
-DEFAULT_RUNTIME_INFO = Path("/tmp/barony-bml-build/runtime-info.json")
+DEFAULT_RUNTIME_INFO = REPO_ROOT / "framework" / "BaronyModLoader" / "fixtures" / "runtime-info.installed-hook.stash.json"
+DEFAULT_HOOK_LIBRARY = REPO_ROOT / "native" / "barony-modloader-hook" / "build" / "libbarony_bml.so"
+DEFAULT_HOOK_MANIFEST = REPO_ROOT / "native" / "barony-modloader-hook" / "manifests" / "steam-371970-22630456-linux.json"
 DEFAULT_BARONY_ARGS = ["-windowed", "-size=640x480", "-nosound", "-quickstart=barbarian"]
 
 
@@ -110,8 +111,10 @@ def install_stash(store: Path, package_archive: Path) -> Path:
 
 def register_runtime(
     registry: Path,
-    runtime_executable: Path,
+    steam_executable: Path,
     runtime_info: Path,
+    hook_library: Path,
+    hook_manifest: Path,
     steam_build_id: str,
 ) -> str:
     runtime_id = f"steam-371970-{steam_build_id}-stash-smoke"
@@ -122,12 +125,16 @@ def register_runtime(
         str(registry),
         "--id",
         runtime_id,
-        "--executable",
-        str(runtime_executable),
+        "--runtime-strategy",
+        "installed-binary-hook",
+        "--steam-executable",
+        str(steam_executable),
+        "--hook-library",
+        str(hook_library),
+        "--hook-manifest",
+        str(hook_manifest),
         "--runtime-info",
         str(runtime_info),
-        "--steam-app-id",
-        "371970",
         "--steam-build-id",
         steam_build_id,
     ])
@@ -231,8 +238,10 @@ def assert_scenario(profile: Path, expect_shop: bool, expect_inventory_save: boo
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the BML Stash smoke scenario.")
     parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
-    parser.add_argument("--runtime-executable", type=Path, default=DEFAULT_RUNTIME_EXECUTABLE)
+    parser.add_argument("--steam-executable", type=Path, default=None, help="Installed Steam Barony executable. Defaults to `steam detect`.")
     parser.add_argument("--runtime-info", type=Path, default=DEFAULT_RUNTIME_INFO)
+    parser.add_argument("--hook-library", type=Path, default=DEFAULT_HOOK_LIBRARY)
+    parser.add_argument("--hook-manifest", type=Path, default=DEFAULT_HOOK_MANIFEST)
     parser.add_argument("--seconds", type=int, default=35, help="How long to let Barony run before terminating it.")
     parser.add_argument("--interactive", action="store_true", help="Leave Barony running until you close it manually.")
     parser.add_argument("--display", default=os.environ.get("DISPLAY") or ":1")
@@ -256,39 +265,42 @@ def main() -> int:
     if not barony_args:
         barony_args = DEFAULT_BARONY_ARGS
 
-    if not args.runtime_executable.exists():
-        raise ScenarioError(
-            f"BML runtime executable not found: {args.runtime_executable}\n"
-            "Build the native runtime first or pass --runtime-executable."
-        )
-    if not args.runtime_info.exists():
-        raise ScenarioError(
-            f"BML runtime-info not found: {args.runtime_info}\n"
-            "Run the native runtime with --bml-runtime-info=<path> first or pass --runtime-info."
-        )
+    for label, path in (
+        ("runtime-info", args.runtime_info),
+        ("hook library", args.hook_library),
+        ("hook manifest", args.hook_manifest),
+    ):
+        if not path.exists():
+            raise ScenarioError(
+                f"BML {label} not found: {path}\n"
+                f"Build/register the installed hook runtime first or pass --{label.replace(' ', '-')}."
+            )
 
     steam = run_json(["steam", "detect"])
     if steam.get("status") != "found":
         raise ScenarioError(f"Steam Barony install was not detected: {json.dumps(steam, indent=2)}")
     steam_info = steam["steam"]
     steam_build_id = str(steam_info["buildId"])
+    steam_executable = args.steam_executable or Path(steam_info["executable"])
+    if not steam_executable.exists():
+        raise ScenarioError(f"Installed Steam Barony executable not found: {steam_executable}")
 
     profile, store, registry, package_archive = prepare_workspace(args.workspace, args.keep_workspace)
     installed_package = install_stash(store, package_archive)
-    runtime_id = register_runtime(registry, args.runtime_executable, args.runtime_info, steam_build_id)
+    runtime_id = register_runtime(registry, steam_executable, args.runtime_info, args.hook_library, args.hook_manifest, steam_build_id)
     create_profile(profile, args.runtime_info)
     run(["profile", "enable", str(profile), "--package", str(installed_package)])
 
     print("BML Stash smoke scenario")
     print(f"workspace: {args.workspace}")
     print(f"steam build: {steam_build_id}")
-    print(f"runtime: {args.runtime_executable}")
+    print(f"steam executable: {steam_executable}")
     print(f"package: {installed_package}")
     print(f"barony args: {' '.join(barony_args)}")
 
     if args.interactive:
         print("interactive mode: close Barony to finish the scenario.")
-        print("important: this launches the BML-enabled runtime, not the stock Steam executable.")
+        print("important: this launches the installed Steam executable with the BML hook environment, not a source-built sidecar.")
         seconds = None
     else:
         seconds = args.seconds

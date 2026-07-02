@@ -9,27 +9,27 @@ Barony already has official content modding through Custom Content, Workshop/loc
 BaronyModLoader has two cooperating halves:
 
 1. **Standalone loader app**
-   - Discovers Barony installs and supported source/build targets.
+   - Discovers Barony installs and supported runtime/hook targets.
    - Manages mod profiles, enabled packages, dependency resolution, compatibility checks, and launch configuration.
-   - Applies or selects the correct framework-enabled engine build/patch for a profile.
+   - Registers and launches the correct BML hook/bootstrap runtime for a profile.
    - Validates installed packages before launch and provides readable errors instead of letting the engine fail late.
    - Owns logs, diagnostics export, rollback guidance, package cache, release metadata, and user-facing mod management.
 
-2. **Engine runtime/framework patch**
-   - Lives in the Barony engine/source/build selected by the loader app.
+2. **Engine runtime/framework hook**
+   - Lives in the BML-owned hook/bootstrap runtime loaded with the installed Barony executable selected by the loader app.
    - Loads validated framework manifests and exposes only named, safe gameplay capabilities.
    - Owns persistence, gameplay hook timing, placement resolution, item/container serialization, multiplayer compatibility negotiation, and save-state metadata.
    - Refuses unsupported or incompatible capabilities before gameplay state can be corrupted.
 
-The app is responsible for installation, packages, versions, profiles, patch/build lifecycle, launch, validation, and human-readable diagnostics. The engine runtime is responsible for authoritative gameplay behavior.
+The app is responsible for installation, packages, versions, profiles, runtime provenance, hook lifecycle, launch, validation, and human-readable diagnostics. The engine runtime is responsible for authoritative gameplay behavior.
 
 ## Layer summary
 
 | Layer | Responsibility | First Stash use |
 | --- | --- | --- |
-| Standalone loader app | Install discovery, profiles, packages, dependency/version checks, patch/build/release management, launch, validation, logs | Install/enable Stash against a compatible framework-enabled Barony build |
+| Standalone loader app | Install discovery, profiles, packages, dependency/version checks, runtime/provenance management, launch, validation, logs | Install/enable Stash against a compatible installed Barony runtime target |
 | Mod package format | Stable ids, versions, dependencies/conflicts, Barony/framework targets, capabilities, assets, metadata | A Stash package declaring persistent inventory, Void Chest binding, placement hooks, and multiplayer metadata |
-| Engine runtime/framework patch | Safe engine-owned hooks and capability execution | Persistent storage, persistent `void_chest_inventory`, Void Chest routing, lobby/shop placement, multiplayer/version checks |
+| Engine runtime/framework hook | Safe engine-owned hooks and capability execution through BML-owned bootstrap code | Persistent storage, persistent `void_chest_inventory`, Void Chest routing, lobby/shop placement, multiplayer/version checks |
 | Module SDK/interface | Documented declarations and narrow APIs for mod authors | The first module set required by Stash only |
 | Stash reference mod | First real mod proving the framework end-to-end | Shared persistent Void Chest stash across runs, saves, spell chests, lobby, and shops |
 
@@ -154,7 +154,7 @@ python framework/BaronyModLoader/app/barony_mod_loader.py launch \
 
 ## Runnable verification scenarios
 
-The current native hook smoke is Linux-only and proves injection/reporting only: `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so /usr/bin/true` should load the hook and write `<profile>/BaronyModLoader/reports/runtime-load-report.json` when the BML environment points at a profile, runtime manifest, and hook manifest. It does not resolve Barony symbols, patch gameplay, or create the Stash chest in-game.
+The current native hook smoke is Linux-only and proves injection/reporting and symbol-probe plumbing only: `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so /usr/bin/true` should load the hook and write `<profile>/BaronyModLoader/reports/runtime-load-report.json` when the BML environment points at a profile, runtime manifest, and hook manifest. It does not install gameplay detours or create the Stash chest in-game.
 
 The intended staged verification sequence is:
 

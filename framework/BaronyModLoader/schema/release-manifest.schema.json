@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://baronymodloader.local/schema/release-manifest.schema.json",
-  "title": "BaronyModLoader v0 release manifest",
+  "title": "BaronyModLoader v1 release manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,6 +11,7 @@
     "app",
     "package",
     "runtime",
+    "runtimeProvenance",
     "barony",
     "patchSeries",
     "buildArtifacts",
@@ -52,7 +53,9 @@
         "id",
         "version",
         "manifestPath",
-        "checksum"
+        "checksum",
+        "archive",
+        "installedPathShape"
       ],
       "properties": {
         "id": {
@@ -66,6 +69,38 @@
         },
         "checksum": {
           "$ref": "#/$defs/checksum"
+        },
+        "archive": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "checksum",
+            "status"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/repoRelativePath"
+            },
+            "checksum": {
+              "$ref": "#/$defs/checksum"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "packed_fixture",
+                "release_artifact",
+                "pending"
+              ]
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
+        "installedPathShape": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -104,8 +139,9 @@
         "status": {
           "type": "string",
           "enum": [
-            "source_patch_artifacts_present_runtime_binary_pending",
+            "installed_binary_hook_contract_recorded_fail_closed",
             "runtime_binary_verified",
+            "source_patch_artifacts_present_runtime_binary_pending",
             "pending"
           ]
         },
@@ -113,6 +149,9 @@
           "type": "string"
         }
       }
+    },
+    "runtimeProvenance": {
+      "$ref": "#/$defs/installedBinaryHookProvenance"
     },
     "barony": {
       "type": "object",
@@ -140,6 +179,7 @@
         "sourceRevisionStatus": {
           "type": "string",
           "enum": [
+            "semantic_reference_only",
             "verified",
             "pending_patched_build",
             "placeholder"
@@ -164,6 +204,7 @@
             "status": {
               "type": "string",
               "enum": [
+                "installed_steam_linux_target_recorded_gameplay_pending",
                 "source_patch_artifacts_present_built_game_pending",
                 "verified_playable",
                 "unknown"
@@ -187,6 +228,7 @@
         "status": {
           "type": "string",
           "enum": [
+            "semantic_reference_only",
             "source_artifacts_present",
             "applied_to_verified_source",
             "pending"
@@ -215,6 +257,7 @@
         "status": {
           "type": "string",
           "enum": [
+            "not_applicable_installed_binary_hook",
             "pending_patched_build",
             "verified",
             "not_applicable"
@@ -237,12 +280,14 @@
       "required": [
         "status",
         "artifactVerification",
+        "installedHookVerification",
         "builtGameBehavior"
       ],
       "properties": {
         "status": {
           "type": "string",
           "enum": [
+            "installed_hook_fail_closed_gameplay_pending",
             "artifact_verified_built_game_pending",
             "verified_playable",
             "failed",
@@ -276,6 +321,38 @@
             }
           }
         },
+        "installedHookVerification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "failClosed",
+            "reports"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "fail_closed_pending_detours",
+                "verified_playable",
+                "failed",
+                "pending"
+              ]
+            },
+            "failClosed": {
+              "type": "boolean"
+            },
+            "reports": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/verificationReport"
+              }
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
         "builtGameBehavior": {
           "type": "object",
           "additionalProperties": false,
@@ -287,6 +364,7 @@
             "status": {
               "type": "string",
               "enum": [
+                "pending_installed_hook_detours",
                 "pending_patched_build",
                 "complete",
                 "failed"
@@ -347,6 +425,17 @@
       "not": {
         "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))"
       }
+    },
+    "absoluteOrRepoPath": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": ".*(?:^|/)\\.\\.(?:/|$)"
+      }
+    },
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
     },
     "sha256": {
       "type": "string",
@@ -424,6 +513,296 @@
         }
       ]
     },
+    "installedBinaryHookProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtimeStrategy",
+        "storefront",
+        "platform",
+        "gameVersion",
+        "installedExecutable",
+        "hookLibrary",
+        "hookManifest",
+        "runtimeInfo",
+        "status"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "storefront": {
+                "const": "steam"
+              }
+            },
+            "required": [
+              "storefront"
+            ]
+          },
+          "then": {
+            "required": [
+              "steam"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "storefront": {
+                "enum": [
+                  "epic",
+                  "gog",
+                  "humble"
+                ]
+              }
+            },
+            "required": [
+              "storefront"
+            ]
+          },
+          "then": {
+            "required": [
+              "storefrontTarget"
+            ],
+            "not": {
+              "required": [
+                "steam"
+              ]
+            }
+          }
+        }
+      ],
+      "properties": {
+        "runtimeStrategy": {
+          "const": "installed-binary-hook"
+        },
+        "storefront": {
+          "type": "string",
+          "enum": [
+            "steam",
+            "epic",
+            "gog",
+            "humble"
+          ]
+        },
+        "steam": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "appId",
+            "buildId"
+          ],
+          "properties": {
+            "appId": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "buildId": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            }
+          }
+        },
+        "storefrontTarget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "buildId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gameVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "installedExecutable": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pathHint",
+            "sha256",
+            "buildId",
+            "status"
+          ],
+          "properties": {
+            "pathHint": {
+              "$ref": "#/$defs/absoluteOrRepoPath"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "buildId": {
+              "$ref": "#/$defs/sha1"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "verified_local_target",
+                "pending",
+                "mismatch"
+              ]
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
+        "hookLibrary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "checksum",
+            "status"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/repoRelativePath"
+            },
+            "checksum": {
+              "$ref": "#/$defs/checksum"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "built_available_fail_closed",
+                "available",
+                "missing",
+                "pending"
+              ]
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
+        "hookManifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "checksum",
+            "status"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/repoRelativePath"
+            },
+            "checksum": {
+              "$ref": "#/$defs/checksum"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "present",
+                "missing",
+                "pending"
+              ]
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
+        "runtimeInfo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "checksum",
+            "status"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/repoRelativePath"
+            },
+            "checksum": {
+              "$ref": "#/$defs/checksum"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "present",
+                "missing",
+                "pending"
+              ]
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "provenance_recorded_fail_closed",
+            "verified_playable",
+            "pending",
+            "failed"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "verificationReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path",
+        "status"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "runtime-load",
+            "symbol-probe",
+            "detour-self-test",
+            "stash-hook",
+            "release-provenance"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/repoRelativePath"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "schema_defined",
+            "current_fail_closed",
+            "pending_capture",
+            "passed",
+            "failed"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
     "patchArtifact": {
       "type": "object",
       "additionalProperties": false,
@@ -469,6 +848,7 @@
         "verificationStatus": {
           "type": "string",
           "enum": [
+            "semantic_reference_only",
             "artifact_present",
             "applied_to_verified_source",
             "pending"

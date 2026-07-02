@@ -54,10 +54,10 @@ Expected local flow:
 python framework/BaronyModLoader/app/barony_mod_loader.py package validate mods/stash
 python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out .tmp/Stash-0.1.0.bmlpkg
 python framework/BaronyModLoader/app/barony_mod_loader.py package install .tmp/Stash-0.1.0.bmlpkg --store .tmp/bml-package-store
-python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --barony-executable /path/to/barony --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
+python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --steam
 python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0
 python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
-python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
+python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
 python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-profile --mod-id jml.stash
 ```
 
@@ -70,7 +70,7 @@ Install rules:
 - `profile inspect` is the human-readable support surface for active package ids, package paths, selected runtime metadata, and launch readiness.
 - `launch-plan` should consume the installed package path so the runtime manifest is tied to the same package bytes that validation and profile activation saw.
 
-This workflow proves package management behavior only. It does not assert that a patched Barony executable has run Stash gameplay scenarios until built-game verification evidence exists.
+This workflow proves package management behavior only. It does not assert that the installed executable plus BML hook runtime has run Stash gameplay scenarios until installed-game verification evidence exists.
 
 ## Manifest identity
 
@@ -360,87 +360,153 @@ Checksum policy:
 
 - Every installed file must be listed, except app-generated profile state.
 - The app verifies checksums before activation and before launch.
-- Native patches/build artifacts require checksums in release packages.
+- Native hook libraries, hook manifests, runtime-info files, and any semantic source reference artifacts require checksums in release manifests.
 - A checksum mismatch disables the package for that profile until the user repairs or reinstalls it.
 - Maintainer signatures are optional in early local development but should be included for distributable releases.
 
-## Source and build metadata
+## Runtime provenance metadata
 
-Packages that require native runtime support must identify their source and build provenance.
+Packages that require native runtime support must identify the installed game target and the BML-owned hook/bootstrap artifacts used for launch. Source patch files may still be referenced as semantic design artifacts, but they are not the v1 runtime authority unless a future release explicitly selects and verifies a source-build strategy.
 
 ```json
 {
-  "source": {
-    "homepage": "https://github.com/JMLegere/Barony",
-    "upstream": "https://github.com/TurningWheel/Barony",
-    "repository": "https://github.com/JMLegere/Barony",
-    "revision": "git-sha-or-tag",
-    "patchSeries": "native/patches/series.json"
+  "runtimeStrategy": "installed-binary-hook",
+  "storefront": "steam",
+  "steam": {
+    "appId": "371970",
+    "buildId": "22630456"
   },
-  "build": {
-    "reproducible": true,
-    "system": "documented-native-build",
-    "instructions": "native/build/build.json",
-    "outputs": [
-      {
-        "platform": "linux-x86_64",
-        "path": "native/release/linux-x86_64/barony",
-        "sha256": "..."
-      }
-    ]
+  "platform": "linux-x86_64",
+  "gameVersion": "v5.0.2",
+  "installedExecutable": {
+    "pathHint": "/path/to/Steam/steamapps/common/Barony/barony.x86_64",
+    "sha256": "installed-executable-sha256",
+    "buildId": "installed-executable-elf-build-id",
+    "status": "verified_local_target"
+  },
+  "hookLibrary": {
+    "path": "native/barony-modloader-hook/build/libbarony_bml.so",
+    "checksum": {
+      "algorithm": "sha256",
+      "sha256": "hook-library-sha256",
+      "size": 12345
+    },
+    "status": "built_available_fail_closed"
+  },
+  "hookManifest": {
+    "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+    "checksum": {
+      "algorithm": "sha256",
+      "sha256": "hook-manifest-sha256",
+      "size": 12345
+    },
+    "status": "present"
   }
 }
 ```
 
-This metadata is not decorative. It is the difference between a reviewable framework patch and an opaque fork. The app should surface it prominently whenever a package requires a non-stock Barony runtime.
+This metadata is not decorative. It is the difference between a reviewable installed-executable hook release and an opaque fork. The app should surface it prominently whenever a package requires native runtime support.
 
 
 ## Release manifest
 
-A distributable release should include or reference a release manifest that ties the app, package archive, runtime patch artifacts, source revision, and verification status together. The release manifest is separate from `bml-package.json`: the package manifest declares what the mod needs, while the release manifest records exactly what was packaged and what has been verified.
+A distributable release should include or reference a release manifest that ties the app, package archive, installed executable provenance, hook/bootstrap artifacts, semantic source references, and verification status together. The release manifest is separate from `bml-package.json`: the package manifest declares what the mod needs, while the release manifest records exactly what was packaged and what has been verified.
 
 Example shape:
 
 ```json
 {
-  "manifestVersion": "0.1.0",
+  "schemaVersion": "0.1.0",
+  "manifestId": "jml.stash.release.0.1.0",
   "createdAt": "2026-07-02T00:00:00Z",
   "app": {
-    "id": "barony-mod-loader",
+    "id": "BaronyModLoader",
     "version": "0.1.0"
   },
   "package": {
     "id": "jml.stash",
     "version": "0.1.0",
-    "archive": "Stash-0.1.0.bmlpkg",
-    "sha256": "package-archive-sha256",
-    "installedPathExample": ".tmp/bml-package-store/jml.stash/0.1.0"
+    "manifestPath": "mods/stash/bml-package.json",
+    "checksum": {
+      "algorithm": "sha256",
+      "sha256": "package-manifest-sha256",
+      "size": 12345
+    },
+    "archive": {
+      "path": "framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "package-archive-sha256",
+        "size": 67890
+      },
+      "status": "packed_fixture"
+    },
+    "installedPathShape": "<package-store>/jml.stash/0.1.0"
   },
   "runtime": {
-    "id": "bml-runtime",
-    "version": "0.1.0",
-    "contract": "bml-runtime-contract@0.1.0",
-    "baronySource": {
-      "upstream": "https://github.com/TurningWheel/Barony",
-      "revision": "barony-source-revision",
-      "patchArtifacts": [
-        "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
-        "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch"
-      ]
+    "contract": {
+      "id": "bml-runtime-contract",
+      "version": "0.1.0"
     },
-    "capabilities": [
+    "runtimeVersion": "0.1.0",
+    "requiredCapabilities": [
       "persistent_storage",
       "persistent_inventory",
       "void_chest_binding",
       "placement_lobby",
       "placement_shop",
       "multiplayer_version_metadata"
-    ]
+    ],
+    "status": "installed_binary_hook_contract_recorded_fail_closed"
+  },
+  "runtimeProvenance": {
+    "runtimeStrategy": "installed-binary-hook",
+    "storefront": "steam",
+    "steam": {
+      "appId": "371970",
+      "buildId": "22630456"
+    },
+    "platform": "linux-x86_64",
+    "gameVersion": "v5.0.2",
+    "installedExecutable": {
+      "pathHint": "/path/to/Steam/steamapps/common/Barony/barony.x86_64",
+      "sha256": "installed-executable-sha256",
+      "buildId": "installed-executable-build-id",
+      "status": "verified_local_target"
+    },
+    "hookLibrary": {
+      "path": "native/barony-modloader-hook/build/libbarony_bml.so",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "hook-library-sha256",
+        "size": 12345
+      },
+      "status": "built_available_fail_closed"
+    },
+    "hookManifest": {
+      "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "hook-manifest-sha256",
+        "size": 12345
+      },
+      "status": "present"
+    },
+    "runtimeInfo": {
+      "path": "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "runtime-info-sha256",
+        "size": 12345
+      },
+      "status": "present"
+    },
+    "status": "provenance_recorded_fail_closed"
   },
   "verification": {
     "packageArchiveInstallEnableDisable": "verified-by-cli-evidence",
     "runtimeManifestGeneration": "verified-by-cli-evidence",
-    "builtGameStashBehavior": "pending-built-game-verification"
+    "installedHookStashBehavior": "pending-gameplay-detours"
   },
   "rollback": {
     "disableCommand": "profile disable <profile-dir> --mod-id jml.stash",
@@ -451,11 +517,11 @@ Example shape:
 
 Release manifest policy:
 
-- It must record the Barony source revision or tag used by the runtime patch artifacts.
+- It must record the installed PC executable target and BML hook/bootstrap artifacts used by the release.
 - It must record the BaronyModLoader app/runtime versions and the runtime contract version.
 - It must record the package archive checksum and the installed package path shape used by profile activation.
 - It must list only canonical Stash v0 capability ids: `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
-- It must distinguish package/archive/profile workflow verification from pending built-game runtime behavior verification.
+- It must distinguish package/archive/profile workflow verification from pending installed-game runtime behavior verification.
 - It must include rollback notes that do not require deleting unrelated Barony installs, content, or profiles.
 
 ## Profile activation record

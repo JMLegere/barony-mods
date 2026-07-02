@@ -11,6 +11,7 @@ REPORT_DIR="$PROFILE_DIR/BaronyModLoader/reports"
 REPORT="$REPORT_DIR/runtime-load-report.json"
 SYMBOL_REPORT="$REPORT_DIR/symbol-probe-report.json"
 STASH_REPORT="$REPORT_DIR/stash-hook-report.json"
+DETOUR_REPORT="$REPORT_DIR/detour-self-test-report.json"
 FAIL_PROFILE_DIR="$PROFILE_DIR/failure-profile"
 FAIL_REPORT_DIR="$FAIL_PROFILE_DIR/BaronyModLoader/reports"
 FAIL_REPORT="$FAIL_REPORT_DIR/runtime-load-report.json"
@@ -92,6 +93,7 @@ JSON
 
 cp "$ROOT_DIR/manifests/steam-371970-22630456-linux.json" "$HOOK_MANIFEST"
 
+BML_DETOUR_SELF_TEST=1 \
 BML_PROFILE_DIR="$PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -99,7 +101,7 @@ BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
 LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
 /usr/bin/true
 
-python - "$REPORT" "$SYMBOL_REPORT" "$STASH_REPORT" "$HOOK_LIBRARY" <<'PY'
+python - "$REPORT" "$SYMBOL_REPORT" "$STASH_REPORT" "$DETOUR_REPORT" "$HOOK_LIBRARY" <<'PY'
 import json
 import pathlib
 import sys
@@ -107,14 +109,16 @@ import sys
 report_path = pathlib.Path(sys.argv[1])
 symbol_report_path = pathlib.Path(sys.argv[2])
 stash_report_path = pathlib.Path(sys.argv[3])
-hook_library = sys.argv[4]
-for path in (report_path, symbol_report_path, stash_report_path):
+detour_report_path = pathlib.Path(sys.argv[4])
+hook_library = sys.argv[5]
+for path in (report_path, symbol_report_path, stash_report_path, detour_report_path):
     if not path.is_file():
         raise SystemExit(f"missing report: {path}")
 
 report = json.loads(report_path.read_text(encoding="utf-8"))
 symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
 stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+detour_report = json.loads(detour_report_path.read_text(encoding="utf-8"))
 
 assert report["contract"] == {"id": "bml-runtime-contract", "version": "0.1.0"}
 assert report["runtime"]["id"] == "barony-bml-runtime-stash"
@@ -142,6 +146,27 @@ for symbol in symbol_report["symbols"]:
     assert symbol["status"] == "resolved", symbol
     assert isinstance(symbol["address"], str) and symbol["address"].startswith("0x"), symbol
 
+assert detour_report["schemaVersion"] == "0.1.0"
+assert detour_report["test"] == "linux-x86_64-absolute-jump-detour-self-test"
+assert detour_report["status"] == "loaded", detour_report
+assert detour_report["backend"] == {
+    "patchStyle": "rip-relative-indirect-jmp-absolute-slot",
+    "patchBytes": 14,
+    "decoder": "fixture-safe-subset",
+}
+assert detour_report["targetSymbol"] == "bml_fake_detour_target"
+assert isinstance(detour_report["targetAddress"], str) and detour_report["targetAddress"].startswith("0x"), detour_report
+assert isinstance(detour_report["replacementAddress"], str) and detour_report["replacementAddress"].startswith("0x"), detour_report
+assert isinstance(detour_report["trampolineAddress"], str) and detour_report["trampolineAddress"].startswith("0x"), detour_report
+assert detour_report["patchSize"] >= 14, detour_report
+assert detour_report["replacementInvoked"] is True, detour_report
+assert detour_report["originalCallThroughInvoked"] is True, detour_report
+assert detour_report["replacementCalls"] == 1, detour_report
+assert detour_report["fakeCounterAfter"] == detour_report["fakeCounterBefore"] + 1, detour_report
+assert detour_report["originalResult"] == 41, detour_report
+assert detour_report["directResult"] == 1041, detour_report
+assert detour_report["error"] is None, detour_report
+
 assert stash_report["schemaVersion"] == "0.1.0"
 assert stash_report["runtime"]["id"] == "barony-bml-runtime-stash"
 assert stash_report["profileId"] == "steam-default"
@@ -149,7 +174,7 @@ assert stash_report["mod"] == {"id": "jml.stash", "version": "0.1.0", "manifestD
 assert stash_report["backend"]["id"] == "linux-x86_64-direct-stash-detour"
 assert stash_report["backend"]["mode"] == "analyze-only"
 assert stash_report["backend"]["strategy"] == "abstract-direct-detour-backend"
-assert stash_report["backend"]["patchBytes"] == 12
+assert stash_report["backend"]["patchBytes"] == 14
 assert stash_report["status"] == "failed"
 summary = stash_report["summary"]
 assert summary["failClosed"] is True

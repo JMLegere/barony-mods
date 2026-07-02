@@ -7,7 +7,7 @@ artifact = "roadmap.toml"
 status = "planning"
 framework = "BaronyModLoader"
 reference_mod = "stash"
-vision = "A standalone Barony modding framework app paired with a narrow, upstreamable engine runtime patch."
+vision = "A standalone Barony modding framework app paired with a narrow installed-executable hook/bootstrap runtime."
 initial_implementation_rule = "Build the full framework shape, but implement only the concrete modules and interfaces required by Stash first."
 source_upstream = "https://github.com/TurningWheel/Barony"
 source_work_fork = "https://github.com/JMLegere/Barony"
@@ -19,10 +19,10 @@ full_framework = [
   "profiles",
   "mod packages",
   "dependency and version resolution",
-  "patch/build/release management",
+  "runtime/provenance/release management",
   "launch orchestration",
   "validation and diagnostics",
-  "paired Barony engine runtime/framework patch",
+  "paired Barony hook/bootstrap runtime",
   "safe engine-owned gameplay hooks",
 ]
 initial_modules_only = [
@@ -79,7 +79,7 @@ focus = "Create the user-facing BaronyModLoader app foundation: local package va
 implements_modules = [
   "dependency_version_resolver: minimal validation only",
   "launch_profiles: profile/build/mod-set metadata only",
-  "build_patch_manager: patch/build identity tracking only",
+  "runtime_provenance_manager: installed executable and hook identity tracking only",
   "diagnostics: validation report surface only",
 ]
 app_deliverables = [
@@ -92,11 +92,11 @@ app_deliverables = [
   "emit human-readable validation failures with nonzero exit status",
 ]
 engine_deliverables = [
-  "none in p1; paired engine runtime patch remains planned for p2",
+  "none in p1; paired installed-executable hook/bootstrap runtime remains planned for p2",
 ]
 stash_deliverables = [
   "Stash package metadata can declare required runtime capabilities",
-  "App refuses to launch Stash against an incompatible unpatched build with a clear error",
+  "App refuses to launch Stash against an incompatible or unsupported runtime target with a clear error",
 ]
 exit_criteria = [
   "CLI can validate Stash package metadata and explain missing required capabilities before launch",
@@ -106,11 +106,11 @@ exit_criteria = [
 ]
 
 [[phases]]
-id = "p2_engine_runtime_patch"
+id = "p2_installed_hook_bootstrap"
 order = 2
-name = "Engine runtime capability patch"
-status = "current-handshake-artifacts"
-focus = "Add the paired Barony runtime/framework patch handshake artifacts with safe named capabilities and validation schemas, without implementing Stash gameplay behavior yet."
+name = "Installed hook/bootstrap capability contract"
+status = "current-installed-hook-artifacts"
+focus = "Add the installed PC executable hook/bootstrap contract with safe named capabilities, validation schemas, symbol probes, and fail-closed Stash hook analysis without implementing Stash gameplay behavior yet."
 implements_modules = [
   "persistent_storage: canonical capability declaration only",
   "persistent_inventory: canonical capability declaration only",
@@ -120,17 +120,17 @@ implements_modules = [
   "multiplayer_version_metadata: canonical capability declaration only",
 ]
 app_deliverables = [
-  "recognize the patched runtime version/capability set from runtime-info.schema.json-compatible metadata",
+  "recognize the installed hook runtime version/capability set from runtime-info.schema.json-compatible metadata",
   "validate runtime-info JSON for the canonical P2 capability ids",
-  "validate runtime-load-report JSON written by the engine after manifest validation",
+  "validate runtime-load-report JSON written by the hook runtime after manifest validation",
   "surface runtime validation failures in CLI diagnostics without claiming gameplay hooks are active",
 ]
 engine_deliverables = [
-  "source patch artifact for the Barony runtime handshake, including reproducible source/build provenance",
+  "native hook/bootstrap artifact for the installed PC executable path, including executable and hook provenance",
   "runtime-info schema describing runtime id, version, game revision, contract versions, and canonical capabilities",
   "runtime-load-report schema describing loaded or failed startup status, loaded mod entries, warnings, and stable errors",
   "fixtures for compatible runtime-info, successful runtime-load-report, and failed runtime-load-report cases",
-  "load and validate framework capability declarations before gameplay once the patch is applied",
+  "load and validate framework capability declarations before gameplay once the installed hook runtime supports active Stash modules",
   "report framework runtime, active mods, canonical capabilities, and startup validation errors through BaronyModLoader/reports/runtime-load-report.json",
 ]
 stash_deliverables = [
@@ -138,11 +138,11 @@ stash_deliverables = [
   "No P2 artifact implements persistent inventory behavior, Void Chest routing, lobby/shop placement, or multiplayer gameplay logic",
 ]
 exit_criteria = [
-  "Source patch artifact identifies minimal upstream-reviewable Barony insertion points",
+  "Installed hook artifact identifies minimal Barony symbol probes and fail-closed hook targets",
   "runtime-info schema and fixtures use only the canonical v0 capability ids",
   "runtime-load-report schema and fixtures cover loaded and failed startup reports with stable diagnostics",
   "CLI report validation can reject malformed runtime-info and runtime-load-report JSON",
-  "P2 is complete only as runtime-handshake/source-patch artifacts; Stash gameplay behavior remains planned for p3",
+  "P2 is complete only as installed-hook contract/probe/fail-closed artifacts; Stash gameplay behavior remains planned for p3",
 ]
 
 [[phases]]
@@ -161,7 +161,7 @@ implements_modules = [
 ]
 app_deliverables = [
   "profile diagnostics show Stash package/runtime/storage compatibility",
-  "launch profile selects the Stash-capable patched build",
+  "launch profile selects the Stash-capable installed hook runtime",
 ]
 engine_deliverables = [
   "persist stash:void_chest_inventory outside normal run lifetime",
@@ -208,8 +208,8 @@ app_deliverables = [
   "disable Stash from a profile without deleting unrelated package bytes, storage, or Barony content",
   "inspect profile activation state, selected package paths, and active package ids",
   "generate launch plans from the installed package path rather than a loose source fixture",
-  "release manifest identifies app version, runtime version, upstream Barony revision, package checksum, patch artifacts, and rollback notes",
-  "release manifest records when built-game Stash behavior remains pending instead of implying playable verification",
+  "release manifest identifies app version, runtime version, installed executable provenance, package checksum, hook artifacts, and rollback notes",
+  "release manifest records when installed-game Stash behavior remains pending instead of implying playable verification",
 ]
 engine_deliverables = [
   "runtime version/capability report is available for packaging validation",
@@ -220,9 +220,9 @@ stash_deliverables = [
   "Stash storage remains profile-scoped and recoverable across package updates",
 ]
 exit_criteria = [
-  "A user can understand which artifact is the app, which is the patched Barony runtime, which is the Stash package archive, and which package path is installed in a profile",
-  "Release metadata states exact Barony source compatibility and release manifest provenance",
-  "Package archive/install/enable/disable workflow is represented without claiming the patched Barony runtime has passed playable Stash scenarios",
+  "A user can understand which artifact is the app, which is the installed Barony executable, which is the BML hook library, which is the Stash package archive, and which package path is installed in a profile",
+  "Release metadata states exact installed executable compatibility and release manifest provenance",
+  "Package archive/install/enable/disable workflow is represented without claiming the installed-hook runtime has passed playable Stash scenarios",
   "Rollback does not require deleting unrelated Barony content or profiles",
 ]
 
@@ -244,7 +244,7 @@ app_deliverables = [
   "multi-mod package resolution",
   "profile import/export",
   "Workshop/local package integration where compatible with official systems",
-  "automated patch/build workflows when source-build assumptions are stable",
+  "automated source patch/build workflows only as optional future tooling when source-build assumptions are stable",
   "support bundle export for diagnostics",
 ]
 engine_deliverables = [
@@ -262,15 +262,15 @@ exit_criteria = [
 ]
 
 [release_strategy]
-preferred = "versioned source patch series against upstream Barony plus optional reproducible builds and a separate Stash package"
-upstream_goal = "Keep the engine patch narrow, named by reusable capabilities, and reviewable for possible upstream acceptance."
-fallback = "Maintain a small, rebased patch series against upstream releases without making a long-lived opaque fork the only explanation."
+preferred = "installed PC executable hook/bootstrap releases with checksummed hook artifacts, executable provenance, and a separate Stash package"
+upstream_goal = "Keep engine hook semantics narrow, named by reusable capabilities, and reviewable for possible upstream acceptance."
+fallback = "Maintain source patch references as semantic design artifacts without making a long-lived opaque fork the v1 runtime explanation."
 
 [validation_plan]
 planning_artifacts = [
   "Parse modules.toml, stash-interface.toml, and roadmap.toml as TOML.",
   "Confirm v0 Stash-required modules are present in module catalog and interface contract.",
-  "Confirm roadmap includes planning, app skeleton, engine runtime patch, Stash modules, packaging, and future expansion phases.",
+  "Confirm roadmap includes planning, app skeleton, installed hook/bootstrap contract, Stash modules, packaging, and future expansion phases.",
 ]
 first_behavioral_validation_after_implementation = [
   "Single-player: add item to Stash, end/die/new run/relaunch, confirm item remains accessible.",

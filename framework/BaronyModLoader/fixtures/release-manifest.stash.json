@@ -14,7 +14,18 @@
       "algorithm": "sha256",
       "sha256": "08dffb68b2cdfac4647e7f5093741efde995eeb95bb8417950910b295eb728ac",
       "size": 12754
-    }
+    },
+    "archive": {
+      "path": "framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "7c6e1d7031646639acb33391a31f4444c52bf7a85efba592891ffd3d0639eb0a",
+        "size": 6982
+      },
+      "status": "packed_fixture",
+      "notes": "Deterministic archive produced by `python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg`."
+    },
+    "installedPathShape": "<package-store>/jml.stash/0.1.0"
   },
   "runtime": {
     "contract": {
@@ -30,24 +41,74 @@
       "placement_shop",
       "multiplayer_version_metadata"
     ],
-    "status": "source_patch_artifacts_present_runtime_binary_pending",
-    "notes": "Runtime contract metadata and source patch artifacts exist; no patched Barony executable has been behaviorally verified for release."
+    "status": "installed_binary_hook_contract_recorded_fail_closed",
+    "notes": "The v1 runtime path is the BML-owned installed-binary hook/bootstrap contract. Stash remains fail-closed because required gameplay detours are not installed yet."
+  },
+  "runtimeProvenance": {
+    "runtimeStrategy": "installed-binary-hook",
+    "storefront": "steam",
+    "steam": {
+      "appId": "371970",
+      "buildId": "22630456"
+    },
+    "platform": "linux-x86_64",
+    "gameVersion": "v5.0.2",
+    "installedExecutable": {
+      "pathHint": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
+      "sha256": "da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade",
+      "buildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a",
+      "status": "verified_local_target",
+      "notes": "Executable identity is taken from native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json."
+    },
+    "hookLibrary": {
+      "path": "native/barony-modloader-hook/build/libbarony_bml.so",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "3cd00d56d3f3b6190e86dab8159b24fb3257bc36dd4b976d12bfff80e9db7f5b",
+        "size": 42792
+      },
+      "status": "built_available_fail_closed",
+      "notes": "The hook library can load, report, and pass the fake-symbol absolute-jump detour self-test, but Stash gameplay targets remain blocked until relocation-safe Stash detours are installed."
+    },
+    "hookManifest": {
+      "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "011f59c2df13dc961dbe8ca2e204690310aeae221c293098a4dced16f04f7375",
+        "size": 11844
+      },
+      "status": "present",
+      "notes": "Pins Steam app/build, Linux platform, game version, executable hash/build id, symbol probes, and fail-closed Stash hook targets."
+    },
+    "runtimeInfo": {
+      "path": "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
+      "checksum": {
+        "algorithm": "sha256",
+        "sha256": "57658f3972871fe42fce846ba81408c19399209795bb6457ac71691c4affc229",
+        "size": 2766
+      },
+      "status": "present",
+      "notes": "Fixture declares installed-binary-hook policy and rejects partial Stash loads."
+    },
+    "status": "provenance_recorded_fail_closed",
+    "notes": "Release provenance is now the installed Steam/Linux executable plus BML hook artifacts, not a patched Barony source build."
   },
   "barony": {
     "upstreamRepository": "https://github.com/TurningWheel/Barony",
     "workingForkRepository": "https://github.com/JMLegere/Barony",
-    "sourceRevision": "pending-patched-build-source-revision",
-    "sourceRevisionStatus": "pending_patched_build",
+    "sourceRevision": "not-primary-v1-runtime-path",
+    "sourceRevisionStatus": "semantic_reference_only",
     "compatibility": {
       "supportedGameVersions": [
-        "5.x"
+        "5.x",
+        "v5.0.2"
       ],
-      "status": "source_patch_artifacts_present_built_game_pending",
-      "notes": "Package metadata targets Barony 5.x, but playable compatibility remains pending until the patches are applied to a named Barony revision, built, and exercised in-game."
+      "status": "installed_steam_linux_target_recorded_gameplay_pending",
+      "notes": "The current release target is Steam/Linux app 371970 build 22630456. Playable Stash compatibility is still pending function detours and in-game verification."
     }
   },
   "patchSeries": {
-    "status": "source_artifacts_present",
+    "status": "semantic_reference_only",
     "patches": [
       {
         "id": "bml-runtime-handshake",
@@ -58,13 +119,13 @@
           "size": 14642
         },
         "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "pending-upstream-release-or-git-sha",
-        "required": true,
+        "baseRevision": "semantic-reference-only",
+        "required": false,
         "providesCapabilities": [
           "multiplayer_version_metadata"
         ],
-        "verificationStatus": "artifact_present",
-        "notes": "Adds BaronyModLoader runtime manifest discovery and runtime load reporting hooks."
+        "verificationStatus": "semantic_reference_only",
+        "notes": "Historical source patch retained as design reference; it is not the primary v1 runtime provenance path."
       },
       {
         "id": "bml-stash-runtime-capabilities",
@@ -75,8 +136,8 @@
           "size": 20186
         },
         "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "pending-upstream-release-or-git-sha",
-        "required": true,
+        "baseRevision": "semantic-reference-only",
+        "required": false,
         "providesCapabilities": [
           "persistent_storage",
           "persistent_inventory",
@@ -85,40 +146,67 @@
           "placement_shop",
           "multiplayer_version_metadata"
         ],
-        "verificationStatus": "artifact_present",
-        "notes": "Implements source-level Stash capability hooks; built-game behavior is not yet release-verified."
+        "verificationStatus": "semantic_reference_only",
+        "notes": "Historical source-level Stash hook reference; gameplay release support must come through installed-executable hook targets."
       }
     ],
-    "notes": "Patch files are present in native/barony-modloader-runtime/patches and checksummed here for release provenance."
+    "notes": "Patch files remain checksummed semantic/source references only. The primary v1 release provenance is runtimeProvenance.installed-binary-hook."
   },
   "buildArtifacts": {
-    "status": "pending_patched_build",
-    "artifacts": [
-      {
-        "platform": "linux-x86_64",
-        "path": "native/release/linux-x86_64/barony",
-        "sha256": null,
-        "status": "placeholder_pending_built_game",
-        "notes": "Placeholder only; no distributable or behaviorally verified Barony binary is claimed."
-      }
-    ],
-    "notes": "Release provenance intentionally records the missing build artifact instead of substituting a fake binary checksum."
+    "status": "not_applicable_installed_binary_hook",
+    "artifacts": [],
+    "notes": "No patched/source-built Barony executable is claimed for this v1 release manifest. The installed Steam executable identity is recorded under runtimeProvenance.installedExecutable."
   },
   "verification": {
-    "status": "artifact_verified_built_game_pending",
+    "status": "installed_hook_fail_closed_gameplay_pending",
     "artifactVerification": {
       "status": "complete",
       "evidence": [
         "mods/stash/bml-package.json",
-        "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
-        "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
-        "native/barony-modloader-runtime/stash-verification-plan.toml",
-        "framework/BaronyModLoader/fixtures/runtime-info.stash.json"
+        "framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg",
+        "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+        "native/barony-modloader-hook/build/libbarony_bml.so",
+        "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
+        "framework/BaronyModLoader/schema/runtime-load-report.schema.json",
+        "framework/BaronyModLoader/schema/symbol-probe-report.schema.json",
+        "framework/BaronyModLoader/schema/stash-hook-report.schema.json",
+        "native/barony-modloader-hook/tests/smoke_ld_preload.sh"
       ],
-      "notes": "This fixture records present source and metadata artifacts only."
+      "notes": "Release artifact provenance is present for the installed Steam/Linux hook path."
+    },
+    "installedHookVerification": {
+      "status": "fail_closed_pending_detours",
+      "failClosed": true,
+      "reports": [
+        {
+          "kind": "runtime-load",
+          "path": "BaronyModLoader/reports/runtime-load-report.json",
+          "status": "schema_defined",
+          "notes": "Runtime load reporting is the canonical hook-load report path for profiles."
+        },
+        {
+          "kind": "symbol-probe",
+          "path": "BaronyModLoader/reports/symbol-probe-report.json",
+          "status": "schema_defined",
+          "notes": "Symbol probing can identify required Steam/Linux symbols without claiming gameplay hooks are installed."
+        },
+        {
+          "kind": "detour-self-test",
+          "path": "BaronyModLoader/reports/detour-self-test-report.json",
+          "status": "passed",
+          "notes": "The native hook smoke runs with BML_DETOUR_SELF_TEST=1 and validates the fake-symbol absolute-jump detour plus trampoline call-through."
+        },
+        {
+          "kind": "stash-hook",
+          "path": "BaronyModLoader/reports/stash-hook-report.json",
+          "status": "current_fail_closed",
+          "notes": "Required Stash targets currently report not_installed/blocked and failClosed=true until function detours are implemented."
+        }
+      ],
+      "notes": "Current status is intentionally non-playable: Stash activation must fail closed with BML_STASH_HOOKS_NOT_INSTALLED or equivalent target-level detour-unavailable codes."
     },
     "builtGameBehavior": {
-      "status": "pending_patched_build",
+      "status": "pending_installed_hook_detours",
       "requiredScenarios": [
         "runtime manifest acceptance",
         "persistent Void Chest inventory across death, new run, and process relaunch",
@@ -129,17 +217,17 @@
         "multiplayer package/runtime mismatch rejection",
         "disabled package leaves vanilla Void Chest behavior unmodified"
       ],
-      "notes": "These scenarios are planned but not yet passed against a patched playable Barony build."
+      "notes": "These scenarios remain pending until relocation-safe installed-executable function detours are implemented and verified in-game."
     }
   },
   "rollback": {
-    "notes": "Rollback means disabling the jml.stash package for affected profiles and launching an unpatched Barony executable until a patched build has passed the required scenarios.",
+    "notes": "Rollback means disabling the jml.stash package and launching the installed Barony executable without the BML hook/bootstrap environment.",
     "steps": [
       "Disable jml.stash in the profile package state before launch.",
-      "Use the previous unpatched Barony executable or restore the pre-patch source tree before building.",
-      "Preserve BaronyModLoader profile state for inspection; do not migrate or delete stash inventory files unless the user explicitly chooses data removal.",
-      "Regenerate launch/runtime manifests after the package is disabled so stale capability metadata is not reused."
+      "Launch the installed Steam Barony executable without LD_PRELOAD or BML hook environment variables.",
+      "Preserve BaronyModLoader profile state, hook reports, and stash inventory files for inspection; do not delete user data unless explicitly requested.",
+      "Regenerate launch/runtime manifests after the package is disabled so stale capability metadata and hook provenance are not reused."
     ],
-    "risk": "Existing experimental stash state may be unreadable by vanilla Barony; preserve it separately rather than silently converting or deleting it."
+    "risk": "Existing experimental stash state may be unreadable by vanilla Barony or later hook revisions; preserve it separately rather than silently converting or deleting it."
   }
 }

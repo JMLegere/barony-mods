@@ -11,7 +11,7 @@ Current state:
 - `manifests/steam-371970-22630456-linux.json` mirrors the local verified Steam/Linux Barony executable identity, required symbol probe targets, and fail-closed Stash hook targets passed as `BML_HOOK_MANIFEST`; the current native hook validates the path is readable and uses compiled-in tables for probing/analysis.
 - The hook validates launch inputs and writes `BaronyModLoader/reports/runtime-load-report.json` under `BML_PROFILE_DIR`; executable provenance is still enforced by the app/runtime registry before launch.
 - The hook resolves required installed-binary symbols with `dlsym(RTLD_DEFAULT, mangledSymbol)` and writes `BaronyModLoader/reports/symbol-probe-report.json`.
-- Stash gameplay hooks are grouped behind the abstract `linux-x86_64-direct-stash-detour` backend. The current backend mode is `analyze-only`: it keeps data symbols `ready`, keeps all function targets `blocked` until instruction decoder/relocator support exists, and still fails closed until a real detour installer is implemented.
+- Stash gameplay hooks are grouped behind the abstract `linux-x86_64-direct-stash-detour` backend. The current backend mode remains `analyze-only`: it keeps data symbols `ready`, keeps all Stash function targets `blocked`, and fails closed for active Stash profiles. A separate `BML_DETOUR_SELF_TEST=1` path verifies only the narrow Linux x86_64 absolute-jump detour substrate against the fake test symbol provider.
 
 Build and test:
 
@@ -20,7 +20,7 @@ make -C native/barony-modloader-hook clean all
 make -C native/barony-modloader-hook test
 ```
 
-The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates a temporary profile/runtime manifest, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, and Stash hook reports with Python. It does not launch Barony or prove gameplay behavior.
+The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates a temporary profile/runtime manifest, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, Stash hook, and detour self-test reports with Python. It does not launch Barony or prove gameplay behavior.
 
 Manual smoke shape:
 
@@ -33,8 +33,10 @@ LD_PRELOAD=/path/to/native/barony-modloader-hook/build/libbarony_bml.so \
 /usr/bin/true
 ```
 
+Set `BML_DETOUR_SELF_TEST=1` with the fake symbol provider preloaded to write `BaronyModLoader/reports/detour-self-test-report.json`. That report proves the fixture replacement ran and called through the executable trampoline to the original fake function; it is not a Stash gameplay hook.
+
 Current non-goals:
 
-- Do not patch Barony prologues, install detours, mutate gameplay state, or claim Stash behavior in this slice.
+- Do not claim playable Stash behavior: the verified native detour coverage is limited to the fake-symbol self-test substrate, and Stash function targets remain analyze-only/blocked.
 - Do not treat `native/barony-modloader-runtime/patches/` as the runtime path. Those source-fork patches are semantic reference only.
 - Do not claim Windows or macOS native injection support yet.
