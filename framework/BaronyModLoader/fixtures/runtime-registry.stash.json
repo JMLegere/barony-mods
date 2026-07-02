@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "0.1.0",
+  "app": {
+    "id": "BaronyModLoader",
+    "version": "0.1.0"
+  },
+  "createdAt": "2026-06-20T12:00:00Z",
+  "updatedAt": "2026-06-20T12:00:00Z",
+  "runtimes": [
+    {
+      "id": "bml-hook-stash-linux-x86_64-steam-371970-testbuild",
+      "runtimeStrategy": "installed-binary-hook",
+      "storefront": "steam",
+      "steamAppId": "371970",
+      "steamBuildId": "testbuild-1234",
+      "platform": "linux-x86_64",
+      "runtimeVersion": "0.1.0",
+      "runtimeContract": "bml-runtime-contract@0.1.0",
+      "executable": null,
+      "steamExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
+      "steamExecutableSha256": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "steamExecutableBuildId": "testbuild-1234",
+      "gameVersionString": "v5.0.0",
+      "hookLibrary": "/home/jerry/.local/share/BaronyModLoader/hooks/libbarony_bml.so",
+      "hookLibrarySha256": "feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface",
+      "hookManifest": "/home/jerry/.local/share/BaronyModLoader/hooks/manifests/stash-v1.json",
+      "hookManifestSha256": "beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead",
+      "runtimeInfo": "/home/jerry/.local/share/BaronyModLoader/runtimes/stash-v1/runtime-info.json",
+      "sha256": null,
+      "capabilities": [
+        {
+          "id": "persistent_storage",
+          "version": "0.1.0"
+        },
+        {
+          "id": "persistent_inventory",
+          "version": "0.1.0"
+        },
+        {
+          "id": "void_chest_binding",
+          "version": "0.1.0"
+        },
+        {
+          "id": "placement_lobby",
+          "version": "0.1.0"
+        },
+        {
+          "id": "placement_shop",
+          "version": "0.1.0"
+        },
+        {
+          "id": "multiplayer_version_metadata",
+          "version": "0.1.0"
+        }
+      ],
+      "registeredAt": "2026-06-20T12:00:00Z"
+    }
+  ]
+}

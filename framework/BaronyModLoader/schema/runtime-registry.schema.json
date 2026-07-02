@@ -29,6 +29,10 @@
     "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
     "absolutePath": { "type": "string", "pattern": "^(?:/|[A-Za-z]:[\\\\/]).+" },
     "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "runtimeStrategy": {
+      "type": "string",
+      "enum": ["installed-binary-hook"]
+    },
     "capabilityId": {
       "type": "string",
       "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata"]
@@ -45,17 +49,51 @@
     "runtime": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "platform", "runtimeVersion", "runtimeContract", "executable", "runtimeInfo", "sha256", "capabilities", "registeredAt"],
+      "required": [
+        "id",
+        "runtimeStrategy",
+        "storefront",
+        "steamAppId",
+        "steamBuildId",
+        "platform",
+        "runtimeVersion",
+        "runtimeContract",
+        "steamExecutable",
+        "steamExecutableSha256",
+        "hookLibrary",
+        "hookLibrarySha256",
+        "hookManifest",
+        "hookManifestSha256",
+        "runtimeInfo",
+        "capabilities",
+        "registeredAt"
+      ],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
+        "runtimeStrategy": { "$ref": "#/$defs/runtimeStrategy" },
+        "storefront": { "type": ["string", "null"], "enum": ["steam", null] },
         "steamAppId": { "type": ["string", "null"] },
         "steamBuildId": { "type": ["string", "null"] },
         "platform": { "type": "string", "minLength": 1 },
         "runtimeVersion": { "$ref": "#/$defs/version" },
         "runtimeContract": { "const": "bml-runtime-contract@0.1.0" },
-        "executable": { "$ref": "#/$defs/absolutePath" },
+        "executable": {
+          "type": ["string", "null"],
+          "description": "Deprecated. Use steamExecutable instead."
+        },
+        "steamExecutable": { "$ref": "#/$defs/absolutePath" },
+        "steamExecutableSha256": { "$ref": "#/$defs/sha256" },
+        "steamExecutableBuildId": { "type": ["string", "null"] },
+        "gameVersionString": { "type": ["string", "null"] },
+        "hookLibrary": { "$ref": "#/$defs/absolutePath" },
+        "hookLibrarySha256": { "$ref": "#/$defs/sha256" },
+        "hookManifest": { "$ref": "#/$defs/absolutePath" },
+        "hookManifestSha256": { "$ref": "#/$defs/sha256" },
         "runtimeInfo": { "$ref": "#/$defs/absolutePath" },
-        "sha256": { "$ref": "#/$defs/sha256" },
+        "sha256": {
+          "type": ["string", "null"],
+          "description": "Deprecated. Use steamExecutableSha256 instead."
+        },
         "capabilities": { "type": "array", "items": { "$ref": "#/$defs/capability" }, "minItems": 1 },
         "registeredAt": { "$ref": "#/$defs/dateTime" }
       }

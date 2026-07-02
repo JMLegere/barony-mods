@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "0.1.0",
+  "runtimeStrategy": "installed-binary-hook",
+  "storefront": "steam",
+  "steamAppId": "371970",
+  "steamBuildId": "22630456",
+  "platform": "linux-x86_64",
+  "gameVersionString": "v5.0.2",
+  "executable": {
+    "sha256": "da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade",
+    "buildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a"
+  },
+  "hook": {
+    "libraryName": "libbarony_bml.so",
+    "entrypoint": "bml_hook_init"
+  },
+  "capabilities": [
+    {
+      "id": "persistent_storage",
+      "version": "0.1.0"
+    },
+    {
+      "id": "persistent_inventory",
+      "version": "0.1.0"
+    },
+    {
+      "id": "void_chest_binding",
+      "version": "0.1.0"
+    },
+    {
+      "id": "placement_lobby",
+      "version": "0.1.0"
+    },
+    {
+      "id": "placement_shop",
+      "version": "0.1.0"
+    },
+    {
+      "id": "multiplayer_version_metadata",
+      "version": "0.1.0"
+    }
+  ],
+  "symbols": []
+}

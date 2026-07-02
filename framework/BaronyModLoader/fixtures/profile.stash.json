@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "0.1.0",
+  "profile": {
+    "id": "smoke-test-profile",
+    "createdAt": "2026-06-20T12:00:00Z",
+    "updatedAt": "2026-06-20T12:00:00Z"
+  },
+  "app": {
+    "id": "BaronyModLoader",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "profileRoot": "/tmp/bml-smoke-profile",
+    "bmlRoot": "/tmp/bml-smoke-profile/BaronyModLoader",
+    "logs": "/tmp/bml-smoke-profile/BaronyModLoader/logs",
+    "reports": "/tmp/bml-smoke-profile/BaronyModLoader/reports",
+    "manifests": "/tmp/bml-smoke-profile/BaronyModLoader/manifests",
+    "state": "/tmp/bml-smoke-profile/BaronyModLoader/state",
+    "runtimeManifest": "/tmp/bml-smoke-profile/BaronyModLoader/runtime-manifest.json"
+  },
+  "activeMods": [],
+  "runtime": {
+    "gameSource": "steam",
+    "baronyExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
+    "runtimeInfo": "/home/jerry/.local/share/BaronyModLoader/runtimes/stash-v1/runtime-info.json",
+    "steam": {
+      "source": "steam",
+      "appId": "371970",
+      "name": "Barony",
+      "buildId": "testbuild-1234",
+      "manifestPath": null,
+      "installPath": "/home/jerry/.local/share/Steam/steamapps/common/Barony",
+      "executable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
+      "executableSha256": "deadbeef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+      "executableBuildId": "testbuild-1234",
+      "gameVersionString": "v5.0.0",
+      "assetsRoot": "/home/jerry/.local/share/Steam/steamapps/common/Barony",
+      "compatibility": {
+        "stockExecutablePatched": false,
+        "requiresBmlRuntimeExecutable": false,
+        "requiresBmlHookRuntime": true,
+        "runtimeUsesInstalledExecutable": true,
+        "runtimeUsesSteamAssets": true
+      }
+    }
+  }
+}

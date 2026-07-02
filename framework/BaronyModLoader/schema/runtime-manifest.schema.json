@@ -27,15 +27,46 @@
     "launch": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["profileId", "gameInstallId", "baronyExecutable", "createdAt"],
+      "required": ["profileId", "gameInstallId", "createdAt"],
       "properties": {
         "profileId": { "$ref": "#/$defs/id" },
         "gameInstallId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+        "gameSource": { "type": "string", "enum": ["manual", "steam"] },
         "baronyExecutable": { "$ref": "#/$defs/absolutePath" },
+        "launchExecutable": { "$ref": "#/$defs/absolutePath" },
+        "bmlRuntimeExecutable": {
+          "type": ["string", "null"],
+          "description": "Always null in installed-binary-hook v1 model."
+        },
+        "runtimeStrategy": { "type": ["string", "null"], "enum": ["installed-binary-hook", null] },
+        "storefront": { "type": ["string", "null"], "enum": ["steam", null] },
+        "platform": { "type": ["string", "null"] },
+        "steamExecutable": { "$ref": "#/$defs/absolutePath" },
+        "steamExecutableSha256": { "type": ["string", "null"] },
+        "steamExecutableBuildId": { "type": ["string", "null"] },
+        "gameVersionString": { "type": ["string", "null"] },
+        "hookLibrary": { "$ref": "#/$defs/absolutePath" },
+        "hookLibrarySha256": { "type": ["string", "null"] },
+        "hookManifest": { "$ref": "#/$defs/absolutePath" },
+        "hookManifestSha256": { "type": ["string", "null"] },
         "createdAt": { "type": "string", "format": "date-time" },
+        "runtimeManifest": { "$ref": "#/$defs/profilePath" },
         "runtimeLoadReport": { "$ref": "#/$defs/profilePath" },
         "runtimeLog": { "$ref": "#/$defs/profilePath" },
-        "stateRoot": { "$ref": "#/$defs/profilePath" }
+        "stateRoot": { "$ref": "#/$defs/profilePath" },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "runtimeId": { "type": "string" },
+            "runtimeVersion": { "type": "string" },
+            "registryRuntimeId": { "type": ["string", "null"] }
+          }
+        },
+        "steam": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        }
       }
     },
     "mods": {

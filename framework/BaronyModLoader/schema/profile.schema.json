@@ -88,6 +88,9 @@
             "manifestPath": { "type": ["string", "null"] },
             "installPath": { "type": "string", "minLength": 1 },
             "executable": { "type": "string", "minLength": 1 },
+            "executableSha256": { "type": ["string", "null"] },
+            "executableBuildId": { "type": ["string", "null"] },
+            "gameVersionString": { "type": ["string", "null"] },
             "assetsRoot": { "type": "string", "minLength": 1 },
             "compatibility": {
               "type": "object",
