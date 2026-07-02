@@ -1,0 +1,55 @@
+# BaronyModLoader P2 runtime-handshake source map.
+# Evidence source: /tmp/barony-src on 2026-07-02.
+
+[barony]
+source_root = "/tmp/barony-src"
+patch = "patches/0001-bml-runtime-handshake.patch"
+phase = "p2_runtime_handshake"
+contract_id = "bml-runtime-contract"
+contract_version = "0.1.0"
+capabilities = [
+  "persistent_storage",
+  "persistent_inventory",
+  "void_chest_binding",
+  "placement_lobby",
+  "placement_shop",
+  "multiplayer_version_metadata",
+]
+
+[[evidence]]
+file = "src/CMakeLists.txt"
+lines = "1-116"
+observed = "GAME_SOURCES list includes src/game.cpp at line 17."
+intended_patch = "Insert ${CMAKE_CURRENT_SOURCE_DIR}/barony_mod_loader.cpp immediately after game.cpp so the handshake helper builds with the game target."
+
+[[evidence]]
+file = "src/game.cpp"
+lines = "1-58"
+observed = "Startup translation unit includes core Barony headers before main."
+intended_patch = "Add barony_mod_loader.hpp beside existing local includes and add <string> for startup-owned handshake argument paths."
+
+[[evidence]]
+file = "src/game.cpp"
+lines = "7092-7221"
+observed = "main starts at line 7092 and initializes outputdir before command-line parsing."
+intended_patch = "Keep BML handling after outputdir initialization and before SDL initialization so report paths can use outputdir without opening SDL."
+
+[[evidence]]
+file = "src/game.cpp"
+lines = "7222-7281"
+observed = "Command-line parsing loop handles startup flags before SDL initialization."
+intended_patch = "Add --bml-runtime-info, --bml-runtime-info=<path>, --bml-runtime-manifest <path>, and --bml-runtime-manifest=<path> branches in this loop."
+
+[[evidence]]
+file = "src/game.cpp"
+lines = "7282-7292"
+observed = "SDL initialization begins immediately after data/output path logging."
+intended_patch = "Run runtime-info exit and manifest validation/report writing before the existing SDL_Init call."
+
+[[new_file]]
+file = "src/barony_mod_loader.hpp"
+purpose = "Declare the small P2 handshake API used by game.cpp."
+
+[[new_file]]
+file = "src/barony_mod_loader.cpp"
+purpose = "Implement runtime-info JSON, manifest discovery/validation, and runtime-load-report.json writing without gameplay hooks."

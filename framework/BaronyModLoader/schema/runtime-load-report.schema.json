@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://baronymodloader.local/schema/runtime-load-report.schema.json",
+  "title": "BaronyModLoader v0 runtime load report",
+  "description": "Engine runtime report written after manifest validation and hook registration. Communicates loaded/failed status, per-mod capability coverage, warnings, and fatal errors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "runtime",
+    "profileId",
+    "status",
+    "loadedMods",
+    "warnings",
+    "errors"
+  ],
+  "properties": {
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "const": "bml-runtime-contract" },
+        "version": { "$ref": "#/$defs/version" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtimeVersion", "gameRevision", "executable"],
+      "properties": {
+        "runtimeVersion": { "$ref": "#/$defs/version" },
+        "gameRevision": { "type": "string", "minLength": 1 },
+        "executable": { "$ref": "#/$defs/absolutePath" }
+      }
+    },
+    "profileId": { "$ref": "#/$defs/id" },
+    "status": {
+      "type": "string",
+      "enum": ["loaded", "failed"]
+    },
+    "loadedMods": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/loadedMod" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reportError" }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reportError" }
+    },
+    "reportedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/]).+"
+    },
+    "loadedMod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "status", "capabilities", "modules"],
+      "properties": {
+        "id": { "$ref": "#/$defs/packageId" },
+        "version": { "$ref": "#/$defs/version" },
+        "status": {
+          "type": "string",
+          "enum": ["loaded", "skipped", "error"]
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "persistent_storage",
+              "persistent_inventory",
+              "void_chest_binding",
+              "placement_lobby",
+              "placement_shop",
+              "multiplayer_version_metadata"
+            ]
+          }
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "persistentStorage",
+              "persistentInventories",
+              "voidChestBindings",
+              "placements",
+              "multiplayer"
+            ]
+          }
+        }
+      }
+    },
+    "reportError": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "severity", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "BML_RUNTIME_MANIFEST_MISSING",
+            "BML_RUNTIME_MANIFEST_PARSE_FAILED",
+            "BML_RUNTIME_CONTRACT_UNSUPPORTED",
+            "BML_RUNTIME_CAPABILITY_MISSING",
+            "BML_RUNTIME_MODULE_INVALID",
+            "BML_RUNTIME_STORAGE_UNAVAILABLE",
+            "BML_RUNTIME_MIGRATION_FAILED",
+            "BML_RUNTIME_MULTIPLAYER_INCOMPATIBLE",
+            "BML_RUNTIME_PLACEMENT_FAILED",
+            "BML_RUNTIME_BINDING_CONFLICT"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "error", "fatal"]
+        },
+        "mod": { "$ref": "#/$defs/packageId" },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "persistent_storage",
+            "persistent_inventory",
+            "void_chest_binding",
+            "placement_lobby",
+            "placement_shop",
+            "multiplayer_version_metadata"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" },
+        "action": {
+          "type": "string",
+          "enum": [
+            "block-launch",
+            "skip-mod",
+            "warn-user",
+            "retry",
+            "no-action"
+          ]
+        }
+      }
+    },
+    "packageId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    }
+  }
+}

@@ -194,7 +194,7 @@ Module descriptors must be data-only. They are interpreted by engine-owned code 
 
 ## Native requirements
 
-Native requirements describe the paired engine runtime needed to support declared capabilities. They are not dynamic plugins.
+Native requirements describe the paired engine runtime needed to support declared capabilities. They are not dynamic plugins, and they must resolve to a source patch or reproducible build path that a maintainer can inspect.
 
 ```json
 {
@@ -203,10 +203,11 @@ Native requirements describe the paired engine runtime needed to support declare
     "mode": "paired-engine-runtime",
     "patches": [
       {
-        "id": "bml-runtime-core",
+        "id": "bml-runtime-handshake",
         "appliesTo": "TurningWheel/Barony",
         "baseRevision": "upstream-or-release-git-sha",
-        "path": "native/patches/bml-runtime-core.patch",
+        "path": "native/patches/0001-bml-runtime-handshake.patch",
+        "sourceMap": "native/source-map.toml",
         "required": true,
         "providesCapabilities": [
           "persistent_storage",
@@ -223,6 +224,8 @@ Native requirements describe the paired engine runtime needed to support declare
         "platform": "linux-x86_64",
         "baronyRevision": "git-sha",
         "runtimeVersion": "0.1.0",
+        "reproducible": true,
+        "buildRecipe": "native/build/build.json",
         "artifact": "native/release/linux-x86_64/barony"
       }
     ]
@@ -232,7 +235,8 @@ Native requirements describe the paired engine runtime needed to support declare
 
 Rules:
 
-- Native code must be represented as source patches and/or reproducible build metadata.
+- Native code must be represented as source patches and/or reproducible build metadata; a package must not rely on an unexplained binary fork.
+- The patch descriptor's `providesCapabilities` list must use only canonical engine capability ids. For the Stash v0 surface those ids are `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
 - A package may point to a reviewed runtime patch supplied by the framework instead of embedding a custom patch.
 - The app should prefer known framework runtime builds over per-mod forks.
 - If a mod needs a new engine hook, the package should declare the missing capability and fail cleanly until the framework/runtime supports it.

@@ -1,0 +1,31 @@
+{
+  "contract": {
+    "id": "bml-runtime-contract",
+    "version": "0.1.0"
+  },
+  "runtime": {
+    "runtimeVersion": "0.1.0",
+    "gameRevision": "git-sha-placeholder",
+    "executable": "/path/to/barony"
+  },
+  "profileId": "default",
+  "status": "failed",
+  "loadedMods": [],
+  "warnings": [],
+  "errors": [
+    {
+      "code": "BML_RUNTIME_CAPABILITY_MISSING",
+      "severity": "fatal",
+      "mod": "jml.stash",
+      "capability": "void_chest_binding",
+      "message": "Stash requires Void Chest binding, but this Barony runtime does not provide it.",
+      "details": {
+        "requested": "0.1.0",
+        "runtimeVersion": "0.1.0-dev",
+        "availableCapabilities": ["persistent_storage"]
+      },
+      "action": "block-launch"
+    }
+  ],
+  "reportedAt": "2026-07-02T00:00:00Z"
+}

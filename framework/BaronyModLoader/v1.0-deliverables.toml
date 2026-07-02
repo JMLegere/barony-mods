@@ -1,0 +1,90 @@
+# BaronyModLoader v1.0 deliverables and evidence map.
+# This is the active completion contract for the goal: maintain the todolist to finish v1.0.
+
+[meta]
+name = "BaronyModLoader v1.0 deliverables"
+status = "active"
+created = "2026-07-02"
+objective = "A usable v1.0 BaronyModLoader path for the Stash reference mod, with a standalone app, clean package contract, paired Barony runtime patch artifacts, and verification evidence."
+
+[[deliverables]]
+id = "p1_loader_app"
+status = "implemented"
+summary = "Python stdlib CLI validates packages/runtimes, creates profiles, and generates runtime manifests."
+required_artifacts = [
+  "framework/BaronyModLoader/app/barony_mod_loader.py",
+  "framework/BaronyModLoader/schema/package.schema.json",
+  "framework/BaronyModLoader/schema/profile.schema.json",
+  "framework/BaronyModLoader/schema/runtime-manifest.schema.json",
+  "framework/BaronyModLoader/fixtures/runtime-info.stash.json",
+]
+evidence = [
+  "python framework/BaronyModLoader/app/barony_mod_loader.py package validate framework/BaronyModLoader/example-stash-package.json",
+  "python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate framework/BaronyModLoader/fixtures/runtime-info.stash.json --package framework/BaronyModLoader/example-stash-package.json",
+  "profile create + launch-plan command produces runtime-manifest.json with canonical capabilities",
+]
+
+[[deliverables]]
+id = "p2_runtime_handshake"
+status = "next"
+summary = "Source patch artifacts add Barony runtime manifest discovery, capability validation, --bml-runtime-info, and runtime load reports without gameplay changes."
+required_artifacts = [
+  "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+  "native/barony-modloader-runtime/README.md",
+  "framework/BaronyModLoader/schema/runtime-info.schema.json",
+  "framework/BaronyModLoader/schema/runtime-load-report.schema.json",
+  "framework/BaronyModLoader/fixtures/runtime-load-report.loaded.json",
+  "framework/BaronyModLoader/fixtures/runtime-load-report.failed.json",
+]
+evidence = [
+  "patch applies cleanly to the tracked Barony source revision or documents why it is a planning patch",
+  "runtime-info and runtime-load-report fixtures parse and match the schemas",
+  "CLI runtime validation accepts the runtime-info fixture and fails closed for missing capabilities",
+]
+
+[[deliverables]]
+id = "p3_stash_runtime_behavior"
+status = "planned"
+summary = "Runtime patch implements Stash behavior: persistent Void Chest inventory, spell/lobby/shop access, and save/multiplayer metadata."
+required_artifacts = [
+  "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+  "native/barony-modloader-runtime/source-map.toml",
+  "native/barony-modloader-runtime/stash-verification-plan.toml",
+]
+evidence = [
+  "source map cites exact Barony files/lines for Void Chest inventory, spell chest creation, lobby assist area, shop generation, and save/load hooks",
+  "behavioral verification plan covers persistence across death/new-run/relaunch, save/resume, spell access, lobby/shop access, and multiplayer mismatch",
+  "when a Barony build is available: run the focused Stash scenario against the patched runtime",
+]
+
+[[deliverables]]
+id = "p4_packaging_release"
+status = "planned"
+summary = "BaronyModLoader can create/install/enable/disable a clean Stash package and record release provenance."
+required_artifacts = [
+  "framework/BaronyModLoader/schema/release-manifest.schema.json",
+  "framework/BaronyModLoader/fixtures/release-manifest.stash.json",
+  "mods/stash/bml-package.json",
+]
+evidence = [
+  "CLI can pack or validate a Stash package directory",
+  "CLI can install/enable/disable Stash in a profile without manual source edits",
+  "release manifest records app version, runtime version, Barony source revision, package checksum, and rollback notes",
+]
+
+[[deliverables]]
+id = "v1_closeout"
+status = "planned"
+summary = "All v1 artifacts are verified, committed, and pushed. Remaining blockers are explicit if a playable runtime build cannot be completed in this environment."
+required_artifacts = [
+  "README.md",
+  "framework/BaronyModLoader/README.md",
+  "framework/BaronyModLoader/roadmap.toml",
+]
+evidence = [
+  "git diff --check passes",
+  "all JSON/TOML artifacts parse",
+  "CLI focused commands pass",
+  "git status is clean after commit",
+  "origin/main matches HEAD after push",
+]

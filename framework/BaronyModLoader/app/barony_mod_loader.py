@@ -651,6 +651,265 @@ def validate_runtime_info(runtime_info: dict[str, Any], package: LoadedPackage) 
 
     return result
 
+def load_runtime_report(path_arg: str) -> tuple[dict[str, Any] | None, Path, ValidationResult]:
+    path = Path(path_arg).expanduser()
+    result = ValidationResult(f"runtime load report {path}")
+    if not path.exists():
+        result.add("BML_RUNTIME_REPORT_MISSING", "fatal", f"Runtime load report file not found: {path}")
+        return None, path, result
+    if not path.is_file():
+        result.add("BML_RUNTIME_REPORT_NOT_FILE", "fatal", f"Runtime load report path is not a file: {path}")
+        return None, path, result
+    try:
+        payload = parse_json_file(path)
+    except json.JSONDecodeError as exc:
+        result.add(
+            "BML_RUNTIME_REPORT_PARSE_FAILED",
+            "fatal",
+            f"Runtime load report is not valid JSON: {path}",
+            line=exc.lineno,
+            column=exc.colno,
+            error=exc.msg,
+        )
+        return None, path, result
+    except OSError as exc:
+        result.add("BML_RUNTIME_REPORT_READ_FAILED", "fatal", f"Could not read runtime load report: {exc}")
+        return None, path, result
+    if not isinstance(payload, dict):
+        result.add("BML_RUNTIME_REPORT_INVALID", "fatal", "Runtime load report root must be a JSON object.")
+        return None, path, result
+    return payload, path.resolve(), result
+
+
+def runtime_report_contract(report: dict[str, Any]) -> tuple[str | None, str | None]:
+    contract = report.get("contract")
+    if not isinstance(contract, dict):
+        return None, None
+    contract_id = contract.get("id")
+    version = contract.get("version")
+    return (contract_id if isinstance(contract_id, str) else None, version if isinstance(version, str) else None)
+
+
+def runtime_report_entry_message(entry: Any) -> str:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        code = entry.get("code")
+        message = entry.get("message")
+        if isinstance(code, str) and isinstance(message, str):
+            return f"[{code}] {message}"
+        if isinstance(message, str):
+            return message
+        if isinstance(code, str):
+            return code
+    return json.dumps(entry, sort_keys=True)
+
+
+def runtime_report_error_is_fatal(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return True
+    severity = entry.get("severity", "fatal")
+    if not isinstance(severity, str):
+        return True
+    return severity.lower() not in {"warning", "info"}
+
+
+def validate_runtime_report_capabilities(result: ValidationResult, raw: Any, source: str) -> list[str]:
+    capabilities: list[str] = []
+    if raw is None:
+        return capabilities
+    if isinstance(raw, dict):
+        items = raw.items()
+        for cap_id, value in items:
+            cap_source = f"{source}.{cap_id}"
+            if not isinstance(cap_id, str) or not cap_id:
+                result.add("BML_RUNTIME_REPORT_CAPABILITY_INVALID", "error", f"Capability entry is missing id: {cap_source}", source=cap_source)
+                continue
+            capabilities.append(cap_id)
+            if isinstance(value, dict) and "version" in value and not is_semverish(value.get("version")):
+                result.add("BML_RUNTIME_REPORT_CAPABILITY_VERSION_INVALID", "error", f"Capability version must be semver-ish: {cap_source}", source=cap_source, capability=cap_id, version=value.get("version"))
+    elif isinstance(raw, list):
+        for index, item in enumerate(raw):
+            cap_id, version, _required = capability_id_and_version(item)
+            cap_source = f"{source}[{index}]"
+            if not isinstance(cap_id, str) or not cap_id:
+                result.add("BML_RUNTIME_REPORT_CAPABILITY_INVALID", "error", f"Capability entry is missing id: {cap_source}", source=cap_source)
+                continue
+            capabilities.append(cap_id)
+            if isinstance(item, dict) and "version" in item and not is_semverish(version):
+                result.add("BML_RUNTIME_REPORT_CAPABILITY_VERSION_INVALID", "error", f"Capability version must be semver-ish: {cap_source}", source=cap_source, capability=cap_id, version=version)
+    else:
+        result.add("BML_RUNTIME_REPORT_CAPABILITIES_INVALID", "error", f"Capabilities must be an array or object when present: {source}", source=source)
+        return capabilities
+
+    canonical = set(CANONICAL_STASH_CAPABILITIES)
+    for cap_id in capabilities:
+        replacement = OUTDATED_CAPABILITY_ALIASES.get(cap_id)
+        if replacement:
+            result.add(
+                "BML_RUNTIME_REPORT_CAPABILITY_OUTDATED",
+                "error",
+                f"Runtime report uses outdated capability id {cap_id!r}; use canonical v0 id(s): {', '.join(replacement)}.",
+                source=source,
+                capability=cap_id,
+                replacement=list(replacement),
+            )
+        elif cap_id not in canonical:
+            result.add(
+                "BML_RUNTIME_REPORT_CAPABILITY_NONCANONICAL",
+                "error",
+                f"Runtime report capability id is not canonical for the v0 contract: {cap_id!r}.",
+                source=source,
+                capability=cap_id,
+                canonical=sorted(canonical),
+            )
+    return capabilities
+
+
+def validate_runtime_report(report: dict[str, Any]) -> ValidationResult:
+    result = ValidationResult("runtime load report")
+
+    contract = report.get("contract")
+    if not isinstance(contract, dict):
+        result.add("BML_RUNTIME_REPORT_CONTRACT_INVALID", "fatal", "Runtime load report must include contract object with id and version.")
+    else:
+        validate_required_string(result, contract, "id", "BML_RUNTIME_REPORT_CONTRACT_INVALID", "contract")
+        validate_required_string(result, contract, "version", "BML_RUNTIME_REPORT_CONTRACT_INVALID", "contract", semver=True)
+        contract_id, contract_version = runtime_report_contract(report)
+        if contract_id and contract_version and (contract_id, contract_version) != (RUNTIME_CONTRACT_ID, RUNTIME_CONTRACT_VERSION):
+            result.add(
+                "BML_RUNTIME_REPORT_CONTRACT_UNSUPPORTED",
+                "fatal",
+                "Runtime load report contract does not match this loader.",
+                expected=RUNTIME_CONTRACT,
+                actual=f"{contract_id}@{contract_version}",
+            )
+
+    status = report.get("status")
+    if status not in {"loaded", "failed"}:
+        result.add("BML_RUNTIME_REPORT_STATUS_INVALID", "fatal", "Runtime load report status must be loaded or failed.", status=status)
+    elif status == "failed":
+        result.add("BML_RUNTIME_REPORT_FAILED", "fatal", "Runtime reported failed load status.")
+
+    errors = report.get("errors")
+    if not isinstance(errors, list):
+        result.add("BML_RUNTIME_REPORT_ERRORS_INVALID", "fatal", "Runtime load report must include errors array.")
+    else:
+        for index, entry in enumerate(errors):
+            if runtime_report_error_is_fatal(entry):
+                result.add("BML_RUNTIME_REPORT_FATAL_ERROR", "fatal", runtime_report_entry_message(entry), source=f"errors[{index}]")
+
+    warnings = report.get("warnings")
+    if not isinstance(warnings, list):
+        result.add("BML_RUNTIME_REPORT_WARNINGS_INVALID", "fatal", "Runtime load report must include warnings array.")
+
+    loaded_mods = report.get("loadedMods")
+    if not isinstance(loaded_mods, list):
+        result.add("BML_RUNTIME_REPORT_LOADED_MODS_INVALID", "fatal", "Runtime load report must include loadedMods array.")
+    else:
+        for index, mod in enumerate(loaded_mods):
+            if not isinstance(mod, dict):
+                result.add("BML_RUNTIME_REPORT_LOADED_MOD_INVALID", "fatal", f"loadedMods[{index}] must be an object.", source=f"loadedMods[{index}]")
+                continue
+            if "capabilities" in mod:
+                validate_runtime_report_capabilities(result, mod.get("capabilities"), f"loadedMods[{index}].capabilities")
+
+    return result
+
+
+def format_runtime_report_mod(mod: Any) -> str:
+    if not isinstance(mod, dict):
+        return "<invalid mod entry>"
+    mod_id = mod.get("id") if isinstance(mod.get("id"), str) else "<unknown>"
+    version = mod.get("version") if isinstance(mod.get("version"), str) else None
+    status = mod.get("status") if isinstance(mod.get("status"), str) else None
+    label = f"{mod_id}@{version}" if version else mod_id
+    suffixes = []
+    if status:
+        suffixes.append(f"status={status}")
+    caps = validate_runtime_report_capabilities(ValidationResult("runtime report summary"), mod.get("capabilities"), "capabilities")
+    if caps:
+        suffixes.append("capabilities=" + ", ".join(caps))
+    return f"{label} ({'; '.join(suffixes)})" if suffixes else label
+
+
+def print_runtime_report_summary(path: Path, report: dict[str, Any] | None, result: ValidationResult) -> None:
+    print(f"Runtime load report: {path}")
+    if report is None:
+        for problem in result.problems:
+            print(f"  {format_problem(problem)}")
+        print("FAILED: runtime load report could not be read.")
+        return
+
+    contract_id, contract_version = runtime_report_contract(report)
+    print(f"  Contract: {contract_id or '<missing>'}@{contract_version or '<missing>'}")
+    print(f"  Status: {report.get('status', '<missing>')}")
+
+    loaded_mods = report.get("loadedMods")
+    if isinstance(loaded_mods, list):
+        print(f"  Loaded mods: {len(loaded_mods)}")
+        for mod in loaded_mods:
+            print(f"    - {format_runtime_report_mod(mod)}")
+    else:
+        print("  Loaded mods: <invalid>")
+
+    warnings = report.get("warnings")
+    if isinstance(warnings, list):
+        print(f"  Warnings: {len(warnings)}")
+        for entry in warnings:
+            print(f"    - {runtime_report_entry_message(entry)}")
+    else:
+        print("  Warnings: <invalid>")
+
+    errors = report.get("errors")
+    if isinstance(errors, list):
+        print(f"  Errors: {len(errors)}")
+        for entry in errors:
+            print(f"    - {runtime_report_entry_message(entry)}")
+    else:
+        print("  Errors: <invalid>")
+
+    if result.problems:
+        print("Problems:")
+        for problem in result.problems:
+            print(f"  {format_problem(problem)}")
+    if result.ok:
+        print("OK: runtime loaded without fatal errors.")
+    else:
+        print("FAILED: runtime failed, reported fatal errors, or has invalid shape.")
+
+
+def command_runtime_report(args: argparse.Namespace) -> int:
+    report, report_path, load_result = load_runtime_report(args.runtime_load_report)
+    combined = ValidationResult("runtime load report")
+    combined.extend(load_result)
+    if report is not None:
+        combined.extend(validate_runtime_report(report))
+    print_runtime_report_summary(report_path, report, combined)
+    return 0 if combined.ok else 1
+
+
+def command_runtime_info(args: argparse.Namespace) -> int:
+    runtime_info, runtime_path, result = load_runtime_info(args.runtime_info)
+    if runtime_info is None:
+        print_report(result, heading=f"Runtime info: {runtime_path}")
+        return 1
+
+    print(f"Runtime info: {runtime_path}")
+    print(f"  Runtime: {runtime_info.get('runtimeId', '<missing>')}@{runtime_info.get('runtimeVersion', '<missing>')}")
+    contracts = sorted(f"{contract_id}@{version}" for contract_id, version in runtime_contract_versions(runtime_info))
+    print("  Contracts: " + (", ".join(contracts) if contracts else "<none>"))
+    capabilities = runtime_capabilities(runtime_info)
+    print(f"  Capabilities: {len(capabilities)}")
+    for cap_id, version in sorted(capabilities.items()):
+        print(f"    - {cap_id}" + (f"@{version}" if version else ""))
+    if result.problems:
+        print("Problems:")
+        for problem in result.problems:
+            print(f"  {format_problem(problem)}")
+    return 0 if result.ok else 1
+
+
 
 def package_checksum(loaded: LoadedPackage) -> str:
     digest = hashlib.sha256()
@@ -913,6 +1172,12 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_validate.add_argument("runtime_info", help="Path to runtime-info JSON.")
     runtime_validate.add_argument("--package", required=True, help="Package directory or direct package manifest JSON path.")
     runtime_validate.set_defaults(func=command_runtime_validate)
+    runtime_report = runtime_subparsers.add_parser("report", help="Summarize and validate a runtime-load-report JSON.")
+    runtime_report.add_argument("runtime_load_report", help="Path to runtime-load-report JSON.")
+    runtime_report.set_defaults(func=command_runtime_report)
+    runtime_info = runtime_subparsers.add_parser("info", help="Summarize runtime-info JSON capabilities.")
+    runtime_info.add_argument("runtime_info", help="Path to runtime-info JSON.")
+    runtime_info.set_defaults(func=command_runtime_info)
 
     profile_parser = subparsers.add_parser("profile", help="Profile commands.")
     profile_subparsers = profile_parser.add_subparsers(dest="profile_command", required=True)

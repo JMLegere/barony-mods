@@ -205,7 +205,7 @@ Suggested path:
 <profile>/BaronyModLoader/runtime-load-report.json
 ```
 
-Report shape:
+The report follows the P2 `runtime-load-report` schema used by the app diagnostics fixtures:
 
 ```json
 {
@@ -244,7 +244,39 @@ Report shape:
 }
 ```
 
-If validation fails, `status` is `failed`, `loadedMods` contains only accepted mods if partial loading is safe, and `errors` contains stable codes. For the first Stash-focused implementation, partial load should be avoided: any Stash required capability failure should abort modded launch.
+Top-level `status` is either `loaded` or `failed`. Each `loadedMods` entry carries its own `status`: `loaded`, `failed`, or `skipped`. Capability values in load reports are string ids only, and for the Stash v0 surface they must be exactly the canonical ids: `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
+
+If validation fails, `status` is `failed`. For the first Stash-focused handshake artifacts, partial load should be avoided: any Stash required capability failure should abort modded launch and write `loadedMods: []` plus a stable fatal error. Example failed report:
+
+```json
+{
+  "contract": { "id": "bml-runtime-contract", "version": "0.1.0" },
+  "runtime": {
+    "runtimeVersion": "0.1.0",
+    "gameRevision": "git-sha-or-release-id",
+    "executable": "/path/to/barony"
+  },
+  "profileId": "default",
+  "status": "failed",
+  "loadedMods": [],
+  "warnings": [],
+  "errors": [
+    {
+      "code": "BML_RUNTIME_CAPABILITY_MISSING",
+      "severity": "fatal",
+      "mod": "jml.stash",
+      "capability": "void_chest_binding",
+      "message": "Stash requires Void Chest binding, but this Barony runtime does not provide it.",
+      "details": {
+        "requested": "0.1.0",
+        "runtimeVersion": "0.1.0-dev",
+        "availableCapabilities": ["persistent_storage"]
+      },
+      "action": "block-launch"
+    }
+  ]
+}
+```
 
 ## Error contract
 

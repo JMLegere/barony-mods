@@ -109,36 +109,40 @@ exit_criteria = [
 id = "p2_engine_runtime_patch"
 order = 2
 name = "Engine runtime capability patch"
-status = "planned"
-focus = "Add the paired Barony runtime/framework patch with safe named capabilities and validation."
+status = "current-handshake-artifacts"
+focus = "Add the paired Barony runtime/framework patch handshake artifacts with safe named capabilities and validation schemas, without implementing Stash gameplay behavior yet."
 implements_modules = [
-  "native_runtime_hooks: narrow capability registry only",
-  "persistent_storage: storage namespace foundation",
-  "persistent_inventory: named inventory foundation",
-  "placement_lobby: hook foundation",
-  "placement_shop: hook foundation",
-  "multiplayer_version_metadata: metadata foundation",
+  "persistent_storage: canonical capability declaration only",
+  "persistent_inventory: canonical capability declaration only",
+  "void_chest_binding: canonical capability declaration only",
+  "placement_lobby: canonical capability declaration only",
+  "placement_shop: canonical capability declaration only",
+  "multiplayer_version_metadata: canonical capability declaration only",
 ]
 app_deliverables = [
-  "recognize the patched runtime version/capability set",
-  "surface runtime validation failures in diagnostics",
+  "recognize the patched runtime version/capability set from runtime-info.schema.json-compatible metadata",
+  "validate runtime-info JSON for the canonical P2 capability ids",
+  "validate runtime-load-report JSON written by the engine after manifest validation",
+  "surface runtime validation failures in CLI diagnostics without claiming gameplay hooks are active",
 ]
 engine_deliverables = [
-  "load and validate framework capability declarations before gameplay",
-  "open per-mod profile storage namespaces",
-  "define engine-owned named persistent inventory records",
-  "provide a Void Chest binding capability point without hardcoding future unrelated mods",
-  "provide safe lobby placement request processing",
-  "provide safe generated-shop placement request processing",
-  "record framework runtime, active mods, capabilities, and storage schema in save/session metadata",
+  "source patch artifact for the Barony runtime handshake, including reproducible source/build provenance",
+  "runtime-info schema describing runtime id, version, game revision, contract versions, and canonical capabilities",
+  "runtime-load-report schema describing loaded or failed startup status, loaded mod entries, warnings, and stable errors",
+  "fixtures for compatible runtime-info, successful runtime-load-report, and failed runtime-load-report cases",
+  "load and validate framework capability declarations before gameplay once the patch is applied",
+  "report framework runtime, active mods, canonical capabilities, and startup validation errors through runtime-load-report.json",
 ]
 stash_deliverables = [
-  "Stash requirements can be represented by capability declarations rather than arbitrary plugin code",
+  "Stash requirements are represented by capability declarations and handshake fixtures rather than arbitrary plugin code",
+  "No P2 artifact implements persistent inventory behavior, Void Chest routing, lobby/shop placement, or multiplayer gameplay logic",
 ]
 exit_criteria = [
-  "Unsupported capabilities fail early with readable errors",
-  "Runtime hooks are narrow enough to be reviewed against upstream Barony",
-  "The patch still preserves existing Custom Content, Workshop, map, JSON, and Barony Script behavior",
+  "Source patch artifact identifies minimal upstream-reviewable Barony insertion points",
+  "runtime-info schema and fixtures use only the canonical v0 capability ids",
+  "runtime-load-report schema and fixtures cover loaded and failed startup reports with stable diagnostics",
+  "CLI report validation can reject malformed runtime-info and runtime-load-report JSON",
+  "P2 is complete only as runtime-handshake/source-patch artifacts; Stash gameplay behavior remains planned for p3",
 ]
 
 [[phases]]
