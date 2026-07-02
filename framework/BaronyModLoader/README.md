@@ -46,22 +46,29 @@ BaronyModLoader should be designed as a real standalone framework from the begin
 
 This is not a rejection of a larger future SDK. It is a sequencing rule: BaronyModLoader should have the architecture of a full framework while implementing only the concrete modules Stash needs first.
 
-## Executable p1 skeleton
+## Executable CLI workflow
 
-The p1 app slice is a Python standard-library CLI. From the repository root, the expected local commands are:
+The current app slice is a Python standard-library CLI. From the repository root, the expected local commands are:
 
 ```sh
 python framework/BaronyModLoader/app/barony_mod_loader.py version
 python framework/BaronyModLoader/app/barony_mod_loader.py package validate framework/BaronyModLoader/example-stash-package.json
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate framework/BaronyModLoader/fixtures/runtime-info.stash.json --package framework/BaronyModLoader/example-stash-package.json
+python framework/BaronyModLoader/app/barony_mod_loader.py package validate mods/stash
+python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out .tmp/Stash-0.1.0.bmlpkg
+python framework/BaronyModLoader/app/barony_mod_loader.py package install .tmp/Stash-0.1.0.bmlpkg --store .tmp/bml-package-store
+python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate framework/BaronyModLoader/fixtures/runtime-info.stash.json --package .tmp/bml-package-store/jml.stash/0.1.0
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime info framework/BaronyModLoader/fixtures/runtime-info.stash.json
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.loaded.json
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.failed.json
 python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --barony-executable /path/to/barony --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
-python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package framework/BaronyModLoader/example-stash-package.json --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
+python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0
+python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
+python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
+python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-profile --mod-id jml.stash
+python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
 ```
 
-This slice validates package and runtime metadata and writes a launch-plan/runtime-manifest JSON contract. It does not implement the engine runtime patch or Stash gameplay behavior.
+`package install` stores the package under the selected package store and prints the installed package path. The `profile enable` and `launch-plan` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, and writes a launch-plan/runtime-manifest JSON contract. It does not by itself verify a playable patched Barony runtime or Stash gameplay behavior.
 
 ## Inspiration without premature scope
 

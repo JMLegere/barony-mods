@@ -1,0 +1,145 @@
+{
+  "schemaVersion": "0.1.0",
+  "manifestId": "jml.stash.release.0.1.0",
+  "createdAt": "2026-07-02T00:00:00Z",
+  "app": {
+    "id": "BaronyModLoader",
+    "version": "0.1.0"
+  },
+  "package": {
+    "id": "jml.stash",
+    "version": "0.1.0",
+    "manifestPath": "mods/stash/bml-package.json",
+    "checksum": {
+      "algorithm": "sha256",
+      "sha256": "08dffb68b2cdfac4647e7f5093741efde995eeb95bb8417950910b295eb728ac",
+      "size": 12754
+    }
+  },
+  "runtime": {
+    "contract": {
+      "id": "bml-runtime-contract",
+      "version": "0.1.0"
+    },
+    "runtimeVersion": "0.1.0",
+    "requiredCapabilities": [
+      "persistent_storage",
+      "persistent_inventory",
+      "void_chest_binding",
+      "placement_lobby",
+      "placement_shop",
+      "multiplayer_version_metadata"
+    ],
+    "status": "source_patch_artifacts_present_runtime_binary_pending",
+    "notes": "Runtime contract metadata and source patch artifacts exist; no patched Barony executable has been behaviorally verified for release."
+  },
+  "barony": {
+    "upstreamRepository": "https://github.com/TurningWheel/Barony",
+    "workingForkRepository": "https://github.com/JMLegere/Barony",
+    "sourceRevision": "pending-patched-build-source-revision",
+    "sourceRevisionStatus": "pending_patched_build",
+    "compatibility": {
+      "supportedGameVersions": [
+        "5.x"
+      ],
+      "status": "source_patch_artifacts_present_built_game_pending",
+      "notes": "Package metadata targets Barony 5.x, but playable compatibility remains pending until the patches are applied to a named Barony revision, built, and exercised in-game."
+    }
+  },
+  "patchSeries": {
+    "status": "source_artifacts_present",
+    "patches": [
+      {
+        "id": "bml-runtime-handshake",
+        "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+        "checksum": {
+          "algorithm": "sha256",
+          "sha256": "1d278ccfa3bf319acbfb7577eeec2b5a69770eb942de4b2e5689efb3a322d989",
+          "size": 14642
+        },
+        "appliesTo": "TurningWheel/Barony",
+        "baseRevision": "pending-upstream-release-or-git-sha",
+        "required": true,
+        "providesCapabilities": [
+          "multiplayer_version_metadata"
+        ],
+        "verificationStatus": "artifact_present",
+        "notes": "Adds BaronyModLoader runtime manifest discovery and runtime load reporting hooks."
+      },
+      {
+        "id": "bml-stash-runtime-capabilities",
+        "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+        "checksum": {
+          "algorithm": "sha256",
+          "sha256": "3f5438e84f83b0beb00d30c45bd0d2d9046a5c88ade4bf88907151a085a15348",
+          "size": 20186
+        },
+        "appliesTo": "TurningWheel/Barony",
+        "baseRevision": "pending-upstream-release-or-git-sha",
+        "required": true,
+        "providesCapabilities": [
+          "persistent_storage",
+          "persistent_inventory",
+          "void_chest_binding",
+          "placement_lobby",
+          "placement_shop",
+          "multiplayer_version_metadata"
+        ],
+        "verificationStatus": "artifact_present",
+        "notes": "Implements source-level Stash capability hooks; built-game behavior is not yet release-verified."
+      }
+    ],
+    "notes": "Patch files are present in native/barony-modloader-runtime/patches and checksummed here for release provenance."
+  },
+  "buildArtifacts": {
+    "status": "pending_patched_build",
+    "artifacts": [
+      {
+        "platform": "linux-x86_64",
+        "path": "native/release/linux-x86_64/barony",
+        "sha256": null,
+        "status": "placeholder_pending_built_game",
+        "notes": "Placeholder only; no distributable or behaviorally verified Barony binary is claimed."
+      }
+    ],
+    "notes": "Release provenance intentionally records the missing build artifact instead of substituting a fake binary checksum."
+  },
+  "verification": {
+    "status": "artifact_verified_built_game_pending",
+    "artifactVerification": {
+      "status": "complete",
+      "evidence": [
+        "mods/stash/bml-package.json",
+        "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+        "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+        "native/barony-modloader-runtime/stash-verification-plan.toml",
+        "framework/BaronyModLoader/fixtures/runtime-info.stash.json"
+      ],
+      "notes": "This fixture records present source and metadata artifacts only."
+    },
+    "builtGameBehavior": {
+      "status": "pending_patched_build",
+      "requiredScenarios": [
+        "runtime manifest acceptance",
+        "persistent Void Chest inventory across death, new run, and process relaunch",
+        "save/resume without duplicate or forked stash state",
+        "lobby Void Chest placement",
+        "generated shop Void Chest placement",
+        "spell-created Void Chest binding",
+        "multiplayer package/runtime mismatch rejection",
+        "disabled package leaves vanilla Void Chest behavior unmodified"
+      ],
+      "notes": "These scenarios are planned but not yet passed against a patched playable Barony build."
+    }
+  },
+  "rollback": {
+    "notes": "Rollback means disabling the jml.stash package for affected profiles and launching an unpatched Barony executable until a patched build has passed the required scenarios.",
+    "steps": [
+      "Disable jml.stash in the profile package state before launch.",
+      "Use the previous unpatched Barony executable or restore the pre-patch source tree before building.",
+      "Preserve BaronyModLoader profile state for inspection; do not migrate or delete stash inventory files unless the user explicitly chooses data removal.",
+      "Regenerate launch/runtime manifests after the package is disabled so stale capability metadata is not reused."
+    ],
+    "risk": "Existing experimental stash state may be unreadable by vanilla Barony; preserve it separately rather than silently converting or deleting it."
+  }
+}

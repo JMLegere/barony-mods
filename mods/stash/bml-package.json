@@ -1,0 +1,361 @@
+{
+  "formatVersion": "0.1.0",
+  "id": "jml.stash",
+  "name": "Stash",
+  "version": "0.1.0",
+  "kind": "gameplay-mod",
+  "summary": "Profile-persistent shared Void Chest inventory for Barony.",
+  "description": "Stash augments Barony's existing Void Chest system through BaronyModLoader's engine-owned capabilities. This package manifest lives at mods/stash/bml-package.json so packaging commands can operate on the Stash package directory. It requests only persistent storage, persistent inventory, Void Chest binding, lobby/shop placement, and multiplayer metadata modules; native behavior remains represented as reviewable source patch artifacts, not as a verified playable Barony build.",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "JMLegere"
+    }
+  ],
+  "layout": {
+    "contentRoot": "content/",
+    "assetRoot": "assets/",
+    "nativeRoot": "native/",
+    "migrationRoot": "migrations/"
+  },
+  "barony": {
+    "officialContentSystems": [
+      "Custom Content",
+      "Steam Workshop",
+      "maps",
+      "JSON",
+      "Barony Script"
+    ],
+    "upstreamRepository": "https://github.com/TurningWheel/Barony",
+    "workingForkRepository": "https://github.com/JMLegere/Barony",
+    "supportedGameVersions": [
+      "5.x"
+    ],
+    "notes": "Stash is packaged as a clean BaronyModLoader mod plus a reviewed paired engine runtime capability set, not as a hidden source fork. Existing Barony content systems remain the preferred path for content assets; this package requests native framework hooks only where Stash requires engine-owned persistence and placement."
+  },
+  "framework": {
+    "id": "BaronyModLoader",
+    "minimumAppVersion": "0.1.0",
+    "packageSchema": "bml-package@0.1.0",
+    "runtimeContract": "bml-runtime-contract@0.1.0"
+  },
+  "content": {
+    "entries": []
+  },
+  "assets": {
+    "icon": "preview.png",
+    "previewImages": [
+      "preview.png"
+    ],
+    "readme": null
+  },
+  "engine": {
+    "runtimeContract": "bml-runtime-contract@0.1.0",
+    "minimumRuntimeVersion": "0.1.0",
+    "capabilities": [
+      {
+        "id": "persistent_storage",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Stash state must survive death, victory, process restart, and starting a later run."
+      },
+      {
+        "id": "persistent_inventory",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "All Void Chest access paths must share one named inventory."
+      },
+      {
+        "id": "void_chest_binding",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Stash augments the existing Void Chest system instead of creating a parallel chest mechanic."
+      },
+      {
+        "id": "placement_lobby",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Permanent Void Chest access must appear in the lobby."
+      },
+      {
+        "id": "placement_shop",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Permanent Void Chest access must appear in every generated shop."
+      },
+      {
+        "id": "multiplayer_version_metadata",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Hosts and clients must agree on the active Stash package, runtime, and persistent inventory schema before interacting with shared state."
+      }
+    ]
+  },
+  "modules": {
+    "persistentStorage": {
+      "namespace": "stash",
+      "scope": "profile-and-save",
+      "savePolicy": "on_inventory_close",
+      "fileHint": "stash/void_chest_inventory.json",
+      "schemaVersion": "0.1.0",
+      "failurePolicy": "block-mod-load"
+    },
+    "persistentInventories": [
+      {
+        "id": "void_chest_inventory",
+        "displayName": "Void Chest Stash",
+        "storageKey": "void_chest_inventory",
+        "scope": "profile-and-save",
+        "authority": "host",
+        "access": "shared_party",
+        "savePolicy": "on_inventory_close",
+        "itemEncoding": "engine_native_item_state",
+        "preserves": [
+          "type",
+          "status",
+          "beatitude",
+          "count",
+          "appearance",
+          "identified",
+          "owner",
+          "metadata"
+        ],
+        "failurePolicy": "block-mod-load"
+      }
+    ],
+    "voidChestBindings": [
+      {
+        "id": "existing_void_chest_binding",
+        "inventory": "void_chest_inventory",
+        "source": "engine_void_chest",
+        "mode": "read_write",
+        "exclusive": true,
+        "description": "Normal Void Chest open/close logic reads and writes the persistent stash inventory."
+      },
+      {
+        "id": "spell_created_void_chest_binding",
+        "inventory": "void_chest_inventory",
+        "source": "spell_created_void_chest",
+        "mode": "read_write",
+        "exclusive": true,
+        "description": "Void Chests created by spells open the same persistent stash inventory."
+      },
+      {
+        "id": "framework_placed_void_chest_binding",
+        "inventory": "void_chest_inventory",
+        "source": "framework_placed_void_chest",
+        "mode": "read_write",
+        "exclusive": true,
+        "description": "Lobby and shop Void Chest access points open the same persistent stash inventory."
+      }
+    ],
+    "placements": [
+      {
+        "id": "lobby_void_chest_access",
+        "hook": "lobby_assist_area",
+        "entity": "void_chest_access",
+        "inventory": "void_chest_inventory",
+        "frequency": "once",
+        "placementPolicy": "nearest_free_tile",
+        "deterministic": true,
+        "failurePolicy": "block-mod-load",
+        "description": "Place one permanent Void Chest access point near the lobby assist shrine area."
+      },
+      {
+        "id": "shop_void_chest_access",
+        "hook": "generated_shop",
+        "entity": "void_chest_access",
+        "inventory": "void_chest_inventory",
+        "frequency": "every_shop",
+        "placementPolicy": "free_shop_floor_tile",
+        "deterministic": true,
+        "failurePolicy": "log-location-and-continue-if-shop-has-no-safe-tile",
+        "description": "Place one permanent Void Chest access point in every generated shop when a safe shop floor tile exists."
+      }
+    ],
+    "multiplayer": {
+      "policy": "host_authoritative",
+      "versionPolicy": "same-package-and-runtime-required",
+      "syncInventories": [
+        "void_chest_inventory"
+      ],
+      "clientCompatibility": {
+        "requirePackageId": "jml.stash",
+        "requirePackageVersion": "0.1.0",
+        "requireRuntimeContract": "bml-runtime-contract@0.1.0",
+        "requireInventorySchemaVersion": "0.1.0"
+      },
+      "failurePolicy": "reject-incompatible-client-before-gameplay"
+    }
+  },
+  "native": {
+    "required": true,
+    "mode": "paired-engine-runtime",
+    "plugins": [],
+    "patches": [
+      {
+        "id": "bml-runtime-handshake",
+        "appliesTo": "TurningWheel/Barony",
+        "baseRevision": "pending-upstream-release-or-git-sha",
+        "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+        "required": true,
+        "providesCapabilities": [
+          "multiplayer_version_metadata"
+        ],
+        "sha256": "1d278ccfa3bf319acbfb7577eeec2b5a69770eb942de4b2e5689efb3a322d989",
+        "size": 14642,
+        "reviewStance": "source patch adds BaronyModLoader runtime manifest discovery, runtime-info reporting, and load report plumbing without claiming Stash gameplay behavior is verified"
+      },
+      {
+        "id": "bml-stash-runtime-capabilities",
+        "appliesTo": "TurningWheel/Barony",
+        "baseRevision": "pending-upstream-release-or-git-sha",
+        "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+        "required": true,
+        "providesCapabilities": [
+          "persistent_storage",
+          "persistent_inventory",
+          "void_chest_binding",
+          "placement_lobby",
+          "placement_shop",
+          "multiplayer_version_metadata"
+        ],
+        "sha256": "3f5438e84f83b0beb00d30c45bd0d2d9046a5c88ade4bf88907151a085a15348",
+        "size": 20186,
+        "reviewStance": "source patch implements the capability-oriented Stash runtime hooks; built-game behavioral verification remains pending"
+      }
+    ],
+    "builds": [
+      {
+        "platform": "linux-x86_64",
+        "baronyRevision": "pending-patched-build-source-revision",
+        "runtimeVersion": "0.1.0",
+        "artifact": "native/release/linux-x86_64/barony",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "status": "placeholder_pending_built_game",
+        "notes": "No playable patched Barony binary has been verified for this package manifest yet."
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "id": "barony",
+      "kind": "game",
+      "version": ">=4.0.0",
+      "required": true
+    },
+    {
+      "id": "bml.runtime",
+      "kind": "engine-runtime",
+      "version": ">=0.1.0 <0.2.0",
+      "required": true
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "*.void_chest_binding",
+      "kind": "exclusive-capability-owner",
+      "reason": "Stash requires authoritative binding for Barony's Void Chest inventory. Another mod that owns the same binding could corrupt or fork stash state."
+    }
+  ],
+  "loadAfter": [],
+  "loadBefore": [],
+  "migrations": [
+    {
+      "id": "stash-0.1.0-initial-state",
+      "from": null,
+      "to": "0.1.0",
+      "phase": "runtime-load",
+      "path": "migrations/0001-initial-void-chest-inventory.json",
+      "affects": [
+        "profile-storage",
+        "save-metadata",
+        "void_chest_inventory"
+      ],
+      "idempotent": true,
+      "rollback": "not-required-for-initial-install"
+    }
+  ],
+  "checksums": {
+    "algorithm": "sha256",
+    "file": "checksums.json",
+    "releaseRequired": true,
+    "entries": [
+      {
+        "path": "bml-package.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 0,
+        "status": "release-manifest-records-current-package-checksum"
+      },
+      {
+        "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+        "sha256": "1d278ccfa3bf319acbfb7577eeec2b5a69770eb942de4b2e5689efb3a322d989",
+        "size": 14642,
+        "status": "source_patch_artifact_present"
+      },
+      {
+        "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+        "sha256": "3f5438e84f83b0beb00d30c45bd0d2d9046a5c88ade4bf88907151a085a15348",
+        "size": 20186,
+        "status": "source_patch_artifact_present"
+      },
+      {
+        "path": "migrations/0001-initial-void-chest-inventory.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 0,
+        "status": "placeholder_pending_package_materialization"
+      }
+    ]
+  },
+  "source": {
+    "homepage": "https://github.com/JMLegere/Barony",
+    "upstream": "https://github.com/TurningWheel/Barony",
+    "repository": "https://github.com/JMLegere/Barony",
+    "revision": "pending-patched-build-source-revision",
+    "revisionStatus": "pending_patched_build",
+    "patchSeries": "native/barony-modloader-runtime/patches/",
+    "patchArtifacts": [
+      "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+      "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch"
+    ],
+    "transparency": "Native behavior is represented as small reviewable source patch artifacts. This manifest does not claim that a patched playable Barony build has been produced or behaviorally verified."
+  },
+  "build": {
+    "reproducible": true,
+    "system": "documented-native-build",
+    "instructions": "native/barony-modloader-runtime/README.md",
+    "status": "pending_patched_build",
+    "outputs": [
+      {
+        "platform": "linux-x86_64",
+        "path": "native/release/linux-x86_64/barony",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "status": "placeholder_pending_built_game"
+      }
+    ]
+  },
+  "runtimeReports": {
+    "paths": {
+      "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
+      "runtimeLoadReport": "BaronyModLoader/runtime-load-report.json",
+      "runtimeLog": "BaronyModLoader/logs/runtime.log",
+      "validationReport": "BaronyModLoader/validation-report.json"
+    },
+    "expectedLoadedCapabilities": [
+      "persistent_storage",
+      "persistent_inventory",
+      "void_chest_binding",
+      "placement_lobby",
+      "placement_shop",
+      "multiplayer_version_metadata"
+    ],
+    "expectedLoadedModules": [
+      "persistentStorage",
+      "persistentInventories",
+      "voidChestBindings",
+      "placements",
+      "multiplayer"
+    ],
+    "blockOnErrors": true
+  }
+}

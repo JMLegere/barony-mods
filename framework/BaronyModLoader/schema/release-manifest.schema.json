@@ -1,0 +1,522 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://baronymodloader.local/schema/release-manifest.schema.json",
+  "title": "BaronyModLoader v0 release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "manifestId",
+    "createdAt",
+    "app",
+    "package",
+    "runtime",
+    "barony",
+    "patchSeries",
+    "buildArtifacts",
+    "verification",
+    "rollback"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1.0"
+    },
+    "manifestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "const": "BaronyModLoader"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "manifestPath",
+        "checksum"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/packageId"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "manifestPath": {
+          "$ref": "#/$defs/repoRelativePath"
+        },
+        "checksum": {
+          "$ref": "#/$defs/checksum"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "runtimeVersion",
+        "requiredCapabilities",
+        "status"
+      ],
+      "properties": {
+        "contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "version"
+          ],
+          "properties": {
+            "id": {
+              "const": "bml-runtime-contract"
+            },
+            "version": {
+              "const": "0.1.0"
+            }
+          }
+        },
+        "runtimeVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "requiredCapabilities": {
+          "$ref": "#/$defs/capabilityIdSet"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "source_patch_artifacts_present_runtime_binary_pending",
+            "runtime_binary_verified",
+            "pending"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "barony": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upstreamRepository",
+        "workingForkRepository",
+        "sourceRevision",
+        "sourceRevisionStatus",
+        "compatibility"
+      ],
+      "properties": {
+        "upstreamRepository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workingForkRepository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceRevisionStatus": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "pending_patched_build",
+            "placeholder"
+          ]
+        },
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "supportedGameVersions",
+            "status"
+          ],
+          "properties": {
+            "supportedGameVersions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "source_patch_artifacts_present_built_game_pending",
+                "verified_playable",
+                "unknown"
+              ]
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "patchSeries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "patches"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "source_artifacts_present",
+            "applied_to_verified_source",
+            "pending"
+          ]
+        },
+        "patches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/patchArtifact"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "buildArtifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "artifacts"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending_patched_build",
+            "verified",
+            "not_applicable"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/buildArtifact"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "artifactVerification",
+        "builtGameBehavior"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "artifact_verified_built_game_pending",
+            "verified_playable",
+            "failed",
+            "pending"
+          ]
+        },
+        "artifactVerification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "pending",
+                "failed"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/repoRelativePath"
+              }
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        },
+        "builtGameBehavior": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "requiredScenarios"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending_patched_build",
+                "complete",
+                "failed"
+              ]
+            },
+            "requiredScenarios": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "notes",
+        "steps"
+      ],
+      "properties": {
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "risk": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "packageId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "repoRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))"
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "checksum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "sha256",
+        "size"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "capabilityId": {
+      "type": "string",
+      "enum": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop",
+        "multiplayer_version_metadata"
+      ]
+    },
+    "capabilityIdSet": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "$ref": "#/$defs/capabilityId"
+      },
+      "uniqueItems": true,
+      "allOf": [
+        {
+          "contains": {
+            "const": "persistent_storage"
+          }
+        },
+        {
+          "contains": {
+            "const": "persistent_inventory"
+          }
+        },
+        {
+          "contains": {
+            "const": "void_chest_binding"
+          }
+        },
+        {
+          "contains": {
+            "const": "placement_lobby"
+          }
+        },
+        {
+          "contains": {
+            "const": "placement_shop"
+          }
+        },
+        {
+          "contains": {
+            "const": "multiplayer_version_metadata"
+          }
+        }
+      ]
+    },
+    "patchArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "checksum",
+        "appliesTo",
+        "baseRevision",
+        "required",
+        "providesCapabilities",
+        "verificationStatus"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/repoRelativePath"
+        },
+        "checksum": {
+          "$ref": "#/$defs/checksum"
+        },
+        "appliesTo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "providesCapabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          },
+          "uniqueItems": true
+        },
+        "verificationStatus": {
+          "type": "string",
+          "enum": [
+            "artifact_present",
+            "applied_to_verified_source",
+            "pending"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "buildArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "path",
+        "status"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/repoRelativePath"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "placeholder_pending_built_game",
+            "verified",
+            "missing"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

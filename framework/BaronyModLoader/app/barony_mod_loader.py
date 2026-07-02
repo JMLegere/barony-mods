@@ -13,10 +13,13 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
+import tempfile
+import zipfile
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 APP_ID = "BaronyModLoader"
@@ -26,6 +29,8 @@ RUNTIME_CONTRACT_ID = "bml-runtime-contract"
 RUNTIME_CONTRACT_VERSION = "0.1.0"
 RUNTIME_CONTRACT = f"{RUNTIME_CONTRACT_ID}@{RUNTIME_CONTRACT_VERSION}"
 PACKAGE_MANIFEST_NAME = "bml-package.json"
+PACKAGE_INSTALL_DIRECTORIES = ("content", "assets", "native", "migrations")
+DETERMINISTIC_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 CANONICAL_STASH_CAPABILITIES = (
     "persistent_storage",
@@ -911,6 +916,389 @@ def command_runtime_info(args: argparse.Namespace) -> int:
 
 
 
+def safe_archive_name(name: str) -> str | None:
+    if not name or name.startswith(("/", "\\")) or "\\" in name:
+        return None
+    normalized = PurePosixPath(name)
+    if normalized.is_absolute() or any(part in {"", ".", ".."} for part in normalized.parts):
+        return None
+    return normalized.as_posix()
+
+
+def archive_name_is_installable(name: str) -> bool:
+    return name == PACKAGE_MANIFEST_NAME or any(name.startswith(f"{directory}/") for directory in PACKAGE_INSTALL_DIRECTORIES)
+
+
+def package_relative_files(package_root: Path, out_path: Path | None = None) -> list[tuple[str, Path]]:
+    entries: list[tuple[str, Path]] = []
+    out_resolved = out_path.resolve() if out_path is not None and out_path.exists() else None
+    for path in package_root.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        resolved = path.resolve()
+        if out_resolved is not None and resolved == out_resolved:
+            continue
+        relative_name = path.relative_to(package_root).as_posix()
+        entries.append((relative_name, path))
+    entries.sort(key=lambda item: item[0])
+    return entries
+
+
+def write_deterministic_package_archive(package_root: Path, out_path: Path) -> int:
+    entries = package_relative_files(package_root, out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for relative_name, source_path in entries:
+            info = zipfile.ZipInfo(relative_name, DETERMINISTIC_ZIP_TIMESTAMP)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, source_path.read_bytes())
+    return len(entries)
+
+
+def load_package_archive(path_arg: str) -> tuple[LoadedPackage | None, Path, ValidationResult]:
+    path = Path(path_arg).expanduser()
+    result = ValidationResult(f"package archive {path}")
+    if not path.exists():
+        result.add("BML_PACKAGE_ARCHIVE_MISSING", "fatal", f"Package archive not found: {path}")
+        return None, path, result
+    if not path.is_file():
+        result.add("BML_PACKAGE_ARCHIVE_NOT_FILE", "fatal", f"Package archive path is not a file: {path}")
+        return None, path, result
+    if not zipfile.is_zipfile(path):
+        result.add("BML_PACKAGE_ARCHIVE_INVALID", "fatal", f"Package archive is not a zip-compatible .bmlpkg file: {path}")
+        return None, path, result
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                if safe_archive_name(info.filename) is None:
+                    result.add("BML_PACKAGE_ARCHIVE_PATH_UNSAFE", "fatal", "Package archive contains an unsafe member path.", member=info.filename)
+            if not result.ok:
+                return None, path, result
+            try:
+                raw_manifest = archive.read(PACKAGE_MANIFEST_NAME)
+            except KeyError:
+                result.add(
+                    "BML_PACKAGE_ARCHIVE_MANIFEST_MISSING",
+                    "fatal",
+                    f"Package archive must contain {PACKAGE_MANIFEST_NAME} at its root.",
+                    expected=PACKAGE_MANIFEST_NAME,
+                )
+                return None, path, result
+    except zipfile.BadZipFile as exc:
+        result.add("BML_PACKAGE_ARCHIVE_INVALID", "fatal", f"Package archive could not be opened: {exc}")
+        return None, path, result
+    except OSError as exc:
+        result.add("BML_PACKAGE_ARCHIVE_READ_FAILED", "fatal", f"Could not read package archive: {exc}")
+        return None, path, result
+
+    try:
+        payload = json.loads(raw_manifest.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        result.add("BML_PACKAGE_MANIFEST_PARSE_FAILED", "fatal", "Package archive manifest is not UTF-8 JSON.", error=str(exc))
+        return None, path, result
+    except json.JSONDecodeError as exc:
+        result.add(
+            "BML_PACKAGE_MANIFEST_PARSE_FAILED",
+            "fatal",
+            "Package archive manifest is not valid JSON.",
+            line=exc.lineno,
+            column=exc.colno,
+            error=exc.msg,
+        )
+        return None, path, result
+    if not isinstance(payload, dict):
+        result.add("BML_PACKAGE_MANIFEST_INVALID", "fatal", "Package archive manifest root must be a JSON object.")
+        return None, path, result
+    return LoadedPackage(payload, path.resolve(), path.resolve().parent), path.resolve(), result
+
+
+def package_install_target(store_dir: Path, manifest: dict[str, Any]) -> Path:
+    package_id = str(manifest.get("id"))
+    package_version = str(manifest.get("version"))
+    return store_dir / package_id / package_version
+
+
+def replace_install_target(temp_target: Path, final_target: Path) -> None:
+    if final_target.exists():
+        if final_target.is_dir():
+            shutil.rmtree(final_target)
+        else:
+            final_target.unlink()
+    temp_target.rename(final_target)
+
+
+def copy_installed_package_files(package: LoadedPackage, target: Path) -> list[str]:
+    copied = [PACKAGE_MANIFEST_NAME]
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(package.manifest_path, target / PACKAGE_MANIFEST_NAME)
+    for directory in PACKAGE_INSTALL_DIRECTORIES:
+        source = package.package_root / directory
+        if not source.is_dir():
+            continue
+        destination = target / directory
+        shutil.copytree(source, destination)
+        for path in sorted(destination.rglob("*")):
+            if path.is_file():
+                copied.append(path.relative_to(target).as_posix())
+    return copied
+
+
+def extract_installed_package_files(archive_path: Path, target: Path) -> list[str]:
+    copied: list[str] = []
+    target.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive_path) as archive:
+        installable = []
+        for info in archive.infolist():
+            safe_name = safe_archive_name(info.filename)
+            if safe_name is None or info.is_dir() or not archive_name_is_installable(safe_name):
+                continue
+            installable.append((safe_name, info))
+        for safe_name, info in sorted(installable, key=lambda item: item[0]):
+            destination = target / safe_name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            copied.append(safe_name)
+    return copied
+
+
+def install_loaded_package(package: LoadedPackage, store_dir: Path, *, archive_path: Path | None = None) -> tuple[Path, list[str]]:
+    final_target = package_install_target(store_dir, package.manifest)
+    final_target.parent.mkdir(parents=True, exist_ok=True)
+    temp_target = Path(tempfile.mkdtemp(prefix=f".{final_target.name}.", dir=final_target.parent))
+    try:
+        if archive_path is None:
+            copied = copy_installed_package_files(package, temp_target)
+        else:
+            copied = extract_installed_package_files(archive_path, temp_target)
+        replace_install_target(temp_target, final_target)
+        return final_target, copied
+    except Exception:
+        if temp_target.exists():
+            shutil.rmtree(temp_target)
+        raise
+
+
+def preferred_package_path(package: LoadedPackage) -> Path:
+    if package.manifest_path.name == PACKAGE_MANIFEST_NAME:
+        return package.package_root
+    return package.manifest_path
+
+
+def active_mods_json_path(profile_dir: Path) -> Path:
+    return bml_profile_root(profile_dir) / "active-mods.json"
+
+
+def profile_id(profile: dict[str, Any]) -> str | None:
+    value = profile.get("profile", {}).get("id")
+    return value if isinstance(value, str) else None
+
+
+def profile_active_mods(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    mods = profile.get("activeMods")
+    if not isinstance(mods, list):
+        return []
+    return [dict(mod) for mod in mods if isinstance(mod, dict)]
+
+
+def load_active_mods_file(profile_dir: Path) -> list[dict[str, Any]]:
+    path = active_mods_json_path(profile_dir)
+    if not path.is_file():
+        return []
+    try:
+        payload = parse_json_file(path)
+    except (json.JSONDecodeError, OSError):
+        return []
+    mods = payload.get("mods") if isinstance(payload, dict) else None
+    if not isinstance(mods, list):
+        return []
+    return [dict(mod) for mod in mods if isinstance(mod, dict)]
+
+
+def write_profile_active_mods(profile_dir: Path, profile: dict[str, Any], mods: list[dict[str, Any]], generated_at: str) -> None:
+    profile.setdefault("profile", {})["updatedAt"] = generated_at
+    profile["activeMods"] = mods
+    write_json_file(profile_json_path(profile_dir), profile)
+    write_json_file(
+        active_mods_json_path(profile_dir),
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "profileId": profile_id(profile),
+            "generatedAt": generated_at,
+            "mods": mods,
+        },
+    )
+
+
+def command_package_pack(args: argparse.Namespace) -> int:
+    package_dir = Path(args.package_dir).expanduser()
+    result = ValidationResult(f"package directory {package_dir}")
+    if not package_dir.is_dir():
+        result.add("BML_PACKAGE_DIR_REQUIRED", "fatal", f"Package pack requires a directory containing {PACKAGE_MANIFEST_NAME}: {package_dir}")
+        print_report(result, heading="Package pack")
+        return 1
+
+    package, load_result = load_package(str(package_dir))
+    combined = ValidationResult("package pack")
+    combined.extend(load_result)
+    if package is not None:
+        combined.extend(validate_package(package))
+    if not combined.ok or package is None:
+        print_report(combined, heading="Package pack validation")
+        return 1
+
+    out_path = Path(args.out).expanduser().resolve()
+    try:
+        entry_count = write_deterministic_package_archive(package.package_root, out_path)
+    except OSError as exc:
+        result.add("BML_PACKAGE_ARCHIVE_WRITE_FAILED", "fatal", f"Could not write package archive: {exc}")
+        print_report(result, heading="Package pack")
+        return 1
+    print(
+        json.dumps(
+            {
+                "status": "packed",
+                "archive": str(out_path),
+                "package": {
+                    "id": package.manifest.get("id"),
+                    "version": package.manifest.get("version"),
+                },
+                "entries": entry_count,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def command_package_install(args: argparse.Namespace) -> int:
+    source_path = Path(args.package_or_archive).expanduser()
+    store_dir = Path(args.store).expanduser().resolve()
+    archive_path: Path | None = None
+
+    if source_path.is_file() and zipfile.is_zipfile(source_path):
+        package, archive_path, load_result = load_package_archive(args.package_or_archive)
+    elif source_path.suffix == ".bmlpkg":
+        package, archive_path, load_result = load_package_archive(args.package_or_archive)
+    else:
+        package, load_result = load_package(args.package_or_archive)
+
+    combined = ValidationResult("package install")
+    combined.extend(load_result)
+    if package is not None:
+        combined.extend(validate_package(package))
+    if not combined.ok or package is None:
+        print_report(combined, heading="Package install validation")
+        return 1
+
+    try:
+        installed_path, copied = install_loaded_package(package, store_dir, archive_path=archive_path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        result = ValidationResult("package install")
+        result.add("BML_PACKAGE_INSTALL_FAILED", "fatal", f"Could not install package: {exc}")
+        print_report(result, heading="Package install")
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "status": "installed",
+                "installedPath": str(installed_path),
+                "package": {
+                    "id": package.manifest.get("id"),
+                    "version": package.manifest.get("version"),
+                },
+                "files": copied,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def command_profile_enable(args: argparse.Namespace) -> int:
+    profile, profile_dir, profile_result = load_profile(args.profile_dir)
+    package, package_load_result = load_package(args.package)
+    combined = ValidationResult("profile enable")
+    combined.extend(profile_result)
+    combined.extend(package_load_result)
+    if package is not None:
+        combined.extend(validate_package(package))
+    if not combined.ok or profile is None or package is None:
+        print_report(combined, heading="Profile enable validation")
+        return 1
+
+    now = utc_now()
+    mod_id = str(package.manifest.get("id"))
+    entry = {
+        "id": mod_id,
+        "version": package.manifest.get("version"),
+        "packagePath": str(preferred_package_path(package)),
+        "enabledAt": now,
+    }
+    mods = [mod for mod in profile_active_mods(profile) if mod.get("id") != mod_id]
+    mods.append(entry)
+    mods.sort(key=lambda mod: str(mod.get("id", "")))
+    try:
+        write_profile_active_mods(profile_dir, profile, mods, now)
+    except OSError as exc:
+        result = ValidationResult("profile enable")
+        result.add("BML_PROFILE_WRITE_FAILED", "fatal", f"Could not write profile active mods: {exc}")
+        print_report(result, heading="Profile enable")
+        return 1
+    print(json.dumps({"status": "enabled", "profile": profile_id(profile), "mod": entry}, indent=2))
+    return 0
+
+
+def command_profile_disable(args: argparse.Namespace) -> int:
+    profile, profile_dir, profile_result = load_profile(args.profile_dir)
+    if not profile_result.ok or profile is None:
+        print_report(profile_result, heading="Profile disable validation")
+        return 1
+
+    mod_id = args.mod_id
+    profile_mods = profile_active_mods(profile)
+    file_mods = load_active_mods_file(profile_dir)
+    candidates = profile_mods if profile_mods else file_mods
+    remaining = [mod for mod in candidates if mod.get("id") != mod_id]
+    removed = len(candidates) - len(remaining)
+    now = utc_now()
+    try:
+        write_profile_active_mods(profile_dir, profile, remaining, now)
+    except OSError as exc:
+        result = ValidationResult("profile disable")
+        result.add("BML_PROFILE_WRITE_FAILED", "fatal", f"Could not write profile active mods: {exc}")
+        print_report(result, heading="Profile disable")
+        return 1
+    print(json.dumps({"status": "disabled", "profile": profile_id(profile), "modId": mod_id, "removed": removed}, indent=2))
+    return 0
+
+
+def command_profile_inspect(args: argparse.Namespace) -> int:
+    profile, profile_dir, profile_result = load_profile(args.profile_dir)
+    if not profile_result.ok or profile is None:
+        print_report(profile_result, heading="Profile inspect validation")
+        return 1
+    runtime = profile.get("runtime") if isinstance(profile.get("runtime"), dict) else {}
+    print(
+        json.dumps(
+            {
+                "profileId": profile_id(profile),
+                "profilePath": str(profile_json_path(profile_dir)),
+                "runtime": {
+                    "baronyExecutable": runtime.get("baronyExecutable"),
+                    "runtimeInfo": runtime.get("runtimeInfo"),
+                },
+                "activeMods": profile_active_mods(profile),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def package_checksum(loaded: LoadedPackage) -> str:
     digest = hashlib.sha256()
     with loaded.manifest_path.open("rb") as handle:
@@ -1165,6 +1553,14 @@ def build_parser() -> argparse.ArgumentParser:
     package_validate = package_subparsers.add_parser("validate", help="Validate a package directory or JSON manifest file.")
     package_validate.add_argument("path", help=f"Package directory containing {PACKAGE_MANIFEST_NAME}, or direct manifest JSON path.")
     package_validate.set_defaults(func=command_package_validate)
+    package_pack = package_subparsers.add_parser("pack", help="Validate and pack a package directory into a deterministic .bmlpkg archive.")
+    package_pack.add_argument("package_dir", help=f"Package directory containing {PACKAGE_MANIFEST_NAME}.")
+    package_pack.add_argument("--out", required=True, help="Output .bmlpkg archive path.")
+    package_pack.set_defaults(func=command_package_pack)
+    package_install = package_subparsers.add_parser("install", help="Install a package directory, direct manifest, or .bmlpkg archive into a package store.")
+    package_install.add_argument("package_or_archive", help="Package directory, direct manifest JSON path, or zip-compatible .bmlpkg archive.")
+    package_install.add_argument("--store", required=True, help="Package store directory. Packages install under <store>/<package-id>/<version>/.")
+    package_install.set_defaults(func=command_package_install)
 
     runtime_parser = subparsers.add_parser("runtime", help="Runtime metadata commands.")
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
@@ -1187,6 +1583,17 @@ def build_parser() -> argparse.ArgumentParser:
     profile_create.add_argument("--barony-executable", required=True, help="Selected Barony executable path. It may be created later.")
     profile_create.add_argument("--runtime-info", help="Optional runtime-info JSON path to record in the profile.")
     profile_create.set_defaults(func=command_profile_create)
+    profile_enable = profile_subparsers.add_parser("enable", help="Enable an installed package in a profile.")
+    profile_enable.add_argument("profile_dir", help="Profile directory created by profile create.")
+    profile_enable.add_argument("--package", required=True, help="Installed package directory or direct package manifest JSON path.")
+    profile_enable.set_defaults(func=command_profile_enable)
+    profile_disable = profile_subparsers.add_parser("disable", help="Disable an active mod in a profile without deleting package files.")
+    profile_disable.add_argument("profile_dir", help="Profile directory created by profile create.")
+    profile_disable.add_argument("--mod-id", required=True, help="Mod/package id to disable.")
+    profile_disable.set_defaults(func=command_profile_disable)
+    profile_inspect = profile_subparsers.add_parser("inspect", help="Print selected runtime and active mods for a profile.")
+    profile_inspect.add_argument("profile_dir", help="Profile directory created by profile create.")
+    profile_inspect.set_defaults(func=command_profile_inspect)
 
     launch_plan = subparsers.add_parser("launch-plan", help="Validate profile/package/runtime and write runtime-manifest.json.")
     launch_plan.add_argument("profile_dir", help="Profile directory created by profile create.")

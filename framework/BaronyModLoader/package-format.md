@@ -44,6 +44,34 @@ Stash-0.1.0.bmlpkg
 
 The app must not infer behavior from arbitrary files in the archive. Behavior comes from `bml-package.json`; `checksums.json` proves the bytes that were installed.
 
+## Archive and install workflow
+
+The `.bmlpkg` archive is the distributable package artifact. It should be produced from an unpacked package directory, then installed into a package store before a profile enables it. For Stash local development the unpacked package directory is `mods/stash/`, with `mods/stash/bml-package.json` as the source manifest.
+
+Expected local flow:
+
+```sh
+python framework/BaronyModLoader/app/barony_mod_loader.py package validate mods/stash
+python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out .tmp/Stash-0.1.0.bmlpkg
+python framework/BaronyModLoader/app/barony_mod_loader.py package install .tmp/Stash-0.1.0.bmlpkg --store .tmp/bml-package-store
+python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --barony-executable /path/to/barony --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
+python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0
+python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
+python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
+python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-profile --mod-id jml.stash
+```
+
+Install rules:
+
+- `package pack` reads the package directory and writes a ZIP-compatible `.bmlpkg`; the archive must preserve normalized relative paths and must not include profile-local state.
+- `package install` accepts a package directory, a direct `bml-package.json`, or a `.bmlpkg` archive and installs immutable package bytes under `<store>/<package-id>/<version>/`.
+- `profile enable` records a profile activation that points at the installed package path; it must not mutate the archive or the unpacked source package.
+- `profile disable` removes the package from the active profile set without deleting unrelated Barony content, unrelated packages, or profile-scoped Stash storage.
+- `profile inspect` is the human-readable support surface for active package ids, package paths, selected runtime metadata, and launch readiness.
+- `launch-plan` should consume the installed package path so the runtime manifest is tied to the same package bytes that validation and profile activation saw.
+
+This workflow proves package management behavior only. It does not assert that a patched Barony executable has run Stash gameplay scenarios until built-game verification evidence exists.
+
 ## Manifest identity
 
 `bml-package.json` starts with stable identity metadata.
@@ -364,6 +392,70 @@ Packages that require native runtime support must identify their source and buil
 ```
 
 This metadata is not decorative. It is the difference between a reviewable framework patch and an opaque fork. The app should surface it prominently whenever a package requires a non-stock Barony runtime.
+
+
+## Release manifest
+
+A distributable release should include or reference a release manifest that ties the app, package archive, runtime patch artifacts, source revision, and verification status together. The release manifest is separate from `bml-package.json`: the package manifest declares what the mod needs, while the release manifest records exactly what was packaged and what has been verified.
+
+Example shape:
+
+```json
+{
+  "manifestVersion": "0.1.0",
+  "createdAt": "2026-07-02T00:00:00Z",
+  "app": {
+    "id": "barony-mod-loader",
+    "version": "0.1.0"
+  },
+  "package": {
+    "id": "jml.stash",
+    "version": "0.1.0",
+    "archive": "Stash-0.1.0.bmlpkg",
+    "sha256": "package-archive-sha256",
+    "installedPathExample": ".tmp/bml-package-store/jml.stash/0.1.0"
+  },
+  "runtime": {
+    "id": "bml-runtime",
+    "version": "0.1.0",
+    "contract": "bml-runtime-contract@0.1.0",
+    "baronySource": {
+      "upstream": "https://github.com/TurningWheel/Barony",
+      "revision": "barony-source-revision",
+      "patchArtifacts": [
+        "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+        "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch"
+      ]
+    },
+    "capabilities": [
+      "persistent_storage",
+      "persistent_inventory",
+      "void_chest_binding",
+      "placement_lobby",
+      "placement_shop",
+      "multiplayer_version_metadata"
+    ]
+  },
+  "verification": {
+    "packageArchiveInstallEnableDisable": "verified-by-cli-evidence",
+    "runtimeManifestGeneration": "verified-by-cli-evidence",
+    "builtGameStashBehavior": "pending-built-game-verification"
+  },
+  "rollback": {
+    "disableCommand": "profile disable <profile-dir> --mod-id jml.stash",
+    "notes": "Disabling removes Stash from profile activation without deleting unrelated Barony content or profile storage."
+  }
+}
+```
+
+Release manifest policy:
+
+- It must record the Barony source revision or tag used by the runtime patch artifacts.
+- It must record the BaronyModLoader app/runtime versions and the runtime contract version.
+- It must record the package archive checksum and the installed package path shape used by profile activation.
+- It must list only canonical Stash v0 capability ids: `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
+- It must distinguish package/archive/profile workflow verification from pending built-game runtime behavior verification.
+- It must include rollback notes that do not require deleting unrelated Barony installs, content, or profiles.
 
 ## Profile activation record
 

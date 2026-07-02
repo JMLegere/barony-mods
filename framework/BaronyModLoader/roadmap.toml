@@ -191,30 +191,38 @@ exit_criteria = [
 id = "p4_packaging_release"
 order = 4
 name = "Packaging, release, and rollback"
-status = "planned"
-focus = "Make BaronyModLoader understandable to players and reviewable by maintainers without hiding the engine patch."
+status = "current-package-workflow"
+focus = "Make BaronyModLoader package archives, profile activation, release provenance, and rollback state understandable to players and reviewable by maintainers without hiding the engine patch."
 implements_modules = [
-  "content_packages: package metadata and local install shape",
-  "build_patch_manager: patch/build/release provenance",
-  "diagnostics: release/support bundle basics",
+  "persistent_storage",
+  "persistent_inventory",
+  "void_chest_binding",
+  "placement_lobby",
+  "placement_shop",
+  "multiplayer_version_metadata",
 ]
 app_deliverables = [
-  "package index displays Stash metadata, required runtime capabilities, and compatibility status",
-  "release manifest identifies upstream Barony commit/tag and BaronyModLoader runtime version",
-  "patch series or source-build provenance is visible",
-  "checksums are recorded for distributed artifacts when binaries are shipped",
-  "rollback path to unmodified Barony build/profile is documented in-app or release metadata",
+  "pack the Stash package directory into a .bmlpkg archive with deterministic package metadata",
+  "install a package directory, direct bml-package.json, or .bmlpkg archive into a package store path",
+  "enable an installed Stash package in a profile without manual source edits",
+  "disable Stash from a profile without deleting unrelated package bytes, storage, or Barony content",
+  "inspect profile activation state, selected package paths, and active package ids",
+  "generate launch plans from the installed package path rather than a loose source fixture",
+  "release manifest identifies app version, runtime version, upstream Barony revision, package checksum, patch artifacts, and rollback notes",
+  "release manifest records when built-game Stash behavior remains pending instead of implying playable verification",
 ]
 engine_deliverables = [
   "runtime version/capability report is available for packaging validation",
 ]
 stash_deliverables = [
+  "Stash package archive can be created from mods/stash/bml-package.json",
   "Stash package can be installed/enabled/disabled through a profile without manual source edits",
   "Stash storage remains profile-scoped and recoverable across package updates",
 ]
 exit_criteria = [
-  "A user can understand which artifact is the app, which is the patched Barony runtime, and which is the Stash package",
-  "Release metadata states exact Barony source compatibility",
+  "A user can understand which artifact is the app, which is the patched Barony runtime, which is the Stash package archive, and which package path is installed in a profile",
+  "Release metadata states exact Barony source compatibility and release manifest provenance",
+  "Package archive/install/enable/disable workflow is represented without claiming the patched Barony runtime has passed playable Stash scenarios",
   "Rollback does not require deleting unrelated Barony content or profiles",
 ]
 
