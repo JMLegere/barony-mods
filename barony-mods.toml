@@ -1,0 +1,13 @@
+# Shared repository settings for Barony Workshop mods.
+
+[barony]
+appid = 371970
+default_visibility = 2 # 0 public, 1 friends-only, 2 hidden
+install_paths = [
+  "/home/jerry/.local/share/Steam/steamapps/common/Barony",
+  "/home/jerry/.steam/steam/steamapps/common/Barony",
+]
+
+[build]
+dist_dir = "dist"
+workshop_dir = ".workshop"

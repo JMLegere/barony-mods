@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://baronymodloader.local/schema/package.schema.json",
+  "title": "BaronyModLoader v0 package manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "formatVersion",
+    "id",
+    "name",
+    "version",
+    "kind",
+    "summary",
+    "authors",
+    "layout",
+    "barony",
+    "framework",
+    "engine",
+    "modules",
+    "native",
+    "dependencies",
+    "conflicts",
+    "runtimeReports"
+  ],
+  "properties": {
+    "formatVersion": { "const": "0.1.0" },
+    "id": { "$ref": "#/$defs/packageId" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "$ref": "#/$defs/version" },
+    "kind": { "type": "string", "enum": ["gameplay-mod", "content-pack", "library", "runtime-support"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "license": { "type": "string", "minLength": 1 },
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "email": { "type": "string" },
+          "url": { "type": "string" }
+        }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "required": ["contentRoot", "assetRoot", "nativeRoot", "migrationRoot"],
+      "additionalProperties": false,
+      "properties": {
+        "contentRoot": { "$ref": "#/$defs/relativeDirectory" },
+        "assetRoot": { "$ref": "#/$defs/relativeDirectory" },
+        "nativeRoot": { "$ref": "#/$defs/relativeDirectory" },
+        "migrationRoot": { "$ref": "#/$defs/relativeDirectory" }
+      }
+    },
+    "barony": {
+      "type": "object",
+      "required": ["supportedGameVersions", "upstreamRepository"],
+      "additionalProperties": true,
+      "properties": {
+        "supportedGameVersions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "officialContentSystems": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "upstreamRepository": { "type": "string", "minLength": 1 },
+        "workingForkRepository": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "framework": {
+      "type": "object",
+      "required": ["id", "minimumAppVersion", "packageSchema", "runtimeContract"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "const": "BaronyModLoader" },
+        "minimumAppVersion": { "$ref": "#/$defs/version" },
+        "packageSchema": { "const": "bml-package@0.1.0" },
+        "runtimeContract": { "const": "bml-runtime-contract@0.1.0" }
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "entries": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "icon": { "type": ["string", "null"] },
+        "previewImages": { "type": "array", "items": { "type": "string" } },
+        "readme": { "type": ["string", "null"] }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "required": ["runtimeContract", "minimumRuntimeVersion", "capabilities"],
+      "additionalProperties": true,
+      "properties": {
+        "runtimeContract": { "const": "bml-runtime-contract@0.1.0" },
+        "minimumRuntimeVersion": { "$ref": "#/$defs/version" },
+        "capabilities": { "$ref": "#/$defs/requiredCapabilitySet" }
+      }
+    },
+    "modules": {
+      "type": "object",
+      "required": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"],
+      "additionalProperties": false,
+      "properties": {
+        "persistentStorage": {
+          "type": "object",
+          "required": ["namespace", "scope", "savePolicy", "schemaVersion", "failurePolicy"],
+          "additionalProperties": true,
+          "properties": {
+            "namespace": { "$ref": "#/$defs/idFragment" },
+            "scope": { "type": "string", "minLength": 1 },
+            "savePolicy": { "type": "string", "minLength": 1 },
+            "fileHint": { "$ref": "#/$defs/relativePath" },
+            "schemaVersion": { "$ref": "#/$defs/version" },
+            "failurePolicy": { "type": "string", "minLength": 1 }
+          }
+        },
+        "persistentInventories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "storageKey", "scope", "authority", "access", "savePolicy", "itemEncoding", "failurePolicy"],
+            "additionalProperties": true,
+            "properties": {
+              "id": { "$ref": "#/$defs/idFragment" },
+              "displayName": { "type": "string" },
+              "storageKey": { "$ref": "#/$defs/idFragment" },
+              "scope": { "type": "string", "minLength": 1 },
+              "authority": { "type": "string", "minLength": 1 },
+              "access": { "type": "string", "minLength": 1 },
+              "savePolicy": { "type": "string", "minLength": 1 },
+              "itemEncoding": { "type": "string", "minLength": 1 },
+              "preserves": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "failurePolicy": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "voidChestBindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "inventory", "source", "mode", "exclusive"],
+            "additionalProperties": true,
+            "properties": {
+              "id": { "$ref": "#/$defs/idFragment" },
+              "inventory": { "$ref": "#/$defs/idFragment" },
+              "source": { "$ref": "#/$defs/idFragment" },
+              "mode": { "type": "string", "minLength": 1 },
+              "exclusive": { "type": "boolean" },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "placements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "hook", "entity", "inventory", "frequency", "placementPolicy", "deterministic", "failurePolicy"],
+            "additionalProperties": true,
+            "properties": {
+              "id": { "$ref": "#/$defs/idFragment" },
+              "hook": { "$ref": "#/$defs/idFragment" },
+              "entity": { "$ref": "#/$defs/idFragment" },
+              "inventory": { "$ref": "#/$defs/idFragment" },
+              "frequency": { "type": "string", "minLength": 1 },
+              "placementPolicy": { "type": "string", "minLength": 1 },
+              "deterministic": { "type": "boolean" },
+              "failurePolicy": { "type": "string", "minLength": 1 },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "multiplayer": {
+          "type": "object",
+          "required": ["policy", "versionPolicy", "syncInventories", "clientCompatibility", "failurePolicy"],
+          "additionalProperties": true,
+          "properties": {
+            "policy": { "type": "string", "minLength": 1 },
+            "versionPolicy": { "type": "string", "minLength": 1 },
+            "syncInventories": { "type": "array", "items": { "$ref": "#/$defs/idFragment" } },
+            "clientCompatibility": { "type": "object", "additionalProperties": true },
+            "failurePolicy": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "native": {
+      "type": "object",
+      "required": ["required", "mode", "plugins", "patches", "builds"],
+      "additionalProperties": true,
+      "properties": {
+        "required": { "type": "boolean" },
+        "mode": { "const": "paired-engine-runtime" },
+        "plugins": { "type": "array", "maxItems": 0 },
+        "patches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "appliesTo", "baseRevision", "path", "required", "providesCapabilities"],
+            "additionalProperties": true,
+            "properties": {
+              "id": { "$ref": "#/$defs/idFragment" },
+              "appliesTo": { "type": "string", "minLength": 1 },
+              "baseRevision": { "type": "string", "minLength": 1 },
+              "path": { "$ref": "#/$defs/relativePath" },
+              "required": { "type": "boolean" },
+              "providesCapabilities": { "$ref": "#/$defs/capabilityIdSet" },
+              "reviewStance": { "type": "string" }
+            }
+          }
+        },
+        "builds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["platform", "baronyRevision", "runtimeVersion", "artifact"],
+            "additionalProperties": true,
+            "properties": {
+              "platform": { "type": "string", "minLength": 1 },
+              "baronyRevision": { "type": "string", "minLength": 1 },
+              "runtimeVersion": { "$ref": "#/$defs/version" },
+              "artifact": { "$ref": "#/$defs/relativePath" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dependency" },
+      "contains": {
+        "type": "object",
+        "required": ["id", "kind", "required"],
+        "properties": {
+          "id": { "const": "bml.runtime" },
+          "kind": { "const": "engine-runtime" },
+          "required": { "const": true }
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "reason"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "loadAfter": { "type": "array", "items": { "$ref": "#/$defs/packageId" } },
+    "loadBefore": { "type": "array", "items": { "$ref": "#/$defs/packageId" } },
+    "migrations": { "type": "array", "items": { "type": "object", "required": ["id", "to", "phase", "path", "idempotent"], "additionalProperties": true } },
+    "checksums": { "type": "object", "additionalProperties": true },
+    "source": { "type": "object", "additionalProperties": true },
+    "build": { "type": "object", "additionalProperties": true },
+    "runtimeReports": {
+      "type": "object",
+      "required": ["paths", "expectedLoadedCapabilities", "expectedLoadedModules", "blockOnErrors"],
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "object",
+          "required": ["runtimeManifest", "runtimeLoadReport", "runtimeLog", "validationReport"],
+          "additionalProperties": false,
+          "properties": {
+            "runtimeManifest": { "$ref": "#/$defs/profileRelativePath" },
+            "runtimeLoadReport": { "$ref": "#/$defs/profileRelativePath" },
+            "runtimeLog": { "$ref": "#/$defs/profileRelativePath" },
+            "validationReport": { "$ref": "#/$defs/profileRelativePath" }
+          }
+        },
+        "expectedLoadedCapabilities": { "$ref": "#/$defs/capabilityIdSet" },
+        "expectedLoadedModules": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"] },
+          "uniqueItems": true
+        },
+        "blockOnErrors": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "packageId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "idFragment": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "relativePath": { "type": "string", "minLength": 1, "not": { "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))" } },
+    "relativeDirectory": { "type": "string", "minLength": 1, "pattern": "/$", "not": { "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))" } },
+    "profileRelativePath": { "type": "string", "pattern": "^BaronyModLoader/.+" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "capabilityId": {
+      "type": "string",
+      "enum": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop",
+        "multiplayer_version_metadata"
+      ]
+    },
+    "capabilityRequest": {
+      "type": "object",
+      "required": ["id", "version", "required", "reason"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/capabilityId" },
+        "version": { "$ref": "#/$defs/version" },
+        "required": { "const": true },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "requiredCapabilitySet": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/capabilityRequest" },
+      "allOf": [
+        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "persistent_storage" }, "required": { "const": true } } } },
+        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "persistent_inventory" }, "required": { "const": true } } } },
+        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "void_chest_binding" }, "required": { "const": true } } } },
+        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "placement_lobby" }, "required": { "const": true } } } },
+        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "placement_shop" }, "required": { "const": true } } } },
+        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "multiplayer_version_metadata" }, "required": { "const": true } } } }
+      ]
+    },
+    "capabilityIdSet": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/capabilityId" },
+      "uniqueItems": true,
+      "allOf": [
+        { "contains": { "const": "persistent_storage" } },
+        { "contains": { "const": "persistent_inventory" } },
+        { "contains": { "const": "void_chest_binding" } },
+        { "contains": { "const": "placement_lobby" } },
+        { "contains": { "const": "placement_shop" } },
+        { "contains": { "const": "multiplayer_version_metadata" } }
+      ]
+    },
+    "dependency": {
+      "type": "object",
+      "required": ["id", "kind", "version", "required"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["game", "engine-runtime", "app", "package", "capability"] },
+        "version": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" }
+      }
+    }
+  }
+}

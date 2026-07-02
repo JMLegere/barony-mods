@@ -1,0 +1,48 @@
+# Ordered MVP milestones for moving Stash from native prototype to reusable framework data.
+# Scope stays narrow: no dynamic DLL/SO plugins, Lua/WASM runtime, or arbitrary entity scripting.
+
+[meta]
+name = "barony_mod_framework_milestones_mvp"
+reference_mod = "stash"
+evidence = ["native/stash/source-plan.toml", "native/stash/framework-path.toml", "framework/engine-hooks.toml"]
+
+[[milestones]]
+id = "m0_prior_art_guardrails"
+order = 0
+phase = "planning"
+goal = "Borrow proven mod-framework shapes before designing new Barony concepts."
+deliverables = ["manifest ids/versions/dependencies inspired by SMAPI/Fabric", "deterministic lifecycle and migration/version thinking inspired by Factorio", "explicit non-goals for binary plugins and scripting runtimes"]
+exit_criteria = ["framework data has stable ids and versions", "required capabilities are declared up front", "multiplayer/state ownership is explicit"]
+
+[[milestones]]
+id = "m1_hardcoded_stash_prototype"
+order = 1
+phase = "native_stash_patch"
+goal = "Prove Stash by augmenting Barony's existing Void Chest system directly in C++."
+deliverables = ["persistent void_chest_inventory load/save outside normal run lifetime", "spell-created void chests use the same shared inventory", "permanent lobby Void Chest near assist shrine", "one permanent Void Chest in every generated shop"]
+source_targets = ["src/maps.cpp", "src/actchest.cpp", "src/entity.cpp", "src/entity.hpp", "src/scores.cpp", "src/scores.hpp"]
+exit_criteria = ["stash survives death/new run", "normal save/resume still restores contents", "lobby and shop access points open the same inventory", "host owns stash state in multiplayer"]
+
+[[milestones]]
+id = "m2_extract_framework_mvp"
+order = 2
+phase = "engine_hooks"
+goal = "Move the hardcoded Stash decisions behind small reusable engine hooks."
+deliverables = ["manifest capability validation", "per-mod profile storage path", "persistent named inventory API", "placement hook API for lobby anchors and generated shops", "framework/version metadata for compatibility checks"]
+exit_criteria = ["Stash-specific code is limited to manifest/data plus thin binding", "hooks reject unsupported capabilities with readable errors", "storage schema/version is recorded", "clients cannot join incompatible host framework states silently"]
+
+[[milestones]]
+id = "m3_stash_as_data"
+order = 3
+phase = "reference_mod"
+goal = "Represent Stash as framework data instead of bespoke engine conditionals."
+deliverables = ["Stash manifest declares persistent named inventory stash:void_chest_inventory", "manifest declares lobby_assist_area placement", "manifest declares every_shop placement", "minimal assets/metadata package for the purple Void Chest presentation"]
+exit_criteria = ["removing the Stash manifest disables Stash behavior", "adding the manifest re-enables the same prototype behavior", "no new general scripting/runtime surface is required"]
+
+[[milestones]]
+id = "m4_packaging_release"
+order = 4
+phase = "release"
+goal = "Ship an auditable patch/package that is understandable to players and acceptable upstream."
+deliverables = ["versioned patch series against upstream Barony", "optional reproducible builds if available", "Workshop/local content stub for metadata and instructions", "checksums and rollback notes", "upstream PR candidate if maintainers accept the general hooks"]
+exit_criteria = ["release identifies upstream commit compatibility", "source patch provenance is clear", "players do not need an opaque long-lived fork", "future mods can reuse the same manifest/storage/placement/version hooks"]

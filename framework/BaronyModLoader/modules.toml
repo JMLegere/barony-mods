@@ -1,0 +1,301 @@
+# BaronyModLoader module catalog.
+# Planning artifact only: this is not an implementation manifest.
+
+[meta]
+name = "BaronyModLoader modules"
+artifact = "modules.toml"
+status = "planning"
+framework = "BaronyModLoader"
+stance = "standalone loader app paired with narrow Barony engine runtime/framework patch"
+reference_mod = "stash"
+source_upstream = "https://github.com/TurningWheel/Barony"
+source_work_fork = "https://github.com/JMLegere/Barony"
+official_modding_baseline = ["Custom Content", "Steam Workshop packages", "maps", "JSON data", "Barony Script"]
+no_discovered_native_runtime_plugin_framework = true
+v0_rule = "Implement only the concrete modules and interfaces needed by Stash; design the catalog for the larger standalone framework."
+
+[versioning]
+module_catalog_schema = 1
+minimum_loader_app_version = "0.1.0-planning"
+minimum_engine_runtime_version = "0.1.0-planning"
+compatibility_model = "App resolves packages/profiles/builds; engine runtime validates capabilities and owns safe gameplay hooks."
+
+[v0_stash_required]
+module_ids = [
+  "persistent_storage",
+  "persistent_inventory",
+  "void_chest_binding",
+  "placement_lobby",
+  "placement_shop",
+  "multiplayer_version_metadata",
+]
+summary = "The v0 implementation surface is limited to persistent Void Chest inventory, permanent lobby/shop access, and compatibility metadata needed by Stash."
+
+[implementation_boundaries]
+loader_app_owns = [
+  "Barony install discovery",
+  "profile management",
+  "mod package discovery and validation",
+  "dependency/version resolution",
+  "patch/build/release management",
+  "launch orchestration",
+  "diagnostic collection",
+]
+engine_runtime_owns = [
+  "manifest/capability validation before gameplay",
+  "profile-persistent mod storage",
+  "persistent inventory serialization and reconstruction",
+  "safe Void Chest inventory binding",
+  "lobby and generated-shop placement hooks",
+  "multiplayer and save/version compatibility metadata",
+]
+not_v0 = [
+  "dynamic DLL/SO plugin loading",
+  "arbitrary native plugin entrypoints",
+  "Lua runtime integration",
+  "WASM runtime integration",
+  "general entity behavior scripting",
+  "retail executable binary patching without source builds",
+  "broad event bus for unrelated gameplay hooks",
+]
+
+[[families]]
+id = "content_packages"
+name = "Content package model"
+layer = "loader_app"
+v0_stash_required = false
+first_phase = "packaging_release"
+vision = "Represent mod packages as inspectable bundles with manifests, assets, metadata, dependencies, and compatibility constraints."
+v0_behavior = "Stash may ship package metadata, but the engine-facing Stash behavior does not require a broad content-package API."
+future_capabilities = [
+  "package manifest schema validation",
+  "local and Workshop package discovery",
+  "asset and data file enumeration",
+  "package signing/checksum metadata",
+  "package conflicts and optional dependencies",
+  "package-to-engine-capability mapping",
+]
+interfaces = ["package_manifest", "package_index", "package_validation_report"]
+
+[[families]]
+id = "native_runtime_hooks"
+name = "Engine runtime hook registry"
+layer = "engine_runtime"
+v0_stash_required = false
+first_phase = "engine_runtime_patch"
+vision = "Expose named, engine-owned capability hooks rather than arbitrary plugin code execution."
+v0_behavior = "Only the named Stash-required hooks are implemented; no general hook bus is created."
+future_capabilities = [
+  "capability registry",
+  "startup validation lifecycle",
+  "safe hook dispatch controlled by engine code",
+  "hook availability reporting to the loader app",
+  "upstreamable narrow C++ insertion points",
+]
+interfaces = ["runtime_capability", "capability_validation_result", "engine_hook_descriptor"]
+
+[[families]]
+id = "persistent_storage"
+name = "Persistent profile storage"
+layer = "engine_runtime"
+v0_stash_required = true
+first_phase = "stash_modules"
+vision = "Provide per-mod, per-profile storage that survives run death, victory, new-run transitions, and normal save deletion."
+v0_behavior = "Provide Stash with a versioned storage namespace for the persistent Void Chest inventory."
+future_capabilities = [
+  "per-mod namespace resolution",
+  "profile-scoped storage roots",
+  "versioned records",
+  "atomic writes",
+  "recoverable load errors",
+  "future migration hooks",
+  "storage compatibility metadata in saves and multiplayer sessions",
+]
+interfaces = ["storage_namespace", "storage_record", "storage_load_result", "storage_write_policy"]
+stash_contracts = [
+  "namespace id is stable for Stash",
+  "writes occur at safe gameplay boundaries",
+  "malformed storage disables or quarantines Stash state without crashing the engine",
+]
+
+[[families]]
+id = "persistent_inventory"
+name = "Persistent inventory APIs"
+layer = "engine_runtime"
+v0_stash_required = true
+first_phase = "stash_modules"
+vision = "Expose engine-owned named inventories that can be serialized outside normal savegame lifetime and bound to existing container interactions."
+v0_behavior = "Expose one profile-scoped named inventory for Stash mapped to Barony's existing void_chest_inventory behavior."
+future_capabilities = [
+  "named inventory declaration",
+  "item serialization and reconstruction",
+  "dirty tracking",
+  "save-on-close policy",
+  "safe load fallback for incompatible items",
+  "future migration by storage schema version",
+]
+interfaces = ["named_inventory", "inventory_snapshot", "inventory_binding", "inventory_persistence_policy"]
+stash_contracts = [
+  "inventory id is stash:void_chest_inventory",
+  "scope is player profile or host profile as appropriate",
+  "contents persist across runs and normal save/resume flows",
+]
+
+[[families]]
+id = "void_chest_binding"
+name = "Void Chest binding policy"
+layer = "engine_runtime"
+v0_stash_required = true
+first_phase = "stash_modules"
+vision = "Allow declared container classes to route their contents through persistent named inventories when the engine supports that capability."
+v0_behavior = "Route all Void Chest access paths, including spell-created Void Chests and permanent Stash access points, to Stash's shared persistent inventory."
+future_capabilities = [
+  "container class to named-inventory binding",
+  "interaction reuse through existing chest code paths",
+  "host-authoritative state ownership",
+  "binding diagnostics for rejected or missing inventories",
+]
+interfaces = ["container_inventory_binding", "void_chest_policy", "container_open_context"]
+stash_contracts = [
+  "all Void Chest access resolves to the same persistent inventory while Stash is active",
+  "spell-created Void Chests do not create a second transient stash",
+  "normal Void Chest network behavior is reused where possible",
+]
+
+[[families]]
+id = "placement_lobby"
+name = "Lobby placement APIs"
+layer = "engine_runtime"
+v0_stash_required = true
+first_phase = "stash_modules"
+vision = "Let validated mods request permanent access-point placement at engine-known safe lobby anchors."
+v0_behavior = "Place one permanent Void Chest access point near the lobby assist shrine area for Stash."
+future_capabilities = [
+  "named lobby anchors",
+  "free-tile search around anchors",
+  "entity template validation",
+  "placement failure diagnostics",
+  "deterministic spawn flags for permanent access points",
+]
+interfaces = ["lobby_placement_request", "placement_anchor", "placement_result"]
+stash_contracts = [
+  "anchor id is lobby_assist_area",
+  "engine chooses a valid free tile rather than trusting mod coordinates",
+  "failure is logged and recoverable",
+]
+
+[[families]]
+id = "placement_shop"
+name = "Generated shop placement APIs"
+layer = "engine_runtime"
+v0_stash_required = true
+first_phase = "stash_modules"
+vision = "Let validated mods request generated-level access-point placement after shop rooms are known."
+v0_behavior = "Place one permanent Void Chest access point in every generated shop for Stash."
+future_capabilities = [
+  "shop room iteration",
+  "shoparea tile validation",
+  "counter-adjacent or shopkeeper-adjacent preference policies",
+  "fallback placement policy",
+  "per-shop placement diagnostics",
+]
+interfaces = ["shop_placement_request", "shop_room_context", "placement_result"]
+stash_contracts = [
+  "one access point is requested for each generated shop",
+  "engine selects safe interior shop tiles",
+  "missing valid tile is a logged placement failure, not map corruption",
+]
+
+[[families]]
+id = "dependency_version_resolver"
+name = "Dependency and version resolver"
+layer = "loader_app"
+v0_stash_required = false
+first_phase = "loader_app_skeleton"
+vision = "Resolve mod package dependencies, engine runtime requirements, Barony source/build compatibility, and profile conflicts before launch."
+v0_behavior = "Validate that the Stash package requires the matching BaronyModLoader runtime capabilities before launching a patched build."
+future_capabilities = [
+  "semantic version constraints",
+  "required and optional dependencies",
+  "conflicts/incompatibilities",
+  "Barony upstream commit/tag requirements",
+  "engine runtime capability checks",
+  "human-readable rejection reports",
+]
+interfaces = ["dependency_constraint", "version_requirement", "resolution_plan", "resolution_error"]
+
+[[families]]
+id = "launch_profiles"
+name = "Launch profiles"
+layer = "loader_app"
+v0_stash_required = false
+first_phase = "loader_app_skeleton"
+vision = "Manage named user profiles that select Barony install/build, active mods, runtime patch level, storage root, and launch arguments."
+v0_behavior = "Provide enough profile metadata for Stash storage isolation and launching the correct patched Barony build."
+future_capabilities = [
+  "profile-scoped mod sets",
+  "profile-scoped storage roots",
+  "build selection",
+  "launch argument templates",
+  "profile import/export",
+  "rollback to unmodified Barony launch",
+]
+interfaces = ["launch_profile", "active_mod_set", "storage_profile", "launch_plan"]
+
+[[families]]
+id = "build_patch_manager"
+name = "Build and patch manager"
+layer = "loader_app"
+v0_stash_required = false
+first_phase = "loader_app_skeleton"
+vision = "Apply, build, verify, and release source-based Barony runtime patches without hiding the patch provenance in an opaque fork."
+v0_behavior = "Track the Stash-capable engine patch target revision and launch/build metadata; broad patch automation can follow after runtime hooks prove out."
+future_capabilities = [
+  "upstream commit/tag tracking",
+  "patch series apply/revert",
+  "local build orchestration",
+  "artifact checksum recording",
+  "binary release provenance",
+  "rollback guidance",
+]
+interfaces = ["patch_series", "build_target", "build_artifact", "release_manifest"]
+
+[[families]]
+id = "diagnostics"
+name = "Diagnostics, validation, and logs"
+layer = "both"
+v0_stash_required = false
+first_phase = "loader_app_skeleton"
+vision = "Make framework failures inspectable from the app and runtime: validation errors, missing capabilities, storage issues, placement failures, and multiplayer mismatch reports."
+v0_behavior = "Surface Stash load/storage/placement/version failures clearly enough to avoid silent inventory loss or desync."
+future_capabilities = [
+  "structured validation reports",
+  "runtime log collection",
+  "profile health checks",
+  "package compatibility reports",
+  "multiplayer mismatch explanations",
+  "support bundle export",
+]
+interfaces = ["diagnostic_event", "validation_report", "support_bundle", "runtime_log_ref"]
+
+[[families]]
+id = "multiplayer_version_metadata"
+name = "Multiplayer and version metadata"
+layer = "engine_runtime"
+v0_stash_required = true
+first_phase = "stash_modules"
+vision = "Prevent save corruption and multiplayer desync by advertising active framework mods, capability versions, and ownership of persistent state."
+v0_behavior = "Stash records active mod/runtime/storage versions and requires compatible clients before gameplay state diverges."
+future_capabilities = [
+  "host-advertised active framework mod list",
+  "required capability hashes or versions",
+  "storage schema compatibility checks",
+  "save metadata for active framework state",
+  "client join rejection reasons",
+]
+interfaces = ["framework_session_metadata", "save_metadata_extension", "compatibility_decision", "join_rejection_reason"]
+stash_contracts = [
+  "host/server owns persistent void_chest_inventory state in multiplayer",
+  "matching Stash and runtime metadata is required for clients",
+  "incompatible saves or sessions fail before inventory state can be corrupted",
+]

@@ -1,0 +1,252 @@
+# Stash interface contract for BaronyModLoader.
+# Planning artifact only: names the exact v0 modules/interfaces Stash consumes.
+
+[meta]
+name = "Stash interface contract"
+artifact = "stash-interface.toml"
+status = "planning"
+framework = "BaronyModLoader"
+reference_mod = "stash"
+intent = "Define the smallest engine runtime and loader-facing surface needed for Stash while fitting the full BaronyModLoader architecture."
+
+[stash]
+id = "stash"
+display_name = "Stash"
+summary = "Augment Barony's existing Void Chest system with a profile-persistent shared inventory and permanent access points in lobby and shops."
+core_inventory_name = "stash:void_chest_inventory"
+barony_behavior_augmented = "void_chest_inventory"
+requires_patched_engine_runtime = true
+requires_dynamic_native_plugin_loading = false
+
+[requirements]
+functional = [
+  "Persist void_chest_inventory across runs and normal save/resume cycles.",
+  "Route spell-created Void Chests to the same persistent inventory.",
+  "Provide permanent Void Chest access in the lobby.",
+  "Provide permanent Void Chest access in every generated shop.",
+  "Record multiplayer/version metadata before gameplay state can diverge.",
+]
+non_goals = [
+  "Stash does not require arbitrary native plugin entrypoints.",
+  "Stash does not require Lua or WASM runtime execution.",
+  "Stash does not require a general entity scripting API.",
+  "Stash does not replace Barony's existing Custom Content, Workshop, map, JSON, or Barony Script systems.",
+]
+
+[consumed_modules]
+required = [
+  "persistent_storage",
+  "persistent_inventory",
+  "void_chest_binding",
+  "placement_lobby",
+  "placement_shop",
+  "multiplayer_version_metadata",
+]
+loader_app_context = [
+  "dependency_version_resolver",
+  "launch_profiles",
+  "build_patch_manager",
+  "diagnostics",
+]
+not_consumed_by_stash_v0 = [
+  "broad content package APIs beyond metadata/installation",
+  "general native runtime hook bus",
+  "arbitrary scripted placement callbacks",
+  "third-party container APIs unrelated to Void Chests",
+]
+
+[[interfaces]]
+id = "stash_storage_namespace"
+module_id = "persistent_storage"
+required = true
+phase = "stash_modules"
+purpose = "Reserve and open Stash's profile-persistent storage namespace."
+consumer = "Stash manifest/runtime binding"
+provider = "BaronyModLoader engine runtime"
+must_expose = [
+  "stable mod id: stash",
+  "profile-scoped namespace resolution",
+  "storage schema version for Stash records",
+  "load result states: missing, loaded, incompatible, corrupt, io_error",
+  "atomic write or engine-equivalent safe write semantics",
+  "quarantine or readable failure path for malformed storage",
+]
+stash_uses = [
+  "Load persisted void_chest_inventory before Stash access points can be opened.",
+  "Persist inventory records when the named inventory is dirty at safe boundaries.",
+  "Detect incompatible storage before item data is reconstructed unsafely.",
+]
+acceptance = [
+  "Starting a new run can read the previous Stash inventory even when the old run save no longer exists.",
+  "A corrupt Stash storage record produces a readable mod-state error rather than an engine crash.",
+]
+
+[[interfaces]]
+id = "stash_named_inventory"
+module_id = "persistent_inventory"
+required = true
+phase = "stash_modules"
+purpose = "Declare and manage the shared persistent Stash inventory."
+consumer = "Void Chest binding policy"
+provider = "BaronyModLoader engine runtime"
+must_expose = [
+  "inventory id: stash:void_chest_inventory",
+  "scope: profile in single-player; host-owned profile/session state in multiplayer",
+  "serialization of enough Barony item state to reconstruct inventory contents safely",
+  "load lifecycle before first Void Chest interaction",
+  "dirty tracking when contents change",
+  "save-on-close and normal-save/update persistence boundaries",
+  "recoverable incompatible-item handling",
+]
+stash_uses = [
+  "Treat the persistent named inventory as the backing list for all Stash Void Chest access.",
+  "Keep inventory contents stable across death, victory, new-run, save, resume, and relaunch flows.",
+]
+acceptance = [
+  "An item placed into Stash is available from a later lobby, shop, and spell-created Void Chest access path.",
+  "Normal save/resume does not fork or duplicate the persistent Stash inventory.",
+]
+
+[[interfaces]]
+id = "stash_void_chest_binding"
+module_id = "void_chest_binding"
+required = true
+phase = "stash_modules"
+purpose = "Bind Barony Void Chest interactions to Stash's persistent named inventory."
+consumer = "Barony chest interaction/runtime code"
+provider = "BaronyModLoader engine runtime"
+must_expose = [
+  "container class selector for existing Void Chest behavior",
+  "binding target: stash:void_chest_inventory",
+  "open/read/write path that reuses existing chest interaction code where possible",
+  "save request when the bound inventory changes or closes",
+  "policy for spell-created Void Chests to use the same binding",
+  "host-authoritative mutation path in multiplayer",
+]
+stash_uses = [
+  "Convert existing Void Chest access into persistent Stash access while Stash is active.",
+  "Ensure spell-created Void Chests are alternate access points, not separate inventories.",
+]
+acceptance = [
+  "Every Void Chest access path resolves to the same Stash inventory while the Stash manifest is active.",
+  "Disabling/removing Stash removes this binding rather than leaving hardcoded Stash behavior behind.",
+]
+
+[[interfaces]]
+id = "stash_lobby_access_point"
+module_id = "placement_lobby"
+required = true
+phase = "stash_modules"
+purpose = "Request one permanent Void Chest access point in the lobby."
+consumer = "Stash placement declaration"
+provider = "BaronyModLoader engine runtime"
+must_expose = [
+  "placement request id: stash:lobby_void_chest",
+  "anchor id: lobby_assist_area",
+  "entity template for a permanent Void Chest access point",
+  "safe free-tile search owned by the engine",
+  "spawn of required chest/lid/access entities using engine-valid state",
+  "placement result with success, fallback, or failure reason",
+]
+stash_uses = [
+  "Provide reliable lobby access to the persistent stash without requiring a hand-edited map fork.",
+]
+acceptance = [
+  "A Stash Void Chest access point appears near the assist shrine area when Stash is active.",
+  "If the preferred tile is blocked, the engine chooses a valid nearby tile or logs a recoverable failure.",
+]
+
+[[interfaces]]
+id = "stash_shop_access_points"
+module_id = "placement_shop"
+required = true
+phase = "stash_modules"
+purpose = "Request one permanent Void Chest access point in every generated shop."
+consumer = "Stash placement declaration"
+provider = "BaronyModLoader engine runtime"
+must_expose = [
+  "placement request id: stash:shop_void_chest",
+  "trigger after generated shop rooms and shoparea tiles are known",
+  "shop room context including bounds and valid interior/shoparea tiles",
+  "preference policy for counter-adjacent or shopkeeper-adjacent placement",
+  "fallback policy for any valid shop interior tile",
+  "per-shop placement result and diagnostic reason",
+]
+stash_uses = [
+  "Provide in-run access to the persistent stash from every generated shop.",
+]
+acceptance = [
+  "Each generated shop receives one Stash Void Chest access point when Stash is active and a valid tile exists.",
+  "No placement request can corrupt map geometry or spawn outside validated shop space.",
+]
+
+[[interfaces]]
+id = "stash_multiplayer_version_metadata"
+module_id = "multiplayer_version_metadata"
+required = true
+phase = "stash_modules"
+purpose = "Record and negotiate Stash/runtime compatibility for saves and multiplayer sessions."
+consumer = "Barony save/session compatibility code"
+provider = "BaronyModLoader engine runtime"
+must_expose = [
+  "active framework runtime version",
+  "active Stash mod id and version",
+  "required capability ids and versions",
+  "Stash storage schema version",
+  "host-owned persistent inventory flag",
+  "save metadata extension for active framework state",
+  "client compatibility decision before gameplay state diverges",
+  "readable rejection reason for missing or mismatched Stash/runtime state",
+]
+stash_uses = [
+  "Prevent silent multiplayer desync when host/client Stash or runtime capabilities differ.",
+  "Prevent incompatible save/storage combinations from corrupting persistent inventory state.",
+]
+acceptance = [
+  "A matching client can join a Stash-enabled host using the normal interaction flow.",
+  "A missing or mismatched client is rejected or clearly marked incompatible before inventory state can diverge.",
+  "Save metadata records enough framework state to detect incompatible Stash storage later.",
+]
+
+[[interfaces]]
+id = "stash_loader_validation_context"
+module_id = "dependency_version_resolver"
+required = false
+phase = "loader_app_skeleton"
+purpose = "Let the standalone app confirm that a selected profile can run Stash against the selected patched Barony build."
+consumer = "BaronyModLoader app"
+provider = "BaronyModLoader app package/profile resolver"
+must_expose = [
+  "selected Barony install/build identity",
+  "selected engine runtime version or patch id",
+  "Stash package version",
+  "required runtime capabilities",
+  "resolution result with readable errors",
+]
+stash_uses = [
+  "Fail fast in the app if the user selects Stash without a compatible runtime patch/build.",
+]
+acceptance = [
+  "The app can explain that Stash requires the Stash-capable engine runtime before launching an incompatible build.",
+]
+
+[lifecycle]
+startup = [
+  "Loader app resolves profile, package, build, and capability requirements.",
+  "Patched engine runtime validates Stash capabilities before gameplay begins.",
+  "Engine opens Stash storage namespace and loads stash:void_chest_inventory if present.",
+]
+runtime = [
+  "Lobby setup processes stash:lobby_void_chest placement request.",
+  "Generated shop setup processes stash:shop_void_chest placement request for each shop.",
+  "Any Void Chest interaction resolves to stash:void_chest_inventory while Stash is active.",
+]
+persistence = [
+  "Inventory dirty state is persisted on chest close and normal safe save/update boundaries.",
+  "Stash inventory survives death, victory, new run, save/resume, and process relaunch.",
+]
+multiplayer = [
+  "Host advertises Stash and BaronyModLoader runtime metadata.",
+  "Clients must match required Stash/runtime capabilities before gameplay state diverges.",
+  "Host owns persistent inventory mutation and clients use approved chest interaction flow.",
+]

@@ -1,0 +1,63 @@
+# Source-level implementation plan for the Stash mod.
+# This is not uploaded to Steam Workshop; it is for a Barony source fork/native patch.
+
+[requirement]
+name = "stash"
+title = "Stash"
+chest_count = "one shared chest"
+per_player = false
+color = "purple"
+placement = ["lobby_near_assist_shrine", "every_shop"]
+persistence = "across runs"
+
+[feasibility]
+content_only_workshop_mod = false
+native_source_patch_required = true
+reason = "Barony Workshop data can replace assets/maps/data, but automatic placement in generated shops and cross-run item persistence require game code."
+workshop_distribution = "A normal subscribe-and-enable Workshop content mod is not enough. A Workshop item can still package metadata/assets and possibly distribute a compiled patched Barony build/source patch, but users would need that native build/patch for the feature to work."
+source_upstream = "https://github.com/TurningWheel/Barony"
+source_work_fork = "https://github.com/JMLegere/Barony"
+
+
+[design_decision]
+workshop_only_answer = "No: the requested cross-run stash cannot be delivered as a pure Steam Workshop content mod."
+void_chest_policy = "Option B: aggressively augment the existing void chest system so void chests are the stash."
+spell_void_chest_uses_stash = true
+preferred_architecture = "Persist the existing void_chest_inventory across runs. Every void chest access path, including spell-created temporary void chests, reads/writes that persistent stash inventory; lobby/shop chests are permanent void chest access points."
+reason = "This makes the mod concept cleaner: Stash upgrades Barony's Void Chest into a cross-run stash rather than adding a parallel storage mechanic."
+
+[packaging_strategy]
+recommended = "Ship Stash as a small native patch package, not a long-lived opaque source fork."
+primary_artifact = "A versioned patch series against upstream Barony plus a minimal Workshop/local content package for metadata, preview, and instructions."
+release_artifacts = ["source_patch", "linux_build_if_reproducible", "windows_build_if_reproducible", "workshop_stub"]
+clean_path = "Keep changes isolated, document touched files, automate patch application/builds, and prefer an upstream PR if the maintainers are open to a general persistent void chest option."
+not_recommended = "Do not make users clone an unexplained fork or overwrite their install manually without versioning, checksums, rollback steps, and source patch provenance."
+[existing_barony_hooks]
+void_chest_inventory = "Stat::void_chest_inventory"
+void_chest_access = "Entity::getChestInventoryList() returns stats[0]->void_chest_inventory when chestVoidState != 0"
+void_chest_savegame = "SaveGameInfo serializes and restores void_chest_inventory for normal save/resume"
+void_chest_visuals = "actChest swaps sprite 188/216 to 1791/1790 while chestVoidState != 0, which appears to be the existing purple/void chest visual"
+assist_shrine_marker = "maps.cpp assignActions case 201 creates actAssistShrine and sprite 1484"
+shop_generation = "maps.cpp generateDungeon uses shoplevel, shopmap, shopSubRooms, and marks shoparea for shop rooms"
+
+[source_targets]
+files = [
+  "src/maps.cpp",
+  "src/actchest.cpp",
+  "src/scores.cpp",
+  "src/scores.hpp",
+  "src/entity.cpp",
+  "src/entity.hpp"
+]
+
+[implementation_shape]
+spawn_helper = "Add a helper that creates a chest entity + lid, sets actChest, keeps it in permanent void chest access mode, uses sprite 1791/1790, and routes to the shared persistent void_chest_inventory."
+lobby_hook = "In assignActions case 201, after creating the assist shrine, place a permanent void chest access point on a nearby free tile."
+shop_hook = "During/after shop room placement, add one permanent void chest access point on a free shoparea tile, ideally near shopkeeper/counter if detectable, otherwise near the shop room interior."
+persistence_hook = "Do not rely only on savegame void_chest_inventory, because it dies with a failed run. Write/read a separate stash data file under outputdir, e.g. stash.json, containing enough item state to reconstruct stored items."
+sync_rule = "Host/server owns the persistent void_chest_inventory. Multiplayer clients interact through existing void chest packets."
+
+[open_questions]
+asset_confirmation = "Confirm sprite 1791/1790 are visually purple in the installed asset pack, or create replacement .vox files."
+run_boundary = "Decide whether stash persists after victory/death only, or after every chest close/item transfer to survive crashes. Recommended: save on chest close and on saveGame."
+balance = "Decide whether using the stash disables achievements/conducts or marks the run as assisted/modded."

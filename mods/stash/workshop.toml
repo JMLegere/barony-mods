@@ -1,0 +1,22 @@
+slug = "stash"
+title = "Stash"
+description = """
+Stash upgrades Barony's Void Chest into a cross-run persistent stash.
+
+Design target:
+- one shared stash, not one per player
+- existing Void Chest behavior is augmented rather than replaced
+- spell-created Void Chests also access the persistent stash
+- permanent purple Void Chest access point in the lobby near assistive/assist shrine items
+- permanent purple Void Chest access point in every shop
+- stores items persistently across runs
+
+Implementation note: Barony already has a built-in void chest inventory path, but true cross-run persistence and automatic shop/lobby placement require native source changes, not only Workshop data files. Keep this hidden until the native patch is implemented and tested.
+"""
+preview = "preview.png"
+visibility = 2
+publishedfileid = "0"
+changenote = "Initial hidden scaffold for the persistent Void Chest stash"
+
+[content]
+folder = "content"

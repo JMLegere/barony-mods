@@ -1,0 +1,12 @@
+slug = "example-mod"
+title = "Example Barony Mod"
+description = """
+Short Workshop description. Replace this before publishing.
+"""
+preview = "preview.png"
+visibility = 2
+publishedfileid = "0"
+changenote = "Initial upload"
+
+[content]
+folder = "content"

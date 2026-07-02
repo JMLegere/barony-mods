@@ -1,0 +1,163 @@
+{
+  "id": "jml.stash",
+  "name": "Stash",
+  "version": "0.1.0",
+  "description": "Reference MVP manifest for upgrading Barony's existing Void Chest into a shared profile-persistent stash. This declares data and engine-owned hooks only; it does not request DLL/SO plugins, Lua/WASM, or arbitrary entity scripting.",
+  "inspirations": [
+    {
+      "name": "SMAPI manifest.json",
+      "url": "https://stardewvalleywiki.com/Modding:Modder_Guide/APIs/Manifest",
+      "lesson": "Use a stable unique id, user-facing name, version, and explicit required capabilities so loaders can identify compatibility before gameplay starts."
+    },
+    {
+      "name": "Factorio info.json",
+      "url": "https://lua-api.factorio.com/latest/auxiliary/mod-structure.html",
+      "lesson": "Keep the mod descriptor data-first and versioned; let the engine own load order, storage, and migrations instead of hiding behavior in an opaque fork."
+    },
+    {
+      "name": "Fabric fabric.mod.json",
+      "url": "https://wiki.fabricmc.net/documentation:fabric_mod_json",
+      "lesson": "Separate required metadata from namespaced extension data and make dependency or compatibility failures clear to players."
+    }
+  ],
+  "barony": {
+    "requiresFrameworkVersion": "0.1.0",
+    "sourceRepository": "https://github.com/TurningWheel/Barony",
+    "workForkRepository": "https://github.com/JMLegere/Barony",
+    "officialContentSystems": [
+      "Custom Content",
+      "Steam Workshop",
+      "maps",
+      "JSON",
+      "Barony Script",
+      "native framework hooks"
+    ],
+    "notes": "Stash is intended as a small upstreamable native framework extension that coexists with Barony's official content systems. Existing content modding can package metadata/assets, while the framework supplies safe persistence and placement hooks."
+  },
+  "capabilities": [
+    {
+      "id": "persistent_storage",
+      "required": true,
+      "reason": "The stash must survive death, victory, and starting a later run instead of living only in a normal save file."
+    },
+    {
+      "id": "persistent_named_inventories",
+      "required": true,
+      "reason": "The framework must expose a stable named inventory key that multiple Void Chest access paths can share."
+    },
+    {
+      "id": "void_chest_inventory_binding",
+      "required": true,
+      "reason": "Stash intentionally augments Barony's existing Void Chest behavior instead of creating a parallel chest mechanic."
+    },
+    {
+      "id": "placement_hooks",
+      "required": true,
+      "reason": "Permanent Void Chest access points are needed in the lobby and in every generated shop."
+    },
+    {
+      "id": "multiplayer_metadata",
+      "required": true,
+      "reason": "The host must be authoritative for the shared inventory and clients need compatible framework metadata."
+    }
+  ],
+  "persistentStorage": {
+    "enabled": true,
+    "namespace": "stash",
+    "scope": "profile-and-save",
+    "savePolicy": "on_inventory_close",
+    "fileHint": "stash/void_chest_inventory.json",
+    "description": "Engine-managed per-profile storage for the shared Void Chest inventory. The engine may also mirror enough metadata into save data for resume compatibility."
+  },
+  "persistentInventories": {
+    "void_chest_inventory": {
+      "description": "One shared stash inventory backed by Barony's existing Stat::void_chest_inventory and persisted across runs.",
+      "scope": "profile-and-save",
+      "storageKey": "void_chest_inventory",
+      "owner": "host",
+      "access": "shared_party",
+      "itemModel": {
+        "encoding": "engine_native_item_state",
+        "preserves": [
+          "type",
+          "status",
+          "beatitude",
+          "count",
+          "appearance",
+          "identified",
+          "owner",
+          "metadata"
+        ]
+      },
+      "sourceBindings": [
+        {
+          "source": "Stat::void_chest_inventory",
+          "mode": "read_write",
+          "sharesInventory": true,
+          "description": "Normal Void Chest open/close logic reads and writes this persistent inventory."
+        },
+        {
+          "source": "spell_created_void_chest",
+          "mode": "read_write",
+          "sharesInventory": true,
+          "description": "Void Chests created by spell effects use the same stash instead of a temporary per-run inventory."
+        },
+        {
+          "source": "placed_void_chest_access",
+          "mode": "read_write",
+          "sharesInventory": true,
+          "description": "Framework-placed lobby and shop access points open the same named inventory."
+        }
+      ]
+    }
+  },
+  "placements": [
+    {
+      "id": "lobby_void_chest_access",
+      "description": "Add one permanent Void Chest access point near the lobby assist shrine area.",
+      "hook": "lobby_assist_area",
+      "entity": {
+        "kind": "void_chest_access",
+        "engineActor": "actChest",
+        "spriteHint": "existing purple Void Chest sprites"
+      },
+      "inventory": "void_chest_inventory",
+      "targets": [
+        {
+          "where": "lobby_near_assist_shrine",
+          "frequency": "once",
+          "placementPolicy": "nearest_free_tile",
+          "description": "Resolve to a safe nearby tile after the lobby assist shrine is placed."
+        }
+      ]
+    },
+    {
+      "id": "shop_void_chest_access",
+      "description": "Add one permanent Void Chest access point to every generated shop room.",
+      "hook": "generated_shop",
+      "entity": {
+        "kind": "void_chest_access",
+        "engineActor": "actChest",
+        "spriteHint": "existing purple Void Chest sprites"
+      },
+      "inventory": "void_chest_inventory",
+      "targets": [
+        {
+          "where": "every_generated_shop",
+          "frequency": "every_shop",
+          "placementPolicy": "free_shop_floor_tile",
+          "description": "Resolve to a safe shoparea tile, ideally near the shopkeeper or counter if the engine can detect one."
+        }
+      ]
+    }
+  ],
+  "multiplayer": {
+    "compatibility": "host_authoritative_coop",
+    "authority": "host",
+    "versionPolicy": "same_manifest_required",
+    "syncInventories": [
+      "void_chest_inventory"
+    ],
+    "notes": "The host owns persistence and inventory mutation. Clients interact through normal Void Chest inventory networking and must use a compatible manifest/framework version."
+  }
+}

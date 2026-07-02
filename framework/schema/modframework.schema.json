@@ -1,0 +1,512 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barony.game/modframework.schema.json",
+  "title": "Barony Mod Framework Manifest",
+  "description": "Minimal data-driven manifest for a small Barony engine mod framework MVP. The framework owns safe native hooks; manifests declare capabilities, persistence, placements, and multiplayer compatibility.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "version",
+    "barony",
+    "capabilities",
+    "persistentStorage",
+    "persistentInventories",
+    "placements",
+    "multiplayer"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable manifest id. Prefer reverse-DNS or lowercase package style.",
+      "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "version": {
+      "type": "string",
+      "description": "Manifest/mod version. SemVer is recommended but not required for local experiments.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2048
+    },
+    "inspirations": {
+      "type": "array",
+      "description": "Optional prior-art references used to keep the manifest shape familiar and avoid a bespoke opaque fork.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "url",
+          "lesson"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "lesson": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "barony": {
+      "$ref": "#/$defs/baronyCompatibility"
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "persistentStorage": {
+      "$ref": "#/$defs/persistentStorage"
+    },
+    "persistentInventories": {
+      "type": "object",
+      "description": "Named inventories persisted by the framework. Keys are stable ids used by placements and hooks.",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9_\\-.]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/persistentInventory"
+      }
+    },
+    "placements": {
+      "type": "array",
+      "description": "Declarative placement requests resolved by engine-owned safe hooks.",
+      "items": {
+        "$ref": "#/$defs/placement"
+      }
+    },
+    "multiplayer": {
+      "$ref": "#/$defs/multiplayer"
+    }
+  },
+  "$defs": {
+    "baronyCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiresFrameworkVersion",
+        "sourceRepository",
+        "officialContentSystems"
+      ],
+      "properties": {
+        "requiresFrameworkVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+        },
+        "minGameVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sourceRepository": {
+          "type": "string",
+          "format": "uri"
+        },
+        "workForkRepository": {
+          "type": "string",
+          "format": "uri"
+        },
+        "officialContentSystems": {
+          "type": "array",
+          "description": "Existing Barony modding/content systems this manifest coexists with.",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "Custom Content",
+              "Steam Workshop",
+              "maps",
+              "JSON",
+              "Barony Script",
+              "native framework hooks"
+            ]
+          }
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "required"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Engine capability requested by the manifest.",
+          "enum": [
+            "persistent_storage",
+            "persistent_named_inventories",
+            "void_chest_inventory_binding",
+            "placement_hooks",
+            "multiplayer_metadata"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      }
+    },
+    "persistentStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "namespace",
+        "scope",
+        "savePolicy"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Stable storage namespace under the engine-managed mod storage root.",
+          "pattern": "^[a-z0-9][a-z0-9_\\-.]{0,63}$"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "profile",
+            "run",
+            "save",
+            "profile-and-save"
+          ]
+        },
+        "savePolicy": {
+          "type": "string",
+          "enum": [
+            "on_change",
+            "on_inventory_close",
+            "on_save",
+            "on_run_end",
+            "manual"
+          ]
+        },
+        "fileHint": {
+          "type": "string",
+          "description": "Human-readable hint only; the engine chooses the real platform-safe path.",
+          "pattern": "^[A-Za-z0-9_./-]+$"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      }
+    },
+    "persistentInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "scope",
+        "storageKey",
+        "owner",
+        "access",
+        "itemModel",
+        "sourceBindings"
+      ],
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "profile",
+            "run",
+            "save",
+            "profile-and-save"
+          ]
+        },
+        "storageKey": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_\\-.]{0,63}$"
+        },
+        "owner": {
+          "type": "string",
+          "enum": [
+            "local_profile",
+            "host",
+            "server"
+          ]
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "shared_party",
+            "shared_global",
+            "per_player"
+          ]
+        },
+        "itemModel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "encoding",
+            "preserves"
+          ],
+          "properties": {
+            "encoding": {
+              "type": "string",
+              "enum": [
+                "engine_native_item_state",
+                "barony_item_state_v1"
+              ]
+            },
+            "preserves": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "type",
+                  "status",
+                  "beatitude",
+                  "count",
+                  "appearance",
+                  "identified",
+                  "owner",
+                  "metadata"
+                ]
+              }
+            }
+          }
+        },
+        "sourceBindings": {
+          "type": "array",
+          "description": "Engine access paths that read/write this same named inventory.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/sourceBinding"
+          }
+        }
+      }
+    },
+    "sourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "mode"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "Stat::void_chest_inventory",
+            "spell_created_void_chest",
+            "placed_void_chest_access",
+            "custom_framework_inventory"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "read_write",
+            "read_only",
+            "write_only"
+          ]
+        },
+        "sharesInventory": {
+          "type": "boolean",
+          "default": true
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      }
+    },
+    "placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "hook",
+        "entity",
+        "inventory",
+        "targets"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_\\-.]{0,63}$"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "hook": {
+          "type": "string",
+          "description": "Engine-owned placement hook. No arbitrary scripting is implied.",
+          "enum": [
+            "lobby_assist_area",
+            "generated_shop",
+            "map_marker"
+          ]
+        },
+        "entity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "void_chest_access",
+                "chest",
+                "marker",
+                "npc",
+                "item"
+              ]
+            },
+            "engineActor": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "spriteHint": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        },
+        "inventory": {
+          "type": "string",
+          "description": "Key into persistentInventories.",
+          "pattern": "^[a-z0-9][a-z0-9_\\-.]{0,63}$"
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/placementTarget"
+          }
+        }
+      }
+    },
+    "placementTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "where",
+        "frequency",
+        "placementPolicy"
+      ],
+      "properties": {
+        "where": {
+          "type": "string",
+          "enum": [
+            "lobby_near_assist_shrine",
+            "every_generated_shop",
+            "map_marker"
+          ]
+        },
+        "frequency": {
+          "type": "string",
+          "enum": [
+            "once",
+            "every_shop",
+            "per_marker"
+          ]
+        },
+        "placementPolicy": {
+          "type": "string",
+          "enum": [
+            "nearest_free_tile",
+            "free_shop_floor_tile",
+            "marker_origin"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      }
+    },
+    "multiplayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compatibility",
+        "authority",
+        "versionPolicy"
+      ],
+      "properties": {
+        "compatibility": {
+          "type": "string",
+          "enum": [
+            "singleplayer_only",
+            "host_authoritative_coop",
+            "server_authoritative"
+          ]
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "local_profile",
+            "host",
+            "server"
+          ]
+        },
+        "versionPolicy": {
+          "type": "string",
+          "enum": [
+            "same_manifest_required",
+            "host_manifest_required",
+            "cosmetic_mismatch_allowed"
+          ]
+        },
+        "syncInventories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_\\-.]{0,63}$"
+          }
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      }
+    }
+  }
+}

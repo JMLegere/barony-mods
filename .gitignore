@@ -1,0 +1,21 @@
+# Generated mod packages and SteamCMD manifests
+dist/
+.workshop/
+*.zip
+
+# Local machine configuration
+.local/
+.env
+.env.*
+!.env.example
+
+# Python/editor cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vscode/
+.idea/
+
+# OS noise
+.DS_Store
+Thumbs.db

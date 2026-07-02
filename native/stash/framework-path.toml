@@ -1,0 +1,53 @@
+# Minimal Barony modding framework path for Stash.
+# This is not uploaded to Steam Workshop; it describes a cleaner upstreamable engine change.
+
+[goal]
+name = "barony_mod_framework_mvp"
+reference_mod = "stash"
+stance = "Use Stash as the first reference feature for a small data-driven engine modding extension, not a full dynamic plugin system."
+
+[why]
+source_fork_problem = "A long-lived fork is not a clean public package for players or maintainers."
+workshop_gap = "Current Workshop/local mods can package content, maps, assets, JSON, and scripts, but Stash needs engine-level persistence and generation hooks."
+cleaner_path = "Add narrow engine-supported hooks so Stash can be expressed mostly as data/config while the engine owns persistence, spawning, multiplayer, and save compatibility."
+
+[mvp_scope]
+features = [
+  "mod manifest capability declarations",
+  "per-mod profile/run storage path",
+  "profile-persistent named inventory support",
+  "void_chest_inventory persistence policy hook",
+  "lobby placement hook near assistive/assist shrine items",
+  "shop placement hook for generated shops",
+  "version and multiplayer compatibility metadata"
+]
+
+[stash_as_reference_mod]
+persistent_inventory = "void_chest_inventory"
+spell_void_chest_uses_stash = true
+placements = ["lobby_assist_area", "every_shop"]
+implementation_goal = "After the framework MVP exists, Stash should be a small mod config plus minimal assets/metadata, not a hard-coded bespoke fork."
+
+[not_mvp]
+items = [
+  "cross-platform dynamic DLL/SO plugin loading",
+  "general Lua/WASM runtime",
+  "arbitrary entity behavior scripting",
+  "binary patching of retail executables",
+  "large public framework before Stash works"
+]
+reason = "Those are larger, riskier, and not required to prove Stash. Start with narrow hooks that solve real Barony mod needs."
+
+[proposed_api_shape]
+manifest_file = "data/modframework/stash.json"
+example = "Declare persistent void chest inventory and placement requests; engine resolves them through safe C++ hooks."
+
+[upstream_strategy]
+preferred = "Implement hooks as general Barony engine capability, then submit upstream as a small modding-framework MVP with Stash as an example/test mod."
+fallback = "Maintain patch package against upstream Barony, with framework hooks isolated so future mods can reuse them."
+
+[community_landscape]
+official_tools = ["Barony Editor", "Custom Content / Steam Workshop loader", "JSON modding files", "Barony Script for map/editor events"]
+community_tools = ["viniciusmuller/barony-mod-manager", "Groshie/Barony-Save-Editor", "GameBanana mod/tutorial listings"]
+assessment = "Existing community tools help create, download, activate, or edit content/saves. I did not find a community SMAPI/BepInEx-style runtime plugin framework that can hook native gameplay behavior like void chest persistence."
+stash_implication = "Stash can reuse community knowledge/tools for packaging and save-format research, but still needs engine hooks or a native patch for the actual persistent void chest behavior."

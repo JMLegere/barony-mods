@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://baronymodloader.local/schema/profile.schema.json",
+  "title": "BaronyModLoader v0 profile activation record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "profile", "app", "paths", "activeMods", "runtime"],
+  "properties": {
+    "schemaVersion": { "const": "0.1.0" },
+    "profile": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "root": { "type": "string", "minLength": 1 },
+        "createdAt": { "$ref": "#/$defs/dateTime" },
+        "updatedAt": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "const": "BaronyModLoader" },
+        "version": { "$ref": "#/$defs/version" }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileRoot", "activeMods", "runtimeManifest", "validationReport", "appLog", "runtimeLoadReport", "runtimeLog"],
+      "properties": {
+        "profileRoot": { "type": "string", "minLength": 1 },
+        "activeMods": { "$ref": "#/$defs/profilePath" },
+        "runtimeManifest": { "$ref": "#/$defs/profilePath" },
+        "validationReport": { "$ref": "#/$defs/profilePath" },
+        "appLog": { "$ref": "#/$defs/profilePath" },
+        "runtimeLoadReport": { "$ref": "#/$defs/profilePath" },
+        "runtimeLog": { "$ref": "#/$defs/profilePath" }
+      }
+    },
+    "activeMods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "version", "packagePath", "manifestPath", "loadOrder", "enabled", "capabilities", "modules"],
+        "properties": {
+          "id": { "$ref": "#/$defs/packageId" },
+          "version": { "$ref": "#/$defs/version" },
+          "packagePath": { "type": "string", "minLength": 1 },
+          "manifestPath": { "type": "string", "minLength": 1 },
+          "checksumSet": { "type": "string", "minLength": 1 },
+          "loadOrder": { "type": "integer", "minimum": 0 },
+          "enabled": { "type": "boolean" },
+          "capabilities": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/capabilityRequest" }
+          },
+          "modules": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"] },
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["runtimeId", "runtimeVersion", "contractVersion", "gameRevision", "executable", "capabilities"],
+      "properties": {
+        "runtimeId": { "$ref": "#/$defs/id" },
+        "runtimeVersion": { "$ref": "#/$defs/version" },
+        "contractVersion": { "$ref": "#/$defs/version" },
+        "gameRevision": { "type": "string", "minLength": 1 },
+        "executable": { "type": "string", "minLength": 1 },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/runtimeCapability" },
+          "allOf": [
+            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "persistent_storage" } } } },
+            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "persistent_inventory" } } } },
+            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "void_chest_binding" } } } },
+            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "placement_lobby" } } } },
+            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "placement_shop" } } } },
+            { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "multiplayer_version_metadata" } } } }
+          ]
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status": { "type": "string", "enum": ["valid", "invalid", "warning"] },
+        "checkedAt": { "$ref": "#/$defs/dateTime" },
+        "errors": { "type": "array", "items": { "$ref": "#/$defs/error" } },
+        "warnings": { "type": "array", "items": { "$ref": "#/$defs/error" } }
+      }
+    }
+  },
+  "$defs": {
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "packageId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "dateTime": { "type": "string", "format": "date-time" },
+    "profilePath": { "type": "string", "pattern": "^BaronyModLoader/.+" },
+    "capabilityId": {
+      "type": "string",
+      "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata"]
+    },
+    "capabilityRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "version", "required"],
+      "properties": {
+        "id": { "$ref": "#/$defs/capabilityId" },
+        "version": { "$ref": "#/$defs/version" },
+        "required": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    },
+    "runtimeCapability": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "$ref": "#/$defs/capabilityId" },
+        "version": { "$ref": "#/$defs/version" },
+        "description": { "type": "string" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "severity", "message", "action"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["info", "warning", "error", "fatal"] },
+        "message": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" }
+      }
+    }
+  }
+}

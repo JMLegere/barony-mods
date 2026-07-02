@@ -1,0 +1,98 @@
+# MVP engine hook plan for a small, upstreamable Barony modding framework.
+# Evidence baseline: native/stash/source-plan.toml and native/stash/framework-path.toml.
+
+[meta]
+name = "barony_mod_framework_engine_hooks_mvp"
+reference_mod = "stash"
+stance = "data-driven engine extension, not dynamic native plugins"
+not_mvp = ["dynamic DLL/SO plugins", "Lua/WASM runtime", "arbitrary entity scripting"]
+source_upstream = "https://github.com/TurningWheel/Barony"
+source_work_fork = "https://github.com/JMLegere/Barony"
+
+[[inspirations]]
+name = "SMAPI manifest"
+source = "https://stardewvalleywiki.com/Modding:Modder_Guide/APIs/Manifest"
+takeaway = "Use stable mod ids, semantic versions, minimum engine versions, dependencies, update metadata, and readable load errors."
+avoid = "Do not copy SMAPI's compiled DLL entrypoint model for the Barony MVP."
+
+[[inspirations]]
+name = "Factorio data lifecycle"
+source = "https://lua-api.factorio.com/latest/auxiliary/data-lifecycle.html"
+takeaway = "Separate startup validation, runtime state, migrations/configuration changes, deterministic load order, and multiplayer-safe state ownership."
+avoid = "Do not add a general Lua control runtime in v1."
+
+[[inspirations]]
+name = "Fabric mod metadata"
+source = "https://wiki.fabricmc.net/documentation:fabric_mod_json"
+takeaway = "Keep metadata explicit: schema version, id, version, dependencies/conflicts, environment, contact/source fields, and namespaced custom fields."
+avoid = "Do not add Java-style entrypoints, mixins, or nested binary loading."
+
+[[hooks]]
+id = "manifest_capabilities"
+order = 10
+likely_sources = ["src/mod_tools.*", "src/game.*", "src/files.*"]
+likely_functions = ["mod load/activation path", "startup config validation"]
+purpose = "Load a small per-mod manifest that declares allowed framework capabilities before gameplay begins."
+inputs = ["mod id", "manifest version", "capability declarations", "multiplayer compatibility fields"]
+outputs = ["validated capability set", "disabled mod with readable error on unsupported engine version"]
+stash_usage = "Declares one shared profile-persistent named inventory backed by void_chest_inventory plus lobby/shop placement requests."
+
+[[hooks]]
+id = "persistent_storage"
+order = 20
+likely_sources = ["src/files.*", "src/scores.cpp", "src/scores.hpp"]
+likely_functions = ["profile/outputdir path helpers", "save/load score or profile-adjacent state"]
+purpose = "Provide per-mod profile storage that survives failed runs and normal save deletion."
+inputs = ["mod id", "profile id", "storage namespace", "serialized mod state", "engine/framework version"]
+outputs = ["profile-persistent state file", "load result with version/status", "atomic write success/failure"]
+stash_usage = "Stores the serialized Stash inventory outside ordinary savegame lifetime so the stash persists across runs."
+
+[[hooks]]
+id = "persistent_named_inventory"
+order = 30
+likely_sources = ["src/entity.cpp", "src/entity.hpp", "src/scores.cpp", "src/scores.hpp"]
+likely_functions = ["Stat::void_chest_inventory", "Entity::getChestInventoryList()", "SaveGameInfo void chest serialization"]
+purpose = "Expose engine-owned named inventories that can be bound to existing container access paths."
+inputs = ["inventory name", "scope = profile", "item list", "load/save policy", "container binding"]
+outputs = ["reconstructed Item inventory", "dirty flag", "persisted inventory payload"]
+stash_usage = "Binds the name stash:void_chest_inventory to the existing void chest inventory so all void chests, including spell-created ones, share the same persistent stash."
+
+[[hooks]]
+id = "void_chest_persistence_policy"
+order = 40
+likely_sources = ["src/actchest.cpp", "src/entity.cpp", "src/entity.hpp"]
+likely_functions = ["actChest", "Entity::getChestInventoryList()", "chestVoidState handling"]
+purpose = "Allow a manifest capability to route void chest contents through a persistent named inventory instead of only savegame state."
+inputs = ["chest entity", "chestVoidState", "named inventory binding", "save-on-close policy"]
+outputs = ["shared inventory pointer/list", "persist request when contents change"]
+stash_usage = "Makes every void chest access path read/write the shared persistent stash and save it on close or saveGame."
+
+[[hooks]]
+id = "lobby_placement"
+order = 50
+likely_sources = ["src/maps.cpp"]
+likely_functions = ["assignActions case 201", "assist shrine placement", "entity spawn helpers"]
+purpose = "Place declared permanent access points in safe lobby anchor areas."
+inputs = ["placement request", "anchor = lobby_assist_area", "nearby free-tile search", "entity template"]
+outputs = ["spawned chest entity", "spawned lid entity", "permanent void access flags"]
+stash_usage = "Adds a permanent purple Void Chest access point near the assist shrine in the lobby."
+
+[[hooks]]
+id = "shop_placement"
+order = 60
+likely_sources = ["src/maps.cpp"]
+likely_functions = ["generateDungeon", "shopmap/shoplevel handling", "shopSubRooms", "shoparea marking"]
+purpose = "Place declared permanent access points inside generated shops without requiring hand-authored maps."
+inputs = ["placement request", "shop room bounds/tiles", "shoparea map", "free-tile search", "entity template"]
+outputs = ["one access point per generated shop", "stable placement failure log if no tile is valid"]
+stash_usage = "Adds one permanent Void Chest access point in every shop, preferably near the shopkeeper/counter or otherwise on a valid interior shop tile."
+
+[[hooks]]
+id = "multiplayer_version_metadata"
+order = 70
+likely_sources = ["src/net.*", "src/game.*", "src/mod_tools.*"]
+likely_functions = ["server/client compatibility negotiation", "mod activation metadata", "save compatibility checks"]
+purpose = "Prevent silent desync by advertising framework version, manifest version, required capabilities, and persistence ownership."
+inputs = ["framework version", "manifest id/version", "required capabilities", "storage schema version", "host-owned state flag"]
+outputs = ["compatibility decision", "join rejection reason when incompatible", "host-authoritative persistence mode"]
+stash_usage = "Host/server owns the persistent void_chest_inventory; clients interact through normal chest/void chest networking only when versions and capabilities match."

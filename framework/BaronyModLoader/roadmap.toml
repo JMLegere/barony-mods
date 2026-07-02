@@ -1,0 +1,268 @@
+# BaronyModLoader roadmap.
+# Planning artifact only: phased standalone app + engine runtime/framework patch plan.
+
+[meta]
+name = "BaronyModLoader roadmap"
+artifact = "roadmap.toml"
+status = "planning"
+framework = "BaronyModLoader"
+reference_mod = "stash"
+vision = "A standalone Barony modding framework app paired with a narrow, upstreamable engine runtime patch."
+initial_implementation_rule = "Build the full framework shape, but implement only the concrete modules and interfaces required by Stash first."
+source_upstream = "https://github.com/TurningWheel/Barony"
+source_work_fork = "https://github.com/JMLegere/Barony"
+
+[scope]
+full_framework = [
+  "standalone loader app",
+  "install discovery",
+  "profiles",
+  "mod packages",
+  "dependency and version resolution",
+  "patch/build/release management",
+  "launch orchestration",
+  "validation and diagnostics",
+  "paired Barony engine runtime/framework patch",
+  "safe engine-owned gameplay hooks",
+]
+initial_modules_only = [
+  "persistent_storage",
+  "persistent_inventory",
+  "void_chest_binding",
+  "placement_lobby",
+  "placement_shop",
+  "multiplayer_version_metadata",
+]
+explicit_non_goals_initial = [
+  "dynamic DLL/SO plugin runtime",
+  "Lua runtime",
+  "WASM runtime",
+  "arbitrary native mod code execution",
+  "general entity scripting",
+  "broad gameplay event bus",
+  "unreviewable retail binary patching",
+]
+
+[[phases]]
+id = "p0_planning_artifacts"
+order = 0
+name = "Planning and contracts"
+status = "complete"
+focus = "Define BaronyModLoader as a full standalone framework while freezing the narrow Stash-required v0 surface."
+implements_modules = []
+planning_outputs = [
+  "module catalog for future families and v0 Stash-required modules",
+  "Stash interface contract",
+  "phased roadmap",
+  "architecture/vision/package notes from sibling planning artifacts",
+]
+app_deliverables = [
+  "decide app/runtime responsibility split",
+  "name package/profile/build/diagnostics responsibilities without implementing them",
+]
+engine_deliverables = [
+  "name Stash-required runtime capabilities",
+  "keep engine hooks data-driven and upstream-reviewable",
+]
+exit_criteria = [
+  "TOML planning artifacts parse",
+  "Stash-required modules are clearly marked",
+  "roadmap states full framework vision and limited initial implementation",
+]
+
+[[phases]]
+id = "p1_loader_app_skeleton"
+order = 1
+name = "Standalone loader app skeleton"
+status = "current-executable-skeleton"
+focus = "Create the user-facing BaronyModLoader app foundation: local package validation, runtime capability validation, profile metadata, and launch-plan/runtime-manifest generation."
+implements_modules = [
+  "dependency_version_resolver: minimal validation only",
+  "launch_profiles: profile/build/mod-set metadata only",
+  "build_patch_manager: patch/build identity tracking only",
+  "diagnostics: validation report surface only",
+]
+app_deliverables = [
+  "Python stdlib CLI root at framework/BaronyModLoader/app/barony_mod_loader.py",
+  "validate local Stash package manifests from bml-package.json package dirs or the development example-stash-package.json fixture",
+  "validate required Stash capabilities against runtime-info JSON metadata",
+  "create named launch profile metadata with selected build, storage root, and active package set",
+  "record selected Barony executable/runtime identity without modifying the install",
+  "generate a JSON launch plan/runtime manifest using the app-to-engine contract",
+  "emit human-readable validation failures with nonzero exit status",
+]
+engine_deliverables = [
+  "none in p1; paired engine runtime patch remains planned for p2",
+]
+stash_deliverables = [
+  "Stash package metadata can declare required runtime capabilities",
+  "App refuses to launch Stash against an incompatible unpatched build with a clear error",
+]
+exit_criteria = [
+  "CLI can validate Stash package metadata and explain missing required capabilities before launch",
+  "CLI can create a local profile metadata record for a selected Barony executable",
+  "CLI can generate a runtime manifest/launch plan JSON for a compatible Stash-capable runtime",
+  "No broad content API, plugin runtime, or engine gameplay patch is required for this phase",
+]
+
+[[phases]]
+id = "p2_engine_runtime_patch"
+order = 2
+name = "Engine runtime capability patch"
+status = "planned"
+focus = "Add the paired Barony runtime/framework patch with safe named capabilities and validation."
+implements_modules = [
+  "native_runtime_hooks: narrow capability registry only",
+  "persistent_storage: storage namespace foundation",
+  "persistent_inventory: named inventory foundation",
+  "placement_lobby: hook foundation",
+  "placement_shop: hook foundation",
+  "multiplayer_version_metadata: metadata foundation",
+]
+app_deliverables = [
+  "recognize the patched runtime version/capability set",
+  "surface runtime validation failures in diagnostics",
+]
+engine_deliverables = [
+  "load and validate framework capability declarations before gameplay",
+  "open per-mod profile storage namespaces",
+  "define engine-owned named persistent inventory records",
+  "provide a Void Chest binding capability point without hardcoding future unrelated mods",
+  "provide safe lobby placement request processing",
+  "provide safe generated-shop placement request processing",
+  "record framework runtime, active mods, capabilities, and storage schema in save/session metadata",
+]
+stash_deliverables = [
+  "Stash requirements can be represented by capability declarations rather than arbitrary plugin code",
+]
+exit_criteria = [
+  "Unsupported capabilities fail early with readable errors",
+  "Runtime hooks are narrow enough to be reviewed against upstream Barony",
+  "The patch still preserves existing Custom Content, Workshop, map, JSON, and Barony Script behavior",
+]
+
+[[phases]]
+id = "p3_stash_modules"
+order = 3
+name = "Stash-required modules and reference behavior"
+status = "planned"
+focus = "Implement only the concrete runtime modules/interfaces Stash consumes."
+implements_modules = [
+  "persistent_storage",
+  "persistent_inventory",
+  "void_chest_binding",
+  "placement_lobby",
+  "placement_shop",
+  "multiplayer_version_metadata",
+]
+app_deliverables = [
+  "profile diagnostics show Stash package/runtime/storage compatibility",
+  "launch profile selects the Stash-capable patched build",
+]
+engine_deliverables = [
+  "persist stash:void_chest_inventory outside normal run lifetime",
+  "load Stash inventory before first Void Chest access",
+  "save Stash inventory on close and safe save/update boundaries",
+  "route every Void Chest access path to the same persistent named inventory while Stash is active",
+  "ensure spell-created Void Chests use the same persistent inventory",
+  "place one permanent Stash Void Chest access point near the lobby assist shrine area",
+  "place one permanent Stash Void Chest access point in every generated shop when a valid tile exists",
+  "enforce host-owned persistent Stash state and compatible client metadata in multiplayer",
+]
+stash_deliverables = [
+  "Stash manifest declares stash:void_chest_inventory",
+  "Stash manifest declares lobby_assist_area Void Chest placement",
+  "Stash manifest declares every_shop Void Chest placement",
+  "Stash metadata declares required capability versions and storage schema",
+]
+exit_criteria = [
+  "Item placed into Stash persists across death/new run and process relaunch",
+  "Normal save/resume does not fork the Stash inventory",
+  "Lobby, shop, and spell-created Void Chest access all open the same inventory",
+  "Mismatched multiplayer clients are rejected or clearly marked incompatible before state diverges",
+  "Removing the Stash declaration disables Stash behavior without leaving broad hardcoded special cases",
+]
+
+[[phases]]
+id = "p4_packaging_release"
+order = 4
+name = "Packaging, release, and rollback"
+status = "planned"
+focus = "Make BaronyModLoader understandable to players and reviewable by maintainers without hiding the engine patch."
+implements_modules = [
+  "content_packages: package metadata and local install shape",
+  "build_patch_manager: patch/build/release provenance",
+  "diagnostics: release/support bundle basics",
+]
+app_deliverables = [
+  "package index displays Stash metadata, required runtime capabilities, and compatibility status",
+  "release manifest identifies upstream Barony commit/tag and BaronyModLoader runtime version",
+  "patch series or source-build provenance is visible",
+  "checksums are recorded for distributed artifacts when binaries are shipped",
+  "rollback path to unmodified Barony build/profile is documented in-app or release metadata",
+]
+engine_deliverables = [
+  "runtime version/capability report is available for packaging validation",
+]
+stash_deliverables = [
+  "Stash package can be installed/enabled/disabled through a profile without manual source edits",
+  "Stash storage remains profile-scoped and recoverable across package updates",
+]
+exit_criteria = [
+  "A user can understand which artifact is the app, which is the patched Barony runtime, and which is the Stash package",
+  "Release metadata states exact Barony source compatibility",
+  "Rollback does not require deleting unrelated Barony content or profiles",
+]
+
+[[phases]]
+id = "p5_future_module_expansion"
+order = 5
+name = "Future framework expansion"
+status = "future"
+focus = "Grow BaronyModLoader beyond Stash only after the Stash path proves the app/runtime split and safe hook model."
+implements_modules = [
+  "content_packages: full asset/package lifecycle",
+  "native_runtime_hooks: additional engine-owned capability families",
+  "dependency_version_resolver: full dependency/conflict graph",
+  "launch_profiles: import/export and multi-build workflows",
+  "build_patch_manager: automated apply/build/revert flows",
+  "diagnostics: support bundles and richer runtime telemetry",
+]
+app_deliverables = [
+  "multi-mod package resolution",
+  "profile import/export",
+  "Workshop/local package integration where compatible with official systems",
+  "automated patch/build workflows when source-build assumptions are stable",
+  "support bundle export for diagnostics",
+]
+engine_deliverables = [
+  "additional safe capability hooks motivated by real mods",
+  "capability versioning and migration policies",
+  "broader save/session compatibility reporting",
+]
+stash_deliverables = [
+  "Stash remains the reference mod for persistent storage, inventory binding, placement, and multiplayer compatibility",
+]
+exit_criteria = [
+  "Every new module family is justified by a concrete mod need",
+  "No future expansion bypasses engine-owned validation with arbitrary unsafe code execution",
+  "Existing Stash saves/storage remain compatible or migrate through explicit versioned paths",
+]
+
+[release_strategy]
+preferred = "versioned source patch series against upstream Barony plus optional reproducible builds and a separate Stash package"
+upstream_goal = "Keep the engine patch narrow, named by reusable capabilities, and reviewable for possible upstream acceptance."
+fallback = "Maintain a small, rebased patch series against upstream releases without making a long-lived opaque fork the only explanation."
+
+[validation_plan]
+planning_artifacts = [
+  "Parse modules.toml, stash-interface.toml, and roadmap.toml as TOML.",
+  "Confirm v0 Stash-required modules are present in module catalog and interface contract.",
+  "Confirm roadmap includes planning, app skeleton, engine runtime patch, Stash modules, packaging, and future expansion phases.",
+]
+first_behavioral_validation_after_implementation = [
+  "Single-player: add item to Stash, end/die/new run/relaunch, confirm item remains accessible.",
+  "Access parity: lobby, shop, and spell-created Void Chest all open the same inventory.",
+  "Save/resume: normal save restore does not duplicate, fork, or lose Stash contents.",
+  "Multiplayer: matching client can join; missing/mismatched client is rejected before inventory state diverges.",
+]
