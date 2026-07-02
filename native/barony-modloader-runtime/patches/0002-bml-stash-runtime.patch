@@ -245,7 +245,7 @@ index 4fb153b..a63a3e6 100644
  				continue;
  			}
 diff --git a/src/barony_mod_loader.cpp b/src/barony_mod_loader.cpp
-index f67d53f..11a13e8 100644
+index f67d53f..621a7d7 100644
 --- a/src/barony_mod_loader.cpp
 +++ b/src/barony_mod_loader.cpp
 @@ -1,5 +1,13 @@
@@ -413,7 +413,7 @@ index f67d53f..11a13e8 100644
  	const std::string fallbackReportPath = defaultReportPath(manifestPath);
  	std::string manifestText;
  	if (!readFile(manifestPath, manifestText))
-@@ -362,7 +491,147 @@ RuntimeManifestLoadResult loadRuntimeManifest(const std::string& manifestPath, c
+@@ -362,7 +491,149 @@ RuntimeManifestLoadResult loadRuntimeManifest(const std::string& manifestPath, c
  		}
  	}
  
@@ -522,6 +522,7 @@ index f67d53f..11a13e8 100644
 +	}
 +
 +	Entity* chest = newEntity(1791, 1, map.entities, nullptr);
++	setSpriteAttributes(chest, nullptr, nullptr);
 +	chest->x = x;
 +	chest->y = y;
 +	chest->z = 6;
@@ -541,6 +542,7 @@ index f67d53f..11a13e8 100644
 +	chest->seedEntityRNG(map_server_rng.getU32());
 +
 +	Entity* lid = newEntity(1790, 0, map.entities, nullptr);
++	setSpriteAttributes(lid, nullptr, nullptr);
 +	lid->parent = chest->getUID();
 +	chest->parent = lid->getUID();
 +	lid->x = chest->x;
