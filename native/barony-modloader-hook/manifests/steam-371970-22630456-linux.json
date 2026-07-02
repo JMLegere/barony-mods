@@ -41,9 +41,385 @@
       "version": "0.1.0"
     }
   ],
-  "symbols": [],
+  "symbols": [
+    {
+      "id": "act_chest",
+      "kind": "function",
+      "mangledSymbol": "_Z8actChestP6Entity",
+      "demangledLabel": "actChest(Entity*)",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "act_chest_lid",
+      "kind": "function",
+      "mangledSymbol": "_Z11actChestLidP6Entity",
+      "demangledLabel": "actChestLid(Entity*)",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "entity_get_chest_inventory_list",
+      "kind": "function",
+      "mangledSymbol": "_ZN6Entity21getChestInventoryListEv",
+      "demangledLabel": "Entity::getChestInventoryList()",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "entity_add_item_to_chest",
+      "kind": "function",
+      "mangledSymbol": "_ZN6Entity14addItemToChestEP4ItembS1_",
+      "demangledLabel": "Entity::addItemToChest(Item*, bool, Item*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "entity_get_item_from_chest",
+      "kind": "function",
+      "mangledSymbol": "_ZN6Entity16getItemFromChestEP4Itemib",
+      "demangledLabel": "Entity::getItemFromChest(Item*, int, bool)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "entity_add_item_to_void_chest_server",
+      "kind": "function",
+      "mangledSymbol": "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_",
+      "demangledLabel": "Entity::addItemToVoidChestServer(int, Item*, bool, Item*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "entity_remove_item_from_void_chest_server",
+      "kind": "function",
+      "mangledSymbol": "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi",
+      "demangledLabel": "Entity::removeItemFromVoidChestServer(int, Item*, int)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "entity_close_chest",
+      "kind": "function",
+      "mangledSymbol": "_ZN6Entity10closeChestEv",
+      "demangledLabel": "Entity::closeChest()",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "entity_close_chest_server",
+      "kind": "function",
+      "mangledSymbol": "_ZN6Entity16closeChestServerEv",
+      "demangledLabel": "Entity::closeChestServer()",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "generate_dungeon",
+      "kind": "function",
+      "mangledSymbol": "_Z15generateDungeonPcjSt5tupleIJiiiiEE",
+      "demangledLabel": "generateDungeon(char*, unsigned int, std::tuple<int, int, int, int>)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "assign_actions",
+      "kind": "function",
+      "mangledSymbol": "_Z13assignActionsP5map_t",
+      "demangledLabel": "assignActions(map_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "new_entity",
+      "kind": "function",
+      "mangledSymbol": "_Z9newEntityijP6list_tS0_",
+      "demangledLabel": "newEntity(int, unsigned int, list_t*, list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "set_sprite_attributes",
+      "kind": "function",
+      "mangledSymbol": "_Z19setSpriteAttributesP6EntityS0_S0_",
+      "demangledLabel": "setSpriteAttributes(Entity*, Entity*, Entity*)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "new_item",
+      "kind": "function",
+      "mangledSymbol": "_Z7newItem8ItemType6StatusssjbP6list_t",
+      "demangledLabel": "newItem(ItemType, Status, short, short, unsigned int, bool, list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "list_free_all",
+      "kind": "function",
+      "mangledSymbol": "_Z12list_FreeAllP6list_t",
+      "demangledLabel": "list_FreeAll(list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ]
+    },
+    {
+      "id": "list_remove_node",
+      "kind": "function",
+      "mangledSymbol": "_Z15list_RemoveNodeP6node_t",
+      "demangledLabel": "list_RemoveNode(node_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ]
+    },
+    {
+      "id": "list_add_node_last",
+      "kind": "function",
+      "mangledSymbol": "_Z16list_AddNodeLastP6list_t",
+      "demangledLabel": "list_AddNodeLast(list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ]
+    },
+    {
+      "id": "list_add_node_first",
+      "kind": "function",
+      "mangledSymbol": "_Z17list_AddNodeFirstP6list_t",
+      "demangledLabel": "list_AddNodeFirst(list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ]
+    },
+    {
+      "id": "stats",
+      "kind": "data",
+      "mangledSymbol": "stats",
+      "demangledLabel": "stats",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "map",
+      "kind": "data",
+      "mangledSymbol": "map",
+      "demangledLabel": "map",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "map_rng",
+      "kind": "data",
+      "mangledSymbol": "map_rng",
+      "demangledLabel": "map_rng",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "map_server_rng",
+      "kind": "data",
+      "mangledSymbol": "map_server_rng",
+      "demangledLabel": "map_server_rng",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "multiplayer",
+      "kind": "data",
+      "mangledSymbol": "multiplayer",
+      "demangledLabel": "multiplayer",
+      "required": true,
+      "stashCapabilities": [
+        "multiplayer_version_metadata"
+      ]
+    },
+    {
+      "id": "clientnum",
+      "kind": "data",
+      "mangledSymbol": "clientnum",
+      "demangledLabel": "clientnum",
+      "required": true,
+      "stashCapabilities": [
+        "multiplayer_version_metadata"
+      ]
+    },
+    {
+      "id": "opened_chest",
+      "kind": "data",
+      "mangledSymbol": "openedChest",
+      "demangledLabel": "openedChest",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding"
+      ]
+    },
+    {
+      "id": "shoparea",
+      "kind": "data",
+      "mangledSymbol": "shoparea",
+      "demangledLabel": "shoparea",
+      "required": true,
+      "stashCapabilities": [
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "tile_entity_list",
+      "kind": "data",
+      "mangledSymbol": "TileEntityList",
+      "demangledLabel": "TileEntityList",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    }
+  ],
   "notes": [
-    "MVP manifest pins the local verified Steam/Linux executable identity and reserves the hook contract shape.",
-    "Native symbol mappings are intentionally empty until the hook library is implemented and verified."
+    "Manifest pins the verified local Steam/Linux executable identity for Barony Steam app 371970 build 22630456.",
+    "symbols enumerates required dlsym(RTLD_DEFAULT, mangledSymbol) probe targets only; resolved symbols do not mean gameplay hooks are installed.",
+    "hookTargets enumerates required Stash gameplay capabilities and intentionally fails closed until a relocation-safe detour/trampoline layer is implemented and verified."
+  ],
+  "hookTargets": [
+    {
+      "id": "stash_void_chest_binding",
+      "capability": "void_chest_binding",
+      "required": true,
+      "targetSymbolIds": [
+        "act_chest",
+        "act_chest_lid",
+        "entity_get_chest_inventory_list",
+        "entity_add_item_to_void_chest_server",
+        "entity_remove_item_from_void_chest_server"
+      ],
+      "installStrategy": "relocation-safe-detour-required",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
+    },
+    {
+      "id": "stash_inventory_persistence",
+      "capability": "persistent_inventory",
+      "required": true,
+      "targetSymbolIds": [
+        "entity_get_chest_inventory_list",
+        "entity_add_item_to_chest",
+        "entity_get_item_from_chest",
+        "entity_close_chest",
+        "entity_close_chest_server",
+        "new_item",
+        "list_add_node_first",
+        "list_add_node_last",
+        "list_remove_node",
+        "list_free_all",
+        "stats"
+      ],
+      "installStrategy": "relocation-safe-detour-required",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
+    },
+    {
+      "id": "stash_lobby_placement",
+      "capability": "placement_lobby",
+      "required": true,
+      "targetSymbolIds": [
+        "assign_actions",
+        "new_entity",
+        "set_sprite_attributes",
+        "map",
+        "map_rng",
+        "map_server_rng",
+        "tile_entity_list"
+      ],
+      "installStrategy": "relocation-safe-detour-required",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
+    },
+    {
+      "id": "stash_shop_placement",
+      "capability": "placement_shop",
+      "required": true,
+      "targetSymbolIds": [
+        "generate_dungeon",
+        "assign_actions",
+        "new_entity",
+        "set_sprite_attributes",
+        "map",
+        "map_rng",
+        "map_server_rng",
+        "shoparea",
+        "tile_entity_list"
+      ],
+      "installStrategy": "relocation-safe-detour-required",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
+    },
+    {
+      "id": "stash_multiplayer_metadata_gate",
+      "capability": "multiplayer_version_metadata",
+      "required": true,
+      "targetSymbolIds": [
+        "multiplayer",
+        "clientnum"
+      ],
+      "installStrategy": "relocation-safe-detour-required",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
+    }
   ]
 }

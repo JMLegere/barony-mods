@@ -1,9 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <dlfcn.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,10 +21,13 @@
 #define BML_NATIVE_RUNTIME_VERSION "0.1.0"
 #define BML_DEFAULT_RUNTIME_STRATEGY "installed-binary-hook"
 #define BML_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runtime-load-report.json"
+#define BML_SYMBOL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/symbol-probe-report.json"
+#define BML_STASH_HOOK_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-hook-report.json"
 #define BML_REPORT_DIR_RELATIVE_PATH "BaronyModLoader/reports"
-#define BML_MAX_ERRORS 8
+#define BML_MAX_ERRORS 12
 #define BML_MAX_TEXT 256
 #define BML_MAX_MANIFEST_BYTES (1024U * 1024U)
+#define BML_MAX_REQUIRED_SYMBOLS 32
 
 typedef struct BmlError {
     const char *code;
@@ -44,8 +50,73 @@ typedef struct BmlReportInfo {
     char stash_version[BML_MAX_TEXT];
 } BmlReportInfo;
 
+typedef struct BmlRequiredSymbol {
+    const char *logical_name;
+    const char *symbol;
+    const char *kind;
+} BmlRequiredSymbol;
+
+typedef struct BmlSymbolProbeResult {
+    const BmlRequiredSymbol *required;
+    void *address;
+    bool resolved;
+} BmlSymbolProbeResult;
+
+typedef struct BmlSymbolProbe {
+    size_t required_count;
+    size_t resolved_count;
+    size_t missing_count;
+    BmlSymbolProbeResult results[BML_MAX_REQUIRED_SYMBOLS];
+} BmlSymbolProbe;
+
+typedef struct BmlStashHookIntent {
+    const char *id;
+    const char *description;
+} BmlStashHookIntent;
+
 static int g_bml_initialized = 0;
 static int g_bml_init_result = 1;
+
+static const BmlRequiredSymbol BML_REQUIRED_SYMBOLS[] = {
+    {"actChest", "_Z8actChestP6Entity", "function"},
+    {"actChestLid", "_Z11actChestLidP6Entity", "function"},
+    {"Entity::getChestInventoryList", "_ZN6Entity21getChestInventoryListEv", "function"},
+    {"Entity::addItemToChest", "_ZN6Entity14addItemToChestEP4ItembS1_", "function"},
+    {"Entity::getItemFromChest", "_ZN6Entity16getItemFromChestEP4Itemib", "function"},
+    {"Entity::addItemToVoidChestServer", "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_", "function"},
+    {"Entity::removeItemFromVoidChestServer", "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi", "function"},
+    {"Entity::closeChest", "_ZN6Entity10closeChestEv", "function"},
+    {"Entity::closeChestServer", "_ZN6Entity16closeChestServerEv", "function"},
+    {"generateDungeon", "_Z15generateDungeonPcjSt5tupleIJiiiiEE", "function"},
+    {"assignActions", "_Z13assignActionsP5map_t", "function"},
+    {"newEntity", "_Z9newEntityijP6list_tS0_", "function"},
+    {"setSpriteAttributes", "_Z19setSpriteAttributesP6EntityS0_S0_", "function"},
+    {"newItem", "_Z7newItem8ItemType6StatusssjbP6list_t", "function"},
+    {"list_FreeAll", "_Z12list_FreeAllP6list_t", "function"},
+    {"list_RemoveNode", "_Z15list_RemoveNodeP6node_t", "function"},
+    {"list_AddNodeLast", "_Z16list_AddNodeLastP6list_t", "function"},
+    {"list_AddNodeFirst", "_Z17list_AddNodeFirstP6list_t", "function"},
+    {"stats", "stats", "data"},
+    {"map", "map", "data"},
+    {"map_rng", "map_rng", "data"},
+    {"map_server_rng", "map_server_rng", "data"},
+    {"multiplayer", "multiplayer", "data"},
+    {"clientnum", "clientnum", "data"},
+    {"openedChest", "openedChest", "data"},
+    {"shoparea", "shoparea", "data"},
+    {"TileEntityList", "TileEntityList", "data"}
+};
+
+_Static_assert((sizeof(BML_REQUIRED_SYMBOLS) / sizeof(BML_REQUIRED_SYMBOLS[0])) <= BML_MAX_REQUIRED_SYMBOLS, "BML symbol probe result capacity is too small");
+
+static const BmlStashHookIntent BML_STASH_HOOK_INTENTIONS[] = {
+    {"persistent_inventory", "Persist Stash inventory entries outside the vanilla run-scoped chest lifetime."},
+    {"void_chest_binding", "Bind Stash storage to Barony void chest inventory entry points without relying on unsafe ABI offsets."},
+    {"close_save_flush", "Flush Stash state when chest close paths complete successfully."},
+    {"placement_lobby", "Place the Stash interaction point in eligible lobby contexts."},
+    {"placement_shop", "Place the Stash interaction point in eligible shop contexts."},
+    {"multiplayer_metadata", "Expose multiplayer version/capability metadata before any shared Stash state is accepted."}
+};
 
 static void bml_copy_string(char *dst, size_t dst_size, const char *src) {
     if (dst_size == 0U) {
@@ -385,6 +456,177 @@ static void bml_write_reported_at(FILE *file) {
     bml_json_write_escaped(file, timestamp);
 }
 
+static void bml_write_runtime_identity(FILE *file, const BmlReportInfo *info) {
+    fputs("\"runtime\": {\n    \"id\": ", file);
+    bml_json_write_escaped(file, info->runtime_id);
+    fputs(",\n    \"version\": ", file);
+    bml_json_write_escaped(file, info->runtime_version);
+    fputs(",\n    \"strategy\": ", file);
+    bml_json_write_escaped(file, info->runtime_strategy);
+    fputs(",\n    \"gameRevision\": ", file);
+    bml_json_write_escaped(file, info->game_revision);
+    fputs(",\n    \"executable\": ", file);
+    bml_json_write_escaped(file, info->executable);
+    fputs("\n  }", file);
+}
+
+static void bml_probe_required_symbols(BmlSymbolProbe *probe) {
+    memset(probe, 0, sizeof(*probe));
+    probe->required_count = sizeof(BML_REQUIRED_SYMBOLS) / sizeof(BML_REQUIRED_SYMBOLS[0]);
+
+    for (size_t index = 0U; index < probe->required_count; ++index) {
+        BmlSymbolProbeResult *result = &probe->results[index];
+        result->required = &BML_REQUIRED_SYMBOLS[index];
+        (void)dlerror();
+        result->address = dlsym(RTLD_DEFAULT, result->required->symbol);
+        result->resolved = result->address != NULL && dlerror() == NULL;
+        if (result->resolved) {
+            probe->resolved_count += 1U;
+        } else {
+            probe->missing_count += 1U;
+        }
+    }
+}
+
+static void bml_write_address_or_null(FILE *file, const void *address) {
+    char address_text[2U + sizeof(uintptr_t) * 2U + 1U];
+    if (address == NULL) {
+        fputs("null", file);
+        return;
+    }
+    snprintf(address_text, sizeof(address_text), "0x%" PRIxPTR, (uintptr_t)address);
+    bml_json_write_escaped(file, address_text);
+}
+
+static int bml_write_symbol_probe_report(const char *report_path, const BmlReportInfo *info, const BmlSymbolProbe *probe) {
+    FILE *file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  ", file);
+    bml_write_runtime_identity(file, info);
+    fputs(",\n  \"profileId\": ", file);
+    bml_json_write_escaped(file, info->profile_id);
+    fputs(",\n  \"status\": ", file);
+    bml_json_write_escaped(file, probe->missing_count == 0U ? "loaded" : "failed");
+    fprintf(file, ",\n  \"summary\": {\n    \"required\": %zu,\n    \"resolved\": %zu,\n    \"missing\": %zu\n  },\n  \"symbols\": [", probe->required_count, probe->resolved_count, probe->missing_count);
+    for (size_t index = 0U; index < probe->required_count; ++index) {
+        const BmlSymbolProbeResult *result = &probe->results[index];
+        if (index == 0U) {
+            fputs("\n    ", file);
+        } else {
+            fputs(",\n    ", file);
+        }
+        fputs("{\"name\": ", file);
+        bml_json_write_escaped(file, result->required->logical_name);
+        fputs(", \"symbol\": ", file);
+        bml_json_write_escaped(file, result->required->symbol);
+        fputs(", \"kind\": ", file);
+        bml_json_write_escaped(file, result->required->kind);
+        fputs(", \"required\": true, \"status\": ", file);
+        bml_json_write_escaped(file, result->resolved ? "resolved" : "missing");
+        fputs(", \"address\": ", file);
+        bml_write_address_or_null(file, result->address);
+        fputc('}', file);
+    }
+    if (probe->required_count > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"errors\": [", file);
+    size_t written_errors = 0U;
+    for (size_t index = 0U; index < probe->required_count; ++index) {
+        const BmlSymbolProbeResult *result = &probe->results[index];
+        if (result->resolved) {
+            continue;
+        }
+        if (written_errors == 0U) {
+            fputs("\n    ", file);
+        } else {
+            fputs(",\n    ", file);
+        }
+        fputs("{\"code\": \"BML_HOOK_SYMBOL_MISSING\", \"severity\": \"fatal\", \"symbol\": ", file);
+        bml_json_write_escaped(file, result->required->symbol);
+        fputs(", \"message\": ", file);
+        bml_json_write_escaped(file, "Required Barony target symbol was not visible through dlsym(RTLD_DEFAULT).");
+        fputc('}', file);
+        written_errors += 1U;
+    }
+    if (written_errors > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static bool bml_stash_hooks_installed(void) {
+    return false;
+}
+
+static int bml_write_stash_hook_report(const char *report_path, const BmlReportInfo *info, bool hooks_installed) {
+    const size_t hook_count = sizeof(BML_STASH_HOOK_INTENTIONS) / sizeof(BML_STASH_HOOK_INTENTIONS[0]);
+    FILE *file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  ", file);
+    bml_write_runtime_identity(file, info);
+    fputs(",\n  \"profileId\": ", file);
+    bml_json_write_escaped(file, info->profile_id);
+    fputs(",\n  \"mod\": {\n    \"id\": \"jml.stash\",\n    \"version\": ", file);
+    bml_json_write_escaped(file, info->stash_version);
+    fputs(",\n    \"manifestDetected\": ", file);
+    fputs(info->has_stash ? "true" : "false", file);
+    fputs("\n  },\n  \"status\": ", file);
+    bml_json_write_escaped(file, info->has_stash ? (hooks_installed ? "installed" : "failed") : "not_applicable");
+    fprintf(file, ",\n  \"summary\": {\n    \"required\": %zu,\n    \"installed\": %zu,\n    \"notInstalled\": %zu,\n    \"failClosed\": %s\n  },\n  \"hooks\": [",
+            info->has_stash ? hook_count : 0U,
+            hooks_installed && info->has_stash ? hook_count : 0U,
+            !hooks_installed && info->has_stash ? hook_count : 0U,
+            !hooks_installed && info->has_stash ? "true" : "false");
+    for (size_t index = 0U; index < hook_count; ++index) {
+        const BmlStashHookIntent *intent = &BML_STASH_HOOK_INTENTIONS[index];
+        if (index == 0U) {
+            fputs("\n    ", file);
+        } else {
+            fputs(",\n    ", file);
+        }
+        fputs("{\"id\": ", file);
+        bml_json_write_escaped(file, intent->id);
+        fputs(", \"required\": ", file);
+        fputs(info->has_stash ? "true" : "false", file);
+        fputs(", \"status\": ", file);
+        bml_json_write_escaped(file, hooks_installed && info->has_stash ? "installed" : "not-installed");
+        fputs(", \"description\": ", file);
+        bml_json_write_escaped(file, intent->description);
+        fputc('}', file);
+    }
+    if (hook_count > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"errors\": [", file);
+    if (info->has_stash && !hooks_installed) {
+        fputs("\n    {\"code\": \"BML_STASH_HOOKS_NOT_INSTALLED\", \"severity\": \"fatal\", \"message\": ", file);
+        bml_json_write_escaped(file, "Required Stash gameplay hooks are not installed; Stash is intentionally failed closed.");
+        fputs("}\n  ", file);
+    }
+    fputs("],\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static void bml_write_error(FILE *file, const BmlError *error) {
     fputs("{\n        \"code\": ", file);
     bml_json_write_escaped(file, error->code);
@@ -472,8 +714,12 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     BmlError errors[BML_MAX_ERRORS];
     size_t error_count = 0U;
     BmlReportInfo info;
+    BmlSymbolProbe symbol_probe;
+    bool stash_hooks_installed;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
+    char symbol_report_path[PATH_MAX];
+    char stash_hook_report_path[PATH_MAX];
     char *runtime_json = NULL;
 
     if (g_bml_initialized != 0) {
@@ -510,13 +756,28 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     }
 
     if (bml_join_path(report_dir, sizeof(report_dir), profile_dir, BML_REPORT_DIR_RELATIVE_PATH) != 0 ||
-        bml_join_path(report_path, sizeof(report_path), profile_dir, BML_REPORT_RELATIVE_PATH) != 0) {
+        bml_join_path(report_path, sizeof(report_path), profile_dir, BML_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(symbol_report_path, sizeof(symbol_report_path), profile_dir, BML_SYMBOL_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(stash_hook_report_path, sizeof(stash_hook_report_path), profile_dir, BML_STASH_HOOK_REPORT_RELATIVE_PATH) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
         return g_bml_init_result;
     }
 
-    if (bml_mkdir_p(report_dir) != 0 || bml_write_report(report_path, &info, errors, error_count) != 0) {
+    bml_probe_required_symbols(&symbol_probe);
+    if (symbol_probe.missing_count > 0U) {
+        bml_add_error(errors, &error_count, "BML_HOOK_SYMBOL_MISSING", "One or more required Barony symbols could not be resolved with dlsym(RTLD_DEFAULT).", NULL, NULL);
+    }
+
+    stash_hooks_installed = bml_stash_hooks_installed();
+    if (info.has_stash && !stash_hooks_installed) {
+        bml_add_error(errors, &error_count, "BML_STASH_HOOKS_NOT_INSTALLED", "Required Stash gameplay hooks are not installed; Stash is intentionally failed closed.", NULL, NULL);
+    }
+
+    if (bml_mkdir_p(report_dir) != 0 ||
+        bml_write_symbol_probe_report(symbol_report_path, &info, &symbol_probe) != 0 ||
+        bml_write_stash_hook_report(stash_hook_report_path, &info, stash_hooks_installed) != 0 ||
+        bml_write_report(report_path, &info, errors, error_count) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
         return g_bml_init_result;

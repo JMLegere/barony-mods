@@ -57,31 +57,36 @@ commit: 962a5ce36d10207beef7d8673876e0cebf8e76e4
 
 ## Source-assisted hook feasibility
 
-The current Steam executable exports symbols that line up with the source-level concepts needed for Stash. `nm -C barony.x86_64` / `nm -D -C barony.x86_64` show, among others:
+The current Steam executable exports the symbols needed for the safe symbol/provenance probe and the future Stash hook targets. `nm -D -C barony.x86_64` and `nm -D barony.x86_64` verify, among others:
 
 ```text
-0000000000587010 T actChest(Entity*)
-0000000000583de0 T actChestLid(Entity*)
-00000000002eb0d0 T generateDungeon(char*, unsigned int, std::tuple<int, int, int, int>)
-000000000035cd60 T loadMap(char const*, map_t*, list_t*, list_t*, int*)
-0000000000627e40 T setSpriteAttributes(Entity*, Entity*, Entity*)
-00000000003483e0 T newEntity(int, unsigned int, list_t*, list_t*)
-0000000000348a80 T list_AddNodeFirst(list_t*)
-0000000000348b00 T list_AddNodeLast(list_t*)
-00000000003494d0 T list_FreeAll(list_t*)
-0000000000584cd0 T Entity::getChestInventoryList()
-0000000000584420 T Entity::addItemToChest(Item*, bool, Item*)
-0000000000584990 T Entity::getItemFromChest(Item*, int, bool)
-00000000005856d0 T Entity::removeItemFromVoidChestServer(int, Item*, int)
-0000000000d37ce0 B map
-0000000000d3bec0 B map_rng
-0000000000d3bca0 B map_server_rng
-0000000000d3897c B multiplayer
-0000000000d38980 B clientnum
-00000000011b87c0 B openedChest
-0000000000d37ca0 B shoparea
-0000000000e6b400 B stats
-0000000000d69b00 B TileEntityList
+_Z8actChestP6Entity                                   actChest(Entity*)
+_Z11actChestLidP6Entity                               actChestLid(Entity*)
+_ZN6Entity21getChestInventoryListEv                   Entity::getChestInventoryList()
+_ZN6Entity14addItemToChestEP4ItembS1_                 Entity::addItemToChest(Item*, bool, Item*)
+_ZN6Entity16getItemFromChestEP4Itemib                 Entity::getItemFromChest(Item*, int, bool)
+_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_      Entity::addItemToVoidChestServer(int, Item*, bool, Item*)
+_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi    Entity::removeItemFromVoidChestServer(int, Item*, int)
+_ZN6Entity10closeChestEv                              Entity::closeChest()
+_ZN6Entity16closeChestServerEv                        Entity::closeChestServer()
+_Z15generateDungeonPcjSt5tupleIJiiiiEE                generateDungeon(char*, unsigned int, std::tuple<int, int, int, int>)
+_Z13assignActionsP5map_t                              assignActions(map_t*)
+_Z9newEntityijP6list_tS0_                             newEntity(int, unsigned int, list_t*, list_t*)
+_Z19setSpriteAttributesP6EntityS0_S0_                 setSpriteAttributes(Entity*, Entity*, Entity*)
+_Z7newItem8ItemType6StatusssjbP6list_t                newItem(ItemType, Status, short, short, unsigned int, bool, list_t*)
+_Z12list_FreeAllP6list_t                              list_FreeAll(list_t*)
+_Z15list_RemoveNodeP6node_t                           list_RemoveNode(node_t*)
+_Z16list_AddNodeLastP6list_t                          list_AddNodeLast(list_t*)
+_Z17list_AddNodeFirstP6list_t                         list_AddNodeFirst(list_t*)
+stats
+map
+map_rng
+map_server_rng
+multiplayer
+clientnum
+openedChest
+shoparea
+TileEntityList
 ```
 
 Interpretation:
@@ -90,6 +95,10 @@ Interpretation:
 - The installed Steam executable is not stripped, so BML can potentially resolve/call symbols from the actual installed binary.
 - `LD_PRELOAD` can load a BML bootstrap library into the process, but internal game calls may not be fully interposable by symbol name alone. For reliable gameplay hooks, expect a detour/trampoline layer or a symbol-address based hook library.
 - Because the executable is PIE, absolute addresses from `nm` must be relocated by the runtime base address.
+
+Option A is now the implemented guardrail: the hook manifest pins Steam app `371970`, build `22630456`, game `v5.0.2`, executable SHA-256 `da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade`, ELF build id `58089d84bce3afb48d5b19df032f7aa89d81b69a`, and a required symbol target list. The native hook resolves those targets in-process and writes `<profile>/BaronyModLoader/reports/symbol-probe-report.json`.
+
+Option C is the current Stash safety boundary: required gameplay hooks are represented as `hookTargets` tied to Stash capabilities, but their install status is fail-closed until a relocation-safe detour/trampoline layer exists. The hook writes `<profile>/BaronyModLoader/reports/stash-hook-report.json`; unresolved symbols or uninstalled required hook targets must prevent `runtime-load-report.json` from claiming Stash loaded.
 
 ## Mod-loader parallels
 
@@ -147,11 +156,11 @@ Cons:
 
 The source-build path should be ignored for the main v1 plan. BML should be an installed PC executable mod loader: a standalone app that detects a supported PC install, verifies executable provenance, launches the installed game through a BML-owned hook/bootstrap library, and fails closed on unsupported builds.
 
-The next implementation should not revive `/tmp/barony-src` as a runtime build. Instead:
+Current v1 work should not revive `/tmp/barony-src` as a runtime build. Instead:
 
-1. Add app-side runtime strategy metadata and guardrails for installed PC executables.
-2. Create a minimal `native/barony-modloader-hook/` no-op preload library for the first Steam/Linux target.
-3. Prove the installed Steam executable launches with the hook loaded and writes a runtime-load-report.
-4. Add provenance checks: storefront id/build id where available, executable SHA-256, ELF/Mach-O/PE build identity, and game version string.
-5. Build a symbol map for Steam/Linux build `22630456`.
-6. Only then port Stash hooks into the installed-binary hook runtime.
+1. Keep app-side runtime strategy metadata and guardrails oriented around installed PC executables.
+2. Keep `native/barony-modloader-hook/` as the first Steam/Linux installed-binary hook runtime.
+3. Treat `runtime-load-report.json` as the launch admission report, not proof of gameplay behavior.
+4. Treat `symbol-probe-report.json` as proof that required installed-binary symbols resolved in the loaded process.
+5. Treat Stash `hookTargets` and `stash-hook-report.json` as fail-closed gameplay hook scaffolding until relocation-safe detours exist.
+6. Use `native/barony-modloader-runtime/patches/` only as source-level semantic reference while porting Stash behavior into the installed-binary hook runtime.

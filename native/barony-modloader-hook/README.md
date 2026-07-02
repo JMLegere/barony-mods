@@ -8,8 +8,10 @@ Current state:
 
 - `src/bml_hook.c` builds a Linux ELF shared object with a constructor and exported `bml_hook_init` symbol.
 - `build/libbarony_bml.so` is produced by the local `Makefile`.
-- `manifests/steam-371970-22630456-linux.json` pins the local verified Steam/Linux Barony executable identity consumed as `BML_HOOK_MANIFEST`.
-- The hook only validates launch inputs and writes `BaronyModLoader/reports/runtime-load-report.json` under `BML_PROFILE_DIR`.
+- `manifests/steam-371970-22630456-linux.json` pins the local verified Steam/Linux Barony executable identity, required symbol probe targets, and fail-closed Stash hook targets consumed as `BML_HOOK_MANIFEST`.
+- The hook validates launch inputs and writes `BaronyModLoader/reports/runtime-load-report.json` under `BML_PROFILE_DIR`; executable provenance is still enforced by the app/runtime registry before launch.
+- The hook resolves required installed-binary symbols with `dlsym(RTLD_DEFAULT, mangledSymbol)` and writes `BaronyModLoader/reports/symbol-probe-report.json`.
+- Stash gameplay hooks are enumerated as required hook targets, but they remain fail-closed and write `BaronyModLoader/reports/stash-hook-report.json` until a relocation-safe detour/trampoline layer exists.
 
 Build and test:
 
@@ -18,7 +20,7 @@ make -C native/barony-modloader-hook clean all
 make -C native/barony-modloader-hook test
 ```
 
-The test target builds `build/libbarony_bml.so`, creates a temporary profile/runtime manifest, preloads the library into `/usr/bin/true`, and validates the JSON runtime-load report with Python. It does not launch Barony.
+The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates a temporary profile/runtime manifest, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, and Stash hook reports with Python. It does not launch Barony or prove gameplay behavior.
 
 Manual smoke shape:
 
@@ -33,6 +35,6 @@ LD_PRELOAD=/path/to/native/barony-modloader-hook/build/libbarony_bml.so \
 
 Current non-goals:
 
-- Do not patch Barony symbols, resolve gameplay addresses, mutate gameplay state, or implement Stash behavior in this slice.
+- Do not patch Barony prologues, install detours, mutate gameplay state, or claim Stash behavior in this slice.
 - Do not treat `native/barony-modloader-runtime/patches/` as the runtime path. Those source-fork patches are semantic reference only.
 - Do not claim Windows or macOS native injection support yet.

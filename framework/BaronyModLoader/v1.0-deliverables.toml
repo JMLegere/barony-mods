@@ -45,34 +45,41 @@ evidence = [
 ]
 
 [[deliverables]]
-id = "p3_noop_hook_bootstrap"
-status = "planned"
-summary = "BML-owned hook/bootstrap library loads in the installed Steam/Linux executable, validates provenance, and writes canonical reports without gameplay hooks."
+id = "p3_symbol_probe_fail_closed_hook_gate"
+status = "implemented_symbol_probe_fail_closed_hook_gate"
+summary = "BML-owned Linux hook/bootstrap library validates installed Steam/Linux provenance, probes required Barony symbols, writes canonical reports, and fails closed for required Stash gameplay hooks that are not yet installed."
 required_artifacts = [
   "native/barony-modloader-hook/",
   "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+  "framework/BaronyModLoader/fixtures/hook-manifest.stash-v1.json",
   "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
+  "framework/BaronyModLoader/schema/runtime-load-report.schema.json",
+  "framework/BaronyModLoader/schema/symbol-probe-report.schema.json",
+  "framework/BaronyModLoader/schema/stash-hook-report.schema.json",
 ]
 evidence = [
   "BML launcher dry-run executes the installed Steam executable, not a source-built sidecar",
   "dry-run environment includes BML_RUNTIME_MANIFEST, BML_PROFILE_DIR, SteamAppId, SteamGameId, LD_LIBRARY_PATH, and hook preload configuration",
-  "no-op Linux hook writes BaronyModLoader/reports/runtime-load-report.json using the canonical schema",
-  "mismatched executable provenance fails closed before gameplay hooks install",
+  "Linux hook writes BaronyModLoader/reports/runtime-load-report.json using the canonical schema",
+  "Linux hook writes BaronyModLoader/reports/symbol-probe-report.json after resolving required dlsym(RTLD_DEFAULT, mangledSymbol) targets for Steam app 371970 build 22630456",
+  "Linux hook writes BaronyModLoader/reports/stash-hook-report.json with required Stash hook targets not-installed and failClosed=true until relocation-safe detours exist",
+  "mismatched executable provenance, missing required symbols, or uninstalled required Stash hook targets fail closed before runtime-load-report can claim Stash loaded",
 ]
 
 [[deliverables]]
 id = "p4_stash_hook_behavior"
-status = "verification-plan-ready_pending-installed-hook"
-summary = "Installed-executable hook runtime implements Stash behavior: persistent Void Chest inventory, spell/lobby/shop access, and save/multiplayer metadata."
+status = "pending_playable_stash_behavior"
+summary = "Playable Stash behavior remains pending: persistent Void Chest inventory, spell/lobby/shop access, and save/multiplayer metadata still require relocation-safe installed-executable gameplay hooks and focused in-game verification."
 required_artifacts = [
   "native/barony-modloader-runtime/stash-source-map.toml",
   "native/barony-modloader-runtime/stash-verification-plan.toml",
   "native/barony-modloader-hook/",
 ]
 evidence = [
-  "source map is used as semantic reference for Void Chest inventory, spell chest creation, lobby assist area, shop generation, and save/load hooks",
+  "source map is semantic reference only for Void Chest inventory, spell chest creation, lobby assist area, shop generation, and save/load hooks",
   "verification plan covers runtime manifest acceptance, persistence across death/new-run/relaunch, save/resume no-fork/no-duplicate behavior, lobby/shop placement, spell inventory binding, multiplayer mismatch rejection, and disabled behavior",
-  "playable verification remains pending until the installed game executable plus hook runtime runs the focused Stash scenarios and captures the named evidence artifacts",
+  "playable Stash verification remains pending until relocation-safe installed-executable hooks run the focused scenarios and capture the named evidence artifacts",
+  "no deliverable evidence currently claims a working purple chest, persistent stash, lobby placement, shop placement, spell binding, or multiplayer behavior in-game",
 ]
 
 [[deliverables]]
