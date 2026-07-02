@@ -430,17 +430,18 @@ diff --git a/src/game.cpp b/src/game.cpp
  #include "ui/Frame.hpp"
  #include "ui/Field.hpp"
  #include "input.hpp"
-@@ -7182,6 +7184,9 @@
+@@ -7182,6 +7184,10 @@
  		//Mix_Music **music, *intromusic, *splashmusic, *creditsmusic;
  		node_t* node;
  		Entity* entity;
 +		bool bmlRuntimeInfoRequested = false;
 +		std::string bmlRuntimeInfoPath;
 +		std::string bmlRuntimeManifestPath;
++		std::string bmlProfileRootPath;
  		//SDL_Surface *sky_bmp;
  		light_t* light;
  
-@@ -7266,6 +7271,28 @@
+@@ -7266,6 +7271,41 @@
  						strncpy(datadir, argv[c] + 9, datadirsz);
  						datadir[datadirsz] = '\0';
  					}
@@ -466,6 +467,19 @@ diff --git a/src/game.cpp b/src/game.cpp
 +					{
 +						bmlRuntimeManifestPath = argv[c] + 23;
 +					}
++					else if (!strcmp(argv[c], "--bml-profile-root"))
++					{
++						if (c + 1 >= argc || argv[c + 1] == nullptr || argv[c + 1][0] == '\0')
++						{
++							fprintf(stderr, "BaronyModLoader: --bml-profile-root requires a path.\n");
++							return 1;
++						}
++						bmlProfileRootPath = argv[++c];
++					}
++					else if (!strncmp(argv[c], "--bml-profile-root=", 19))
++					{
++						bmlProfileRootPath = argv[c] + 19;
++					}
  					else if ( !strcmp(argv[c], "-nosound") )
  					{
  						no_sound = true;
@@ -490,7 +504,7 @@ diff --git a/src/game.cpp b/src/game.cpp
 +
 +		if (!bmlRuntimeManifestPath.empty())
 +		{
-+			const BaronyModLoader::RuntimeManifestLoadResult bmlRuntimeManifestResult = BaronyModLoader::loadRuntimeManifest(bmlRuntimeManifestPath, outputdir);
++			const BaronyModLoader::RuntimeManifestLoadResult bmlRuntimeManifestResult = BaronyModLoader::loadRuntimeManifest(bmlRuntimeManifestPath, bmlProfileRootPath.empty() ? outputdir : bmlProfileRootPath);
 +			if (!bmlRuntimeManifestResult.loaded)
 +			{
 +				fprintf(stderr, "BaronyModLoader: runtime manifest failed: %s (%s). Report: %s\n",
