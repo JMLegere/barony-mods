@@ -144,7 +144,7 @@ Content entries are declarative mounts. They do not grant native runtime capabil
 
 ## Engine capabilities
 
-Capabilities are the safe vocabulary shared by the app, package, and engine runtime. A package requests capabilities; the app checks whether the selected Barony runtime can provide them; the engine runtime confirms what actually loaded.
+Capabilities are the safe vocabulary shared by the app, package, and BML hook/runtime. A package requests capabilities; the app checks whether the selected installed-executable hook runtime can provide them; the hook/runtime confirms what actually loaded.
 
 ```json
 {
@@ -222,39 +222,39 @@ Module descriptors must be data-only. They are interpreted by engine-owned code 
 
 ## Native requirements
 
-Native requirements describe the paired engine runtime needed to support declared capabilities. They are not dynamic plugins, and they must resolve to a source patch or reproducible build path that a maintainer can inspect.
+Native requirements describe the BML-owned installed-executable hook/runtime support needed to execute declared capabilities. They are not dynamic plugins, and a Stash package must not ship arbitrary native code into the game process.
 
 ```json
 {
   "native": {
     "required": true,
-    "mode": "paired-engine-runtime",
-    "patches": [
+    "mode": "installed-binary-hook",
+    "plugins": [],
+    "hookRequirements": {
+      "owner": "BaronyModLoader",
+      "runtimeContract": "bml-runtime-contract@0.1.0",
+      "requiresInstalledExecutable": true,
+      "mutatesExecutableOnDisk": false,
+      "supportedStores": [
+        { "store": "steam", "platforms": ["windows", "macos", "linux"] },
+        { "store": "epic", "platforms": ["windows", "macos"] },
+        { "store": "gog", "platforms": ["windows", "macos", "linux"] },
+        { "store": "humble", "platforms": ["windows", "macos", "linux"] }
+      ],
+      "providesCapabilities": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop",
+        "multiplayer_version_metadata"
+      ]
+    },
+    "sourceReferences": [
       {
-        "id": "bml-runtime-handshake",
-        "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "upstream-or-release-git-sha",
-        "path": "native/patches/0001-bml-runtime-handshake.patch",
-        "sourceMap": "native/source-map.toml",
-        "required": true,
-        "providesCapabilities": [
-          "persistent_storage",
-          "persistent_inventory",
-          "void_chest_binding",
-          "placement_lobby",
-          "placement_shop",
-          "multiplayer_version_metadata"
-        ]
-      }
-    ],
-    "builds": [
-      {
-        "platform": "linux-x86_64",
-        "baronyRevision": "git-sha",
-        "runtimeVersion": "0.1.0",
-        "reproducible": true,
-        "buildRecipe": "native/build/build.json",
-        "artifact": "native/release/linux-x86_64/barony"
+        "id": "stash-source-map",
+        "path": "native/barony-modloader-runtime/stash-source-map.toml",
+        "runtimeAuthority": false
       }
     ]
   }
@@ -263,10 +263,11 @@ Native requirements describe the paired engine runtime needed to support declare
 
 Rules:
 
-- Native code must be represented as source patches and/or reproducible build metadata; a package must not rely on an unexplained binary fork.
-- The patch descriptor's `providesCapabilities` list must use only canonical engine capability ids. For the Stash v0 surface those ids are `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
-- A package may point to a reviewed runtime patch supplied by the framework instead of embedding a custom patch.
-- The app should prefer known framework runtime builds over per-mod forks.
+- Native gameplay behavior must be implemented by reviewed BML-owned hook/runtime code, not by arbitrary per-mod native plugins.
+- The installed game executable must not be modified on disk.
+- Runtime support must fail closed unless the installed executable, hook library, hook manifest, and symbol map match a supported PC build.
+- Source patch artifacts may be retained as semantic references, but they are not runtime strategies and must not be used to claim Steam-current or storefront-current compatibility.
+- The package descriptor's capability list must use only canonical engine capability ids. For the Stash v0 surface those ids are `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
 - If a mod needs a new engine hook, the package should declare the missing capability and fail cleanly until the framework/runtime supports it.
 
 ## Dependencies and conflicts
@@ -467,7 +468,7 @@ The app should not mutate packages during activation. It writes a profile-specif
 <profile>/BaronyModLoader/logs/app-validation.log
 ```
 
-The package remains immutable. The activation record captures selected versions, load order, resolved capabilities, checksum results, and the runtime executable selected for launch.
+The package remains immutable. The activation record captures selected versions, load order, resolved capabilities, checksum results, and the installed-executable hook runtime selected for launch.
 
 ## Validation stages
 
@@ -507,7 +508,7 @@ The Stash package should be small despite the full model:
 - no plugin binary;
 - only the Stash-needed modules;
 - explicit dependency on `bml.runtime` with the six required capabilities;
-- clear source/build metadata pointing at the framework runtime patch;
+- clear installed-executable hook/runtime metadata pointing at BML-owned hook support;
 - persistent storage and migration metadata for `void_chest_inventory`.
 
 This keeps the first implementation focused while ensuring the package can live inside a real standalone BaronyModLoader ecosystem.

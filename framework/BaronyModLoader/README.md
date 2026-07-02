@@ -46,27 +46,30 @@ BaronyModLoader should be designed as a real standalone framework from the begin
 
 This is not a rejection of a larger future SDK. It is a sequencing rule: BaronyModLoader should have the architecture of a full framework while implementing only the concrete modules Stash needs first.
 
-## Steam compatibility stance
+## PC storefront compatibility stance
 
-BaronyModLoader should work with the Steam version of Barony, but not by blindly binary-patching the stock Steam executable. The intended clean path is:
+BaronyModLoader should work with installed PC copies of Barony, not with an opaque source fork and not by modifying the retail executable on disk. The v1 product target is:
 
-1. Detect the installed Steam copy of Barony and record its app id, build id, install path, executable, and asset root.
-2. Use the Steam install as the owned game/data/assets source.
-3. Select or build a matching BaronyModLoader-enabled runtime executable for that Steam build.
-4. Launch that framework-enabled runtime against the Steam install/profile metadata.
+| Storefront | PC platforms in scope |
+| --- | --- |
+| Steam | Windows, macOS, Linux |
+| Epic Games Store | Windows, macOS |
+| GOG / DRM-free | Windows, macOS, Linux |
+| Humble Bundle | Windows, macOS, Linux |
 
-The current CLI can detect Jeremy's Steam install (`appid 371970`, local build id `22630456`) and create a Steam-backed BML profile. Stock `barony.x86_64` is not considered patched or Stash-capable until a matching BML runtime executable is built/selected.
+Nintendo Switch is out of scope for this native PC mod-loader approach.
 
-This keeps the user experience aimed at the Steam version while avoiding the fragile route of modifying the retail binary in place.
+The first concrete implementation target is the local Steam/Linux executable because it is available for direct inspection (`appid 371970`, local build id `22630456`). The app/runtime contract should generalize to other PC storefronts by recording store/build/executable provenance and launching the installed game through a BML-owned hook/bootstrap library.
 
 ## Mod organization
 
-The repository separates framework code, native runtime patches, reusable templates, and actual mods:
+The repository separates framework code, native hook/bootstrap work, historical source-patch references, reusable templates, and actual mods:
 
 ```text
 framework/BaronyModLoader/   # standalone BML app, schemas, contracts, fixtures, scenarios, and architecture docs
+native/barony-modloader-hook/ # planned BML-owned installed-executable hook/bootstrap runtime
 native/barony-modloader-runtime/
-  patches/                   # reviewable Barony source patches for the BML-enabled runtime
+  patches/                   # historical/semantic Barony source patch references, not the v1 runtime path
 mods/
   stash/                     # source package for the Stash reference mod
 templates/mod/               # skeleton layout for future mods
@@ -104,107 +107,65 @@ mods/stash/
   content/                   # reserved for future Stash assets/data if needed
 ```
 
-The native behavior for Stash is not stored inside `mods/stash/content/`; it is implemented by the BML-enabled runtime patches in `native/barony-modloader-runtime/patches/` and activated only when the validated Stash package/profile/runtime manifest is loaded.
+The native behavior for Stash is not stored inside `mods/stash/content/`; it is implemented by the BML-owned hook/bootstrap runtime and activated only when the validated Stash package/profile/runtime manifest is loaded. The old `native/barony-modloader-runtime/patches/` files are retained as semantic references for hook design, not as the supported v1 runtime path.
 
 
 ## Executable CLI workflow
 
-The current app slice is a Python standard-library CLI. From the repository root, the expected local Steam commands are:
+The current app slice is a Python standard-library CLI. The existing commands can validate packages and detect the local Steam install:
 
 ```sh
 python framework/BaronyModLoader/app/barony_mod_loader.py version
 python framework/BaronyModLoader/app/barony_mod_loader.py steam detect
-python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-steam-profile --id steam-default --steam --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
-```
-
-For non-Steam or not-yet-built runtime paths, pass the executable explicitly:
-
-```sh
-python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --barony-executable /path/to/barony --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json
-```
-
-Then the package workflow is:
-
-```sh
-python framework/BaronyModLoader/app/barony_mod_loader.py package validate framework/BaronyModLoader/example-stash-package.json
 python framework/BaronyModLoader/app/barony_mod_loader.py package validate mods/stash
 python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out .tmp/Stash-0.1.0.bmlpkg
 python framework/BaronyModLoader/app/barony_mod_loader.py package install .tmp/Stash-0.1.0.bmlpkg --store .tmp/bml-package-store
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime validate framework/BaronyModLoader/fixtures/runtime-info.stash.json --package .tmp/bml-package-store/jml.stash/0.1.0
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime info framework/BaronyModLoader/fixtures/runtime-info.stash.json
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.loaded.json
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime report framework/BaronyModLoader/fixtures/runtime-load-report.failed.json
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime register --registry .tmp/bml-runtime-registry.json --id steam-371970-22630456-dev --executable /path/to/barony-bml.x86_64 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --steam-build-id 22630456
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime list --registry .tmp/bml-runtime-registry.json
-python framework/BaronyModLoader/app/barony_mod_loader.py runtime inspect steam-371970-22630456-dev --registry .tmp/bml-runtime-registry.json
+python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-steam-profile --id steam-default --steam
 python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-steam-profile --package .tmp/bml-package-store/jml.stash/0.1.0
-python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-steam-profile
-python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-steam-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-steam-profile/BaronyModLoader/runtime-manifest.json
-python framework/BaronyModLoader/app/barony_mod_loader.py launch .tmp/bml-steam-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --registry .tmp/bml-runtime-registry.json --runtime steam-371970-22630456-dev --dry-run -- --example-barony-arg
-python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-steam-profile --mod-id jml.stash
-python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-steam-profile
 ```
 
-`package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, registers BML runtime executables, writes runtime-manifest/active-mods artifacts, and can dry-run or execute a selected runtime command. It does not by itself verify a playable patched Barony runtime or Stash gameplay behavior until a real BML-enabled Barony executable is built and registered.
-
-## Runnable Stash smoke scenario
-
-After building the native BML-enabled Barony runtime, run the current Stash smoke scenario from the repository root:
+The next CLI slice should replace the old source-built runtime registration example with installed-executable hook registration:
 
 ```sh
-python framework/BaronyModLoader/scenarios/stash_smoke.py
+python framework/BaronyModLoader/app/barony_mod_loader.py runtime register \
+  --registry .tmp/bml-runtime-registry.json \
+  --id steam-linux-371970-22630456-hook-dev \
+  --runtime-strategy installed-binary-hook \
+  --steam-build-id 22630456 \
+  --steam-executable /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 \
+  --hook-library /path/to/libbarony_bml.so \
+  --hook-manifest native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json \
+  --runtime-info framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json
 ```
 
-If you open Barony directly from Steam, you are opening the stock Steam executable and Stash will not appear. Use this scenario, or the BML `launch` command it wraps, so the BML-enabled runtime is selected and the Stash manifest is loaded.
-
-
-By default it expects the development runtime files created by the native build workflow:
-
-```text
-/tmp/barony-bml-build/barony
-/tmp/barony-bml-build/runtime-info.json
-```
-
-The scenario:
-
-1. detects the local Steam Barony install;
-2. validates, packs, and installs `mods/stash`;
-3. registers the BML-enabled runtime for the detected Steam build;
-4. creates a temporary Steam-backed BML profile;
-5. enables the installed Stash package;
-6. launches the game with `-windowed -size=640x480 -nosound -quickstart=barbarian`;
-7. terminates the process after a short window;
-8. verifies `runtime-load-report.json` and `stash-diagnostics.jsonl`.
-
-On the current workstation, the scenario verifies the runtime loads and the lobby Stash access point is created by the actual Barony process. Use explicit paths when testing a different runtime build:
+Launch should then execute the installed game executable with BML hook environment rather than executing a source-built `barony-bml.x86_64` sidecar:
 
 ```sh
-python framework/BaronyModLoader/scenarios/stash_smoke.py \
-  --runtime-executable /path/to/barony \
-  --runtime-info /path/to/runtime-info.json
+python framework/BaronyModLoader/app/barony_mod_loader.py launch \
+  .tmp/bml-steam-profile \
+  --package .tmp/bml-package-store/jml.stash/0.1.0 \
+  --registry .tmp/bml-runtime-registry.json \
+  --runtime steam-linux-371970-22630456-hook-dev \
+  --dry-run \
+  -- --example-barony-arg
 ```
 
-The default display values are chosen for the current Linux desktop session (`DISPLAY=:1`, `WAYLAND_DISPLAY=wayland-1`). Override them when running elsewhere:
+`package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, writes runtime-manifest/active-mods artifacts, and should dry-run the installed-executable hook launch before any gameplay hooks are attempted.
 
-```sh
-python framework/BaronyModLoader/scenarios/stash_smoke.py --display :0 --wayland-display wayland-0
-```
+## Runnable verification scenarios
 
-For a visual/manual check, leave the launched game open:
+The Stash smoke scenario must be rebuilt around the installed PC executable hook path before it can prove gameplay behavior. Opening Barony directly from a storefront launcher starts the unmodified game without BML; Stash appears only when the BML app launches the installed executable with the hook/bootstrap runtime and a validated profile manifest.
 
-```sh
-python framework/BaronyModLoader/scenarios/stash_smoke.py --interactive
-```
+The intended staged verification sequence is:
 
-Close Barony when finished; the scenario will then verify the runtime report and diagnostics.
+1. **No-op hook load:** launch the installed Steam/Linux executable with `LD_PRELOAD=/path/to/libbarony_bml.so`, a BML profile, and a runtime manifest; verify a canonical `runtime-load-report.json` is written.
+2. **Provenance success/failure:** verify matching Steam build/executable hash/version succeeds and mismatched provenance fails closed before gameplay hooks install.
+3. **Symbol probe:** resolve a harmless symbol/global for Steam/Linux build `22630456` and write diagnostics without mutating gameplay state.
+4. **Lobby/shop placement:** verify Stash access points are created by the installed game process when Stash is active.
+5. **Inventory persistence:** verify the shared Void Chest inventory survives save/resume, death/new-run, and relaunch boundaries.
+6. **Disabled/mismatch behavior:** verify no Stash hooks activate when Stash is disabled and incompatible runtime/package metadata blocks clearly.
 
-
-The stricter assertions are available once those behaviors are driven by the scenario:
-
-```sh
-python framework/BaronyModLoader/scenarios/stash_smoke.py --expect-shop
-python framework/BaronyModLoader/scenarios/stash_smoke.py --expect-inventory-save
-```
+The previous `/tmp/barony-bml-build/barony` source-build smoke path is obsolete for v1 Steam-current support.
 
 
 ## Inspiration without premature scope
@@ -239,9 +200,10 @@ If Stash cannot be described as a package plus narrow framework modules, the fra
 
 BaronyModLoader's initial implementation should not include:
 
-- arbitrary native DLL/SO plugin loading;
+- arbitrary native DLL/SO plugin loading by third-party mods;
 - Lua, WASM, or another general scripting runtime;
-- binary patching of retail executables as the primary mod model;
+- source-built Barony runtimes as a supported v1 path;
+- binary patching of retail executables on disk;
 - a broad event bus across every engine subsystem;
 - hot reload before package validation and core runtime hooks are stable;
 - a public SDK larger than the module surface required by Stash;
@@ -253,4 +215,4 @@ These may be revisited later if real mods justify them. They are not required to
 
 - `vision.md` defines the product vision, user/modder value, prior-art influence, and phased scope.
 - `architecture.md` defines the system layers, app/runtime split, package/runtime contracts, first module set, and Stash reference flow.
-- `mvp-v1-long-term-plan.md` defines the long-term-aligned MVP plan for Stash and BaronyModLoader v1.0: Steam-backed runtime sidecar, app launcher, runtime registry, Stash modules, verification, and explicit post-v1 scope.
+- `mvp-v1-long-term-plan.md` defines the long-term-aligned MVP plan for Stash and BaronyModLoader v1.0: installed PC executable hook/bootstrap runtime, app launcher, runtime registry, Stash modules, verification, and explicit post-v1 scope.

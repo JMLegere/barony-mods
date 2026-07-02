@@ -1,10 +1,12 @@
-# BaronyModLoader runtime patch artifacts
+# BaronyModLoader source patch references
 
-This directory stores reviewable Barony source patch artifacts for the BaronyModLoader v1.0 runtime handshake and Stash runtime hooks. They are source patches kept in this repository for review; they have not been applied to `/tmp/barony-src` by this repo.
+This directory stores historical/semantic Barony source patch artifacts for the BaronyModLoader runtime handshake and Stash hook design. They are not the supported v1 runtime path. BML v1 targets installed PC executables through a BML-owned hook/bootstrap runtime.
 
-## Apply the patches
+## Use of these references
 
-From a clean Barony source checkout at the revision used for `/tmp/barony-src`:
+Use these patch artifacts to understand source-level intent: manifest loading, Void Chest inventory binding, persistent Stash state, lobby/shop placement, save metadata, and diagnostics. Do not apply them as the v1 runtime and do not treat a source-built Barony executable as storefront-current compatibility evidence.
+
+Historical application command, retained only for review/reference:
 
 ```sh
 git apply /path/to/barony-mods/native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch
@@ -19,9 +21,9 @@ The unified diff uses paths relative to the Barony source root:
 - `src/CMakeLists.txt`
 - `src/game.cpp`
 
-## What the patches add
+## What the patches demonstrated
 
-`0001-bml-runtime-handshake.patch` adds a small `BaronyModLoader` runtime helper and wires it into Barony startup before SDL initialization.
+`0001-bml-runtime-handshake.patch` demonstrated a small `BaronyModLoader` runtime helper and startup manifest validation flow in source form.
 
 The patched binary supports:
 

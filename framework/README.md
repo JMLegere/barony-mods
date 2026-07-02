@@ -70,20 +70,18 @@ The intended Stash behavior is:
 6. The host/server owns stash state in multiplayer and clients interact through the existing chest interaction flow where possible.
 7. The engine writes stash state at safe persistence boundaries, such as chest close and normal save/update points.
 
-This lets Stash remain a small mod package plus a narrow engine patch instead of a long-lived opaque fork.
+This lets Stash remain a small mod package plus a narrow BML-owned runtime capability set instead of a long-lived opaque fork.
 
 ## Source and distribution stance
 
-Primary engine source of truth:
-
-- upstream Barony: <https://github.com/TurningWheel/Barony>
-- working fork: <https://github.com/JMLegere/Barony>
+The public Barony source remains useful as semantic reference for function names, structs, lifecycle, and reviewable intent. It is not the v1 runtime authority unless it is proven to match a supported installed PC build, and that source-build path is intentionally out of scope for the current BML v1 plan.
 
 The preferred release shape is:
 
-- a small patch series against upstream Barony;
-- an optional reproducible build for supported platforms;
+- a standalone BaronyModLoader app for installed PC copies of Barony;
+- a BML-owned hook/bootstrap runtime for supported storefront/build/platform combinations;
+- versioned executable provenance, hook library checksums, and symbol maps;
 - optional Workshop/local content metadata for discovery, preview images, and install instructions;
-- versioned compatibility metadata so users know which Barony build the patch targets.
+- rollback instructions that return users to vanilla installed Barony without deleting storefront files.
 
-The framework should be written so it can be proposed upstream as a general modding capability with Stash as the concrete example, not as a one-off Stash-only branch.
+The framework should be written so its concepts can eventually be proposed upstream as general modding capabilities with Stash as the concrete example, but BML v1 should be judged against installed PC executable support.

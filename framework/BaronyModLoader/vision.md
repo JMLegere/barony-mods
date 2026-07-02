@@ -8,12 +8,12 @@ The project should be framed as a modding platform, not as a tiny engine hook pa
 
 ## Why a standalone app is necessary
 
-A source patch alone can make Stash work, but it does not solve the player or maintainer problem:
+An engine patch alone can make Stash work in one build, but it does not solve the player or maintainer problem:
 
-- players need to know which Barony install/build is being launched;
+- players need to know which installed PC Barony build is being launched;
 - different profiles may need different mod sets;
 - packages need dependency, conflict, and version checks before the game starts;
-- a framework-enabled build or patch must be selected, installed, updated, or rolled back;
+- a BML-owned hook/bootstrap runtime must be selected, installed, updated, or rolled back for the installed executable;
 - logs and validation failures should be accessible outside the game;
 - save/multiplayer compatibility should be visible before state is damaged;
 - mod authors need a clear target contract instead of instructions to manually edit engine source.
@@ -26,11 +26,11 @@ The standalone app is the product surface that makes the framework usable. The e
 
 Players should be able to:
 
-- discover a Barony installation;
+- discover a supported installed PC Barony copy;
 - create and switch mod profiles;
 - install local or released mod packages;
-- see compatibility status for their Barony version and framework version;
-- launch the correct framework-enabled build;
+- see compatibility status for their Barony storefront/build/platform and framework version;
+- launch the installed game executable with the correct BML hook/runtime support;
 - inspect logs and validation errors;
 - disable a mod or roll back to an unmodified profile without guessing which files changed.
 
@@ -48,11 +48,11 @@ Mod authors should be able to:
 
 Maintainers should be able to:
 
-- review small, named engine hooks instead of a sprawling source fork;
+- review small, named runtime hooks instead of a sprawling source fork;
 - reject unsupported capability requests early;
 - keep Barony's existing Custom Content, Workshop, maps, JSON, assets, and Barony Script flows intact;
 - evolve storage schemas and compatibility rules explicitly;
-- know which runtime behaviors are app responsibilities and which are engine responsibilities.
+- know which behaviors are app responsibilities and which are hook/runtime responsibilities.
 
 ## Guiding principles
 

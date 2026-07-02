@@ -50,16 +50,16 @@ sequenceDiagram
   participant User
   participant App as BaronyModLoader App
   participant Package as Package Store
-  participant Runtime as Barony Engine Runtime
-  participant Game as Barony Gameplay
+  participant Runtime as BML Hook Runtime
+  participant Game as Installed Barony Gameplay
 
   User->>App: Enable mods for profile
   App->>Package: Parse manifests and verify checksums
   App->>App: Resolve dependencies, conflicts, migrations, capabilities
-  App->>App: Select compatible Barony runtime executable
+  App->>App: Select compatible installed-executable hook runtime
   App->>App: Write runtime-manifest.json and active-mods.json
-  App->>Runtime: Launch Barony with --bml-runtime-manifest
-  Runtime->>Runtime: Validate contract, app version, capabilities
+  App->>Runtime: Launch installed Barony executable with hook environment
+  Runtime->>Runtime: Validate executable provenance, contract, app version, capabilities
   Runtime->>Game: Register accepted engine-owned hooks
   Runtime->>App: Write runtime-load-report.json
   Game->>Runtime: Use active hooks during play
@@ -155,14 +155,21 @@ The app and engine runtime both participate in capability negotiation.
 
 ### App-side negotiation
 
-The app compares package requests to metadata from discovered Barony runtimes:
+The app compares package requests to metadata from registered BML hook runtimes:
 
 ```json
 {
-  "runtimeId": "barony-bml-runtime",
+  "runtimeId": "barony-bml-hook",
+  "runtimeStrategy": "installed-binary-hook",
   "runtimeVersion": "0.1.0",
-  "gameRevision": "git-sha-or-release-id",
+  "storefront": "steam",
+  "platform": "linux-x86_64",
+  "gameVersionString": "v5.0.2",
   "contractVersions": ["0.1.0"],
+  "steamExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
+  "steamExecutableBuildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a",
+  "hookLibrary": "/path/to/libbarony_bml.so",
+  "hookManifest": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
   "capabilities": [
     { "id": "persistent_storage", "version": "0.1.0" },
     { "id": "persistent_inventory", "version": "0.1.0" },
@@ -174,13 +181,7 @@ The app compares package requests to metadata from discovered Barony runtimes:
 }
 ```
 
-Runtime metadata can be read from a sidecar generated at build time or queried from the executable with a safe info command such as:
-
-```text
-barony --bml-runtime-info
-```
-
-The app should cache the result but verify it again when the executable changes.
+Runtime metadata should come from BML-owned hook/runtime release metadata and be revalidated against the installed executable before launch.
 
 ### Engine-side negotiation
 
@@ -445,10 +446,10 @@ Minimum metadata fields:
 
 The app should support at least these launch modes:
 
-- `vanilla`: launch discovered Barony without a runtime manifest.
-- `modded-profile`: launch selected Barony runtime with a generated runtime manifest.
+- `vanilla`: launch discovered Barony without a runtime manifest or hook environment.
+- `modded-profile`: launch the installed Barony executable with a selected BML hook runtime and generated runtime manifest.
 - `validate-only`: generate reports without launching gameplay.
-- `runtime-info`: query executable capability metadata.
+- `runtime-info`: read BML hook/runtime release metadata and verify it against the installed executable.
 
 The `vanilla` path is important: BaronyModLoader should be a clean manager, not a one-way fork installer.
 
@@ -457,9 +458,9 @@ The `vanilla` path is important: BaronyModLoader should be a clean manager, not 
 The contract exists to avoid opaque forks:
 
 - Packages are immutable and checksummed.
-- Runtime patches/builds are declared with source provenance.
-- The app selects and launches known runtime executables instead of silently replacing the user's game.
-- The engine accepts a narrow manifest and reports what it actually loaded.
+- Hook/runtime artifacts are declared with executable provenance, hook checksums, and symbol maps.
+- The app selects and launches known installed game executables with BML hook environment instead of replacing the user's game.
+- The hook runtime accepts a narrow manifest and reports what it actually loaded.
 - State lives in profile/mod storage, not in modified package files.
 
-A user should be able to disable Stash, launch vanilla Barony, inspect package metadata, or rebuild the runtime from source without guessing which manual edits were applied.
+A user should be able to disable Stash, launch vanilla Barony, inspect package metadata, or remove BML hook/runtime configuration without guessing which manual edits were applied.

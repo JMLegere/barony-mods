@@ -6,40 +6,42 @@ Build the long-term architecture now, but only implement the runtime modules nee
 
 BaronyModLoader v1.0 should be:
 
-- a standalone app/launcher;
-- a Steam-aware profile and package manager;
-- a selector for version-matched BaronyModLoader-enabled runtimes;
-- a narrow Barony engine runtime sidecar/fork with upstreamable hook points;
+- a standalone PC app/launcher;
+- a profile and package manager for installed PC copies of Barony;
+- a strategy-aware registry for BML-owned hook/bootstrap runtimes;
+- an installed-executable hook path for Steam/Epic/GOG/Humble desktop builds, with Steam/Linux as the first verified target;
 - a schema-first package/runtime contract;
 - a working Stash mod proving persistent Void Chest storage, lobby/shop access, and compatibility diagnostics.
 
 BaronyModLoader v1.0 should not be:
 
-- an in-place patcher for the stock Steam executable;
-- a retail binary patching system;
+- an in-place patcher for retail executables;
+- a source-built Barony runtime strategy;
 - an arbitrary native plugin loader;
 - a broad scripting framework;
-- a one-off Stash-only fork with framework language painted on afterward.
+- a one-off Stash-only launcher with framework language painted on afterward.
 
 ## Long-term path, MVP surface
 
-The long-term shape is inspired by tModLoader/SKSE/Fabric-style separation:
+The long-term shape is inspired by tModLoader/SKSE/Fabric-style separation, but narrowed to installed PC executables:
 
 ```text
-Steam Barony install
-  stock barony.x86_64 remains untouched
+Installed PC Barony copy
+  stock executable remains untouched
   maps/data/assets/libs remain the canonical owned game install
+  first verified target: Steam/Linux build 22630456
+  product target: Steam/Epic/GOG/Humble desktop builds
 
 BaronyModLoader app
-  detects Steam install/build
-  manages profiles/packages/runtimes
+  detects storefront/build/executable provenance
+  manages profiles/packages/hook runtimes
   validates before launch
   writes runtime manifests
-  launches a selected BML runtime
+  launches the installed executable with BML hook/bootstrap environment
 
-BML runtime sidecar
-  built from Barony source plus isolated BML runtime modules
-  version-matched to the Steam build/source target
+BML hook/bootstrap runtime
+  BML-owned native library loaded into the installed game process
+  versioned per OS/store/build/symbol map
   reads the app-written manifest
   activates only validated capabilities
 
@@ -131,9 +133,9 @@ python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/b
 
 ### 3. App: runtime registry
 
-Current status: implemented in the app CLI for registration, listing, inspection, checksum capture, Steam build matching, and package capability selection.
+Current status: implemented in the app CLI for registration, listing, inspection, checksum capture, Steam build matching, and package capability selection, but the current implementation is still executable-centric and must be reworked for installed-executable hook runtimes.
 
-Purpose: bridge the current gap between Steam install detection and actually launching a BML-enabled runtime.
+Purpose: bridge the current gap between installed PC game detection and actually launching a BML hook/bootstrap runtime against that installed executable.
 
 MVP implementation:
 
@@ -147,15 +149,22 @@ Runtime registry fields:
 
 ```json
 {
-  "id": "bml-runtime-steam-371970-22630456-linux-x86_64",
+  "id": "steam-linux-371970-22630456-hook-dev",
+  "runtimeStrategy": "installed-binary-hook",
+  "storefront": "steam",
   "steamAppId": "371970",
   "steamBuildId": "22630456",
   "platform": "linux-x86_64",
   "runtimeVersion": "0.1.0",
   "runtimeContract": "bml-runtime-contract@0.1.0",
-  "executable": "/path/to/barony-bml.x86_64",
-  "runtimeInfo": "/path/to/runtime-info.json",
-  "sha256": "...",
+  "steamExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
+  "steamExecutableSha256": "...",
+  "steamExecutableBuildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a",
+  "gameVersionString": "v5.0.2",
+  "hookLibrary": "/path/to/libbarony_bml.so",
+  "hookLibrarySha256": "...",
+  "hookManifest": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+  "runtimeInfo": "/path/to/runtime-info.installed-hook.json",
   "capabilities": [
     "persistent_storage",
     "persistent_inventory",
@@ -169,15 +178,16 @@ Runtime registry fields:
 
 Acceptance criteria:
 
-- runtime registration fails if executable is missing;
-- runtime registration fails if runtime-info is missing or invalid;
-- runtime registration records executable SHA-256;
-- runtime selection requires matching Steam build id and required Stash capabilities;
-- app explains missing runtime with a clear action: build/register BML runtime for the detected Steam build.
+- runtime registration fails if the installed executable is missing;
+- runtime registration fails if the hook library is missing;
+- runtime registration fails if runtime-info or hook manifest is missing or invalid;
+- runtime registration records executable and hook-library SHA-256;
+- runtime selection requires matching storefront/build/provenance and required Stash capabilities;
+- app explains missing runtime with a clear action: register a BML hook runtime for the detected installed PC build.
 
 ### 4. App: real launch command
 
-Current status: implemented in the app CLI for registered runtime selection, manifest/active-mods/log artifact creation, dry-run diagnostics, and process execution against a shim runtime; playable Barony runtime verification is still pending.
+Current status: implemented in the app CLI for registered runtime selection, manifest/active-mods/log artifact creation, dry-run diagnostics, and process execution against a shim runtime; installed-executable hook launch verification is still pending.
 
 MVP implementation:
 
@@ -188,18 +198,19 @@ BaronyModLoader launch <profile-dir> --package <installed-package> [--runtime <r
 Launch flow:
 
 1. load profile;
-2. detect/verify Steam install still matches recorded app/build;
+2. detect/verify installed PC game still matches recorded storefront/build/provenance;
 3. load installed Stash package;
-4. select compatible registered runtime;
+4. select compatible registered hook runtime;
 5. validate package against runtime capabilities;
-6. write `runtime-manifest.json`;
-7. write `active-mods.json`;
-8. create log/state dirs;
-9. launch runtime executable with Steam install as working directory;
-10. capture stdout/stderr to app logs;
-11. read runtime-load-report if written.
+6. validate hook library, hook manifest, and symbol map provenance;
+7. write `runtime-manifest.json`;
+8. write `active-mods.json`;
+9. create log/state dirs;
+10. launch the installed game executable with hook environment;
+11. capture stdout/stderr to app logs;
+12. read runtime-load-report if written.
 
-Launch environment:
+Launch environment for the first Steam/Linux target:
 
 ```text
 cwd=<Steam Barony install>
@@ -207,64 +218,51 @@ SteamAppId=371970
 SteamGameId=371970
 BML_PROFILE_DIR=<profile dir>
 BML_RUNTIME_MANIFEST=<profile>/BaronyModLoader/runtime-manifest.json
+LD_PRELOAD=<path/to/libbarony_bml.so>
 LD_LIBRARY_PATH=<Steam Barony install>:$LD_LIBRARY_PATH
 ```
 
-Runtime arguments:
-
-```text
---bml-runtime-manifest <profile>/BaronyModLoader/runtime-manifest.json
---bml-profile-root <profile>
-```
+The stock installed executable should not receive BML-only command-line arguments unless the hook/bootstrap design explicitly proves they are safe. Prefer environment variables and manifest paths for the no-op hook MVP.
 
 Acceptance criteria:
 
-- launch refuses stock Steam executable for Stash;
-- launch refuses stale runtime build id;
+- launch refuses unsupported installed executable provenance;
+- launch refuses missing or mismatched hook library/manifest/symbol map;
 - launch refuses runtime missing any Stash-required capability;
 - launch writes manifest and logs even on failure;
-- launch has a dry-run mode for diagnostics.
+- launch has a dry-run mode that clearly prints the installed executable path and hook environment.
 
-### 5. Runtime: clean BML module structure in Barony source
+### 5. Runtime: clean BML hook module structure
 
-Current status: patch artifacts exist, but should evolve toward isolated runtime module files.
+Current status: source patch artifacts exist as semantic references; the supported v1 native runtime should live in a new installed-executable hook module tree.
 
 MVP runtime layout target:
 
 ```text
-src/bml/
-  bml_runtime.hpp
-  bml_runtime.cpp
-  bml_manifest.hpp
-  bml_manifest.cpp
-  bml_reports.hpp
-  bml_reports.cpp
-  bml_storage.hpp
-  bml_storage.cpp
-  bml_inventory.hpp
-  bml_inventory.cpp
-  bml_void_chest.hpp
-  bml_void_chest.cpp
-  bml_placement.hpp
-  bml_placement.cpp
-  bml_multiplayer.hpp
-  bml_multiplayer.cpp
+native/barony-modloader-hook/
+  CMakeLists.txt
+  src/bootstrap.cpp              # library constructor, manifest/env discovery, report setup
+  src/provenance.cpp             # executable/build/version/hash checks
+  src/symbols.cpp                # symbol/signature resolution for supported PC builds
+  src/hooks.cpp                  # hook installation/removal primitives
+  src/stash_inventory.cpp        # persistent inventory binding hooks
+  src/stash_placement.cpp        # lobby/shop placement hooks
+  src/stash_reports.cpp          # runtime-load-report + diagnostics
+  manifests/steam-371970-22630456-linux.json
 ```
 
-Existing Barony files should have minimal hook calls only:
+The old Barony source patch files should remain reference material only:
 
 ```text
-src/game.cpp          startup args, runtime initialization/report path
-src/actchest.cpp      Void Chest inventory binding and save-on-close boundary
-src/maps.cpp          lobby/shop placement hooks
-src/scores.cpp/.hpp   save/load metadata boundaries if needed
-src/CMakeLists.txt    include BML runtime sources
+native/barony-modloader-runtime/stash-source-map.toml
+native/barony-modloader-runtime/stash-verification-plan.toml
+native/barony-modloader-runtime/patches/*.patch
 ```
 
 Acceptance criteria:
 
-- BML logic is isolated from large Barony functions where possible;
-- call sites are thin and readable;
+- BML hook logic is isolated in `native/barony-modloader-hook/`;
+- hook installation is explicit and build/provenance-gated;
 - runtime compiles without Stash package hardcoding in the launcher;
 - disabling Stash returns behavior to vanilla-compatible paths.
 
@@ -322,24 +320,25 @@ Acceptance criteria:
 - removing/disabling Stash prevents Stash hooks from activating;
 - runtime reports storage/placement/multiplayer errors clearly.
 
-### 8. Build: Steam-backed runtime build
+### 8. Build: installed-executable hook bootstrap
 
-Current status: completed locally for the current workstation after installing build dependencies. The patched Barony source builds at `/tmp/barony-bml-build/barony`, writes `/tmp/barony-bml-build/runtime-info.json`, registers against Steam build id `22630456`, and can be executed through the BML launcher in `--bml-runtime-info` startup mode. This is local build evidence, not a distributable runtime release.
+Current status: planned. The previous local `/tmp/barony-bml-build/barony` source-build smoke path was deleted and is not valid Steam-current evidence.
 
 MVP requirements:
 
-- build a BML-enabled Barony executable from source plus BML runtime modules;
-- record runtime info sidecar;
-- register the runtime with BML app;
-- keep stock Steam executable untouched;
-- use Steam install as asset/data root when launching.
+- build a BML-owned native hook/bootstrap library for the first Steam/Linux target;
+- launch the installed Steam executable with that hook loaded;
+- record hook runtime info and provenance;
+- register the hook runtime with the BML app;
+- keep stock game executables untouched;
+- use the installed game directory as asset/data root when launching.
 
 Acceptance criteria:
 
-- runtime executable exists and has recorded SHA-256;
-- runtime-info advertises required capabilities;
-- registered runtime matches Steam build id `22630456` or explicitly documents the source/build compatibility mapping;
-- BML launcher can start the runtime.
+- hook library exists and has recorded SHA-256;
+- runtime-info advertises the installed-executable hook strategy;
+- registered runtime matches Steam build id `22630456` and executable provenance;
+- BML launcher can start the installed Steam executable with hook environment in dry-run and no-op load modes.
 
 ### 9. Verification: user-layer Stash proof
 
@@ -358,38 +357,45 @@ Required evidence:
 
 ## Recommended phase order
 
-### Phase A: app launcher completion
+### Phase A: contracts and docs rebaseline
 
-1. implement runtime registry;
-2. implement launch dry-run;
-3. implement launch command process execution;
-4. verify against a fake/small runtime executable first;
+1. remove source-build as a supported v1 runtime strategy;
+2. document the PC storefront/platform target matrix;
+3. update schemas/fixtures for installed-executable hook provenance;
+4. commit and push.
+
+Exit criteria: docs and contracts describe the same installed PC executable hook strategy.
+
+### Phase B: app launcher strategy support
+
+1. extend Steam detection with executable provenance;
+2. add installed-hook runtime registry fields;
+3. implement launch dry-run for `LD_PRELOAD`/hook environment;
+4. verify against a fake/small hook artifact first;
 5. commit and push.
 
-Exit criteria: app can select a registered runtime and construct/execute the correct launch command without needing Stash behavior yet.
+Exit criteria: app can select a registered installed-hook runtime and construct the correct launch command without needing Stash behavior yet.
 
-### Phase B: runtime code quality pass
+### Phase C: no-op native hook proof
 
-1. convert patch artifacts into clean BML runtime module files;
-2. keep hook call sites small;
-3. standardize `--bml-runtime-manifest` and report paths;
-4. ensure runtime can run vanilla when no manifest is provided;
-5. commit and push.
+1. create `native/barony-modloader-hook/`;
+2. compile `libbarony_bml.so`;
+3. load inside the installed Steam/Linux executable;
+4. write canonical runtime-load-report and diagnostics;
+5. fail closed on provenance mismatch.
 
-Exit criteria: native patch still applies, but BML code is isolated and maintainable.
+Exit criteria: installed Steam executable starts with the hook loaded and writes BML reports without gameplay hooks.
 
-### Phase C: build Steam-backed runtime
+### Phase D: symbol map and harmless probe
 
-1. install/provide build dependencies;
-2. configure CMake build;
-3. compile BML runtime;
-4. generate runtime-info sidecar;
-5. register runtime in BML app;
-6. commit build docs/scripts, not local binaries unless intentionally releasing.
+1. build symbol/provenance manifest for Steam/Linux build `22630456`;
+2. resolve one harmless exported symbol/global;
+3. verify PIE relocation handling;
+4. emit diagnostics without mutating gameplay state.
 
-Exit criteria: app can launch a real BML-enabled Barony executable.
+Exit criteria: hook runtime can safely recognize the installed build it supports.
 
-### Phase D: Stash behavior verification
+### Phase E: Stash behavior verification
 
 1. launch through BML profile;
 2. verify lobby/shop placements;
@@ -398,19 +404,19 @@ Exit criteria: app can launch a real BML-enabled Barony executable.
 5. verify disable/mismatch failure paths;
 6. update release manifest from pending to verified.
 
-Exit criteria: Stash works from the player perspective.
+Exit criteria: Stash works from the player perspective on the first supported PC target.
 
 ## v1.0 done definition
 
 BaronyModLoader v1.0 is done when:
 
-- Steam install detection works;
+- supported PC install detection works for the v1 target set or unsupported PC storefront/platform combinations are explicitly blocked with clear diagnostics;
 - Stash package validates/packs/installs/enables/disables;
-- a BML runtime executable is registered and selected by build/capability compatibility;
-- `launch` starts the selected runtime against the Steam install;
-- runtime loads the manifest and writes reports;
-- Stash behavior works in-game;
-- stock Steam Barony remains untouched;
+- an installed-executable BML hook runtime is registered and selected by build/provenance/capability compatibility;
+- `launch` starts the installed game executable with the selected hook runtime;
+- runtime loads the manifest and writes canonical reports;
+- Stash behavior works in-game on the verified v1 target;
+- stock Barony executables remain untouched;
 - all failure modes produce clear diagnostics;
 - repo is clean, pushed, and includes verification evidence.
 
@@ -421,14 +427,15 @@ Do not add these until Stash v1 works:
 - GUI app;
 - broad plugin SDK;
 - Lua/WASM scripting;
+- source-built Barony runtime support;
 - Workshop publishing automation;
 - multiple gameplay mods;
 - hot reload;
 - multiplayer convenience features beyond compatibility blocking;
-- automated binary patching.
+- automated on-disk binary patching.
 
 ## Immediate next step
 
-Implement the app-side runtime registry and launch dry-run first.
+Implement the app-side installed-executable hook registry and launch dry-run first.
 
-That is the smallest next step that preserves the long-term architecture and moves from package planning toward an actual game launcher without forcing us to solve the native build and in-game Stash behavior in the same commit.
+That is the smallest next step that preserves the long-term architecture and moves from package planning toward an actual PC game launcher without forcing us to solve native detouring and in-game Stash behavior in the same commit.

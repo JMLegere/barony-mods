@@ -64,22 +64,21 @@ The app owns everything that happens before the selected Barony process starts a
 Responsibilities:
 
 - **Install discovery**
-  - Locate Barony installs, source/build directories, and supported platform targets.
-  - Detect whether an install is vanilla, framework-enabled, or incompatible.
+  - Locate supported installed PC copies of Barony across Steam, Epic, GOG/DRM-free, and Humble where local executable access is available.
+  - Detect whether an install is vanilla, hook-compatible, unsupported, or incompatible.
 
 
-#### Steam install target
+#### Installed PC game target
 
-The primary player target is the Steam version of Barony. The loader should treat the Steam install as the canonical owned game install and asset root, starting with app id `371970`.
+The primary player target is an installed PC copy of Barony. The supported storefront/platform matrix is Steam on Windows/macOS/Linux, Epic Games Store on Windows/macOS, GOG/DRM-free on Windows/macOS/Linux, and Humble Bundle on Windows/macOS/Linux. Nintendo Switch is out of scope for this native PC mod-loader architecture.
 
-The loader may detect and record the stock Steam executable, install directory, appmanifest path, and Steam build id, but v1 should not mutate the retail executable in place. Stash requires engine behavior changes, so a Steam-backed profile needs a BaronyModLoader-enabled runtime executable that is compatible with the detected Steam build and uses the Steam install for data/assets.
+The first concrete verification target is Steam/Linux app id `371970`, build id `22630456`, because that executable is available on this workstation. The loader should treat the installed game directory as the canonical owned game install and asset root, but v1 should not mutate the retail executable in place.
 
 This makes the compatibility model explicit:
 
-- **Stock Steam Barony**: discovered and launchable as vanilla, but not Stash-capable.
-- **Steam-backed BML runtime**: preferred modded path; built/selected for the detected Steam build and pointed at the Steam install/profile metadata.
-- **Source/build directory**: development path for producing and verifying the Steam-backed BML runtime.
-
+- **Stock installed Barony**: discovered and launchable as vanilla, but not Stash-capable by itself.
+- **Installed-executable BML hook runtime**: preferred modded path; launches the installed executable through a BML-owned hook/bootstrap library after validating store/build/executable provenance.
+- **Source patch artifacts**: semantic references for hook design only, not a supported v1 runtime strategy.
 - **Profiles**
   - Maintain isolated mod enablement sets.
   - Associate a profile with a Barony install/build, framework version, package set, and launch options.
@@ -95,14 +94,14 @@ This makes the compatibility model explicit:
   - Warn on optional/recommended dependencies.
   - Reject known conflicts or unsupported framework capabilities.
 
-- **Patch/build/release management**
-  - Select or install a framework-enabled Barony build compatible with the active profile.
-  - Track upstream Barony source revision/build compatibility.
-  - Support rollback to prior framework builds or vanilla launch paths where possible.
+- **Hook/runtime release management**
+  - Select or install a BML-owned hook/bootstrap runtime compatible with the active PC storefront/build/platform.
+  - Track executable provenance, hook library checksums, symbol maps, and compatibility metadata.
+  - Support rollback to prior hook runtimes or vanilla launch paths where possible.
 
 - **Launch**
-  - Construct the launch environment for the selected Barony build and profile.
-  - Pass the active mod/profile metadata path to the engine runtime.
+  - Construct the launch environment for the installed game executable, selected BML hook runtime, and profile.
+  - Pass the active mod/profile metadata path to the hook/runtime.
   - Refuse launch when validation failures would be unsafe.
 
 - **Validation and diagnostics**
@@ -284,12 +283,12 @@ Boundary:
 
 The reference flow should prove both app and runtime responsibilities.
 
-1. Player installs or selects a framework-enabled Barony build in the BaronyModLoader app.
+1. Player installs or selects a supported PC Barony install in the BaronyModLoader app.
 2. Player creates or selects a profile.
 3. Player installs/enables the Stash package.
-4. The app validates package layout, dependency/conflict metadata, supported Barony/framework version ranges, and required capabilities.
-5. The app launches the selected Barony build with the active profile/package metadata.
-6. The engine runtime loads and validates the Stash manifest.
+4. The app validates package layout, dependency/conflict metadata, supported Barony/framework version ranges, required capabilities, and installed executable provenance.
+5. The app launches the installed Barony executable with the selected BML hook/bootstrap runtime and active profile/package metadata.
+6. The hook/runtime loads and validates the Stash manifest.
 7. The engine opens Stash's profile-scoped storage namespace.
 8. The persistent named inventory module restores `void_chest_inventory` if valid storage exists.
 9. Lobby setup runs; the placement module creates a permanent Void Chest access point at a safe lobby location.

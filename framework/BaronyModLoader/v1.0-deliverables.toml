@@ -27,44 +27,58 @@ evidence = [
 ]
 
 [[deliverables]]
-id = "p2_runtime_handshake"
+id = "p2_installed_hook_contract"
 status = "next"
-summary = "Source patch artifacts add Barony runtime manifest discovery, capability validation, --bml-runtime-info, and runtime load reports without gameplay changes."
+summary = "Contracts and docs describe BML v1 as an installed PC executable hook/bootstrap runtime, not a source-built Barony runtime."
 required_artifacts = [
-  "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
-  "native/barony-modloader-runtime/README.md",
+  "framework/BaronyModLoader/installed-steam-hook-strategy.md",
+  "framework/BaronyModLoader/current-situation-discovery.md",
   "framework/BaronyModLoader/schema/runtime-info.schema.json",
   "framework/BaronyModLoader/schema/runtime-load-report.schema.json",
-  "framework/BaronyModLoader/fixtures/runtime-load-report.loaded.json",
-  "framework/BaronyModLoader/fixtures/runtime-load-report.failed.json",
+  "framework/BaronyModLoader/schema/runtime-registry.schema.json",
 ]
 evidence = [
-  "patch applies cleanly to the tracked Barony source revision or documents why it is a planning patch",
-  "runtime-info and runtime-load-report fixtures parse and match the schemas",
-  "CLI runtime validation accepts the runtime-info fixture and fails closed for missing capabilities",
+  "source-build is not listed as a supported v1 runtime strategy",
+  "PC storefront/platform matrix is documented as Steam Windows/macOS/Linux, Epic Windows/macOS, GOG Windows/macOS/Linux, and Humble Windows/macOS/Linux",
+  "Nintendo Switch is explicitly out of scope",
+  "runtime-info, runtime-load-report, and registry fixtures parse and match the schemas",
 ]
 
 [[deliverables]]
-id = "p3_stash_runtime_behavior"
-status = "verification-plan-ready_pending-built-game"
-summary = "Runtime patch implements Stash behavior: persistent Void Chest inventory, spell/lobby/shop access, and save/multiplayer metadata."
+id = "p3_noop_hook_bootstrap"
+status = "planned"
+summary = "BML-owned hook/bootstrap library loads in the installed Steam/Linux executable, validates provenance, and writes canonical reports without gameplay hooks."
 required_artifacts = [
-  "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+  "native/barony-modloader-hook/",
+  "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+  "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
+]
+evidence = [
+  "BML launcher dry-run executes the installed Steam executable, not a source-built sidecar",
+  "dry-run environment includes BML_RUNTIME_MANIFEST, BML_PROFILE_DIR, SteamAppId, SteamGameId, LD_LIBRARY_PATH, and hook preload configuration",
+  "no-op hook writes runtime-load-report.json using the canonical schema",
+  "mismatched executable provenance fails closed before gameplay hooks install",
+]
+
+[[deliverables]]
+id = "p4_stash_hook_behavior"
+status = "verification-plan-ready_pending-installed-hook"
+summary = "Installed-executable hook runtime implements Stash behavior: persistent Void Chest inventory, spell/lobby/shop access, and save/multiplayer metadata."
+required_artifacts = [
   "native/barony-modloader-runtime/stash-source-map.toml",
   "native/barony-modloader-runtime/stash-verification-plan.toml",
+  "native/barony-modloader-hook/",
 ]
 evidence = [
-  "source map cites exact Barony files/lines for Void Chest inventory, spell chest creation, lobby assist area, shop generation, and save/load hooks",
-  "stash-verification-plan.toml parses and records setup, commands/observations, pass/fail criteria, and evidence artifacts for every required Stash scenario",
+  "source map is used as semantic reference for Void Chest inventory, spell chest creation, lobby assist area, shop generation, and save/load hooks",
   "verification plan covers runtime manifest acceptance, persistence across death/new-run/relaunch, save/resume no-fork/no-duplicate behavior, lobby/shop placement, spell inventory binding, multiplayer mismatch rejection, and disabled behavior",
-  "stash-verification-plan.toml explicitly separates artifact verification from pending built-game behavioral verification",
-  "P3 playable verification remains pending until a patched Barony build runs the focused Stash scenarios and captures the named evidence artifacts",
+  "playable verification remains pending until the installed game executable plus hook runtime runs the focused Stash scenarios and captures the named evidence artifacts",
 ]
 
 [[deliverables]]
-id = "p4_packaging_release"
-status = "current-package-workflow"
-summary = "BaronyModLoader can create/install/enable/disable a clean Stash package archive and record release provenance without claiming built-game behavior is verified."
+id = "p5_packaging_release"
+status = "current-package-workflow_needs-installed-hook-provenance"
+summary = "BaronyModLoader can create/install/enable/disable a clean Stash package archive and should record installed-executable hook provenance without claiming gameplay behavior before verification."
 required_artifacts = [
   "framework/BaronyModLoader/app/barony_mod_loader.py",
   "framework/BaronyModLoader/schema/release-manifest.schema.json",
@@ -76,28 +90,9 @@ evidence = [
   "python framework/BaronyModLoader/app/barony_mod_loader.py package validate mods/stash",
   "python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out .tmp/Stash-0.1.0.bmlpkg",
   "python framework/BaronyModLoader/app/barony_mod_loader.py package install .tmp/Stash-0.1.0.bmlpkg --store .tmp/bml-package-store",
-  "python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --barony-executable /path/to/barony --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json",
-  "python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0",
-  "python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile",
-  "python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json",
-  "python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-profile --mod-id jml.stash",
-  "release manifest records app version, runtime version, Barony source revision, patch artifacts, package checksum, rollback notes, and pending built-game verification status",
-]
-
-[[deliverables]]
-id = "p5_steam_install_target"
-status = "implemented_pending-runtime-build"
-summary = "BaronyModLoader targets the Steam install cleanly by detecting appmanifest/build metadata and recording Steam-backed profiles without mutating the stock executable."
-required_artifacts = [
-  "framework/BaronyModLoader/app/barony_mod_loader.py",
-  "framework/BaronyModLoader/README.md",
-  "framework/BaronyModLoader/architecture.md",
-]
-evidence = [
-  "python framework/BaronyModLoader/app/barony_mod_loader.py steam detect",
-  "profile create --steam produces runtime.gameSource=steam and runtime.steam.buildId",
-  "launch-plan for a Steam-backed profile emits gameInstallId=steam:371970:<buildid>",
-  "Steam-backed Stash still requires a matching BML runtime executable; the stock Steam barony.x86_64 is detected as stockExecutablePatched=false",
+  "profile create --steam produces an installed PC game profile with executable provenance",
+  "launch dry-run for a Steam-backed profile emits installed-executable hook command and provenance",
+  "release manifest records app version, runtime version, installed executable provenance, hook library, symbol map, package checksum, rollback notes, and pending gameplay verification status",
 ]
 
 [[deliverables]]

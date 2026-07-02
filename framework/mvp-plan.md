@@ -136,56 +136,52 @@ The first implementation should look for narrow insertion points in the C++ engi
 
 ## Packaging/release model
 
-The clean release model is a small engine patch package, not an opaque source fork.
+The clean release model is a standalone BML app plus reviewed BML-owned hook/bootstrap runtime artifacts for installed PC copies of Barony, not an opaque source fork and not a source-built replacement executable.
 
 Recommended artifacts:
 
-- versioned patch series against upstream Barony;
-- release notes identifying the upstream commit/tag targeted;
-- optional reproducible Linux and Windows builds if the build process is controlled;
+- versioned BML app release;
+- hook/bootstrap runtime artifacts for supported store/build/platform combinations;
+- executable provenance metadata for each supported installed build;
+- hook library checksums and symbol/provenance manifests;
 - optional Workshop/local content package for Stash metadata, preview assets, and install instructions;
-- checksums for binary artifacts;
-- rollback instructions for users applying a patched build.
+- rollback instructions that disable BML and return users to vanilla installed Barony.
 
-The manifest/config package should remain separate from the engine patch. Users should be able to see which part is engine support and which part is the Stash mod declaration/assets.
+The manifest/config package should remain separate from the hook/runtime implementation. Users should be able to see which part is BML engine support and which part is the Stash mod declaration/assets.
 
 ## Upstream strategy
 
-Primary upstream: <https://github.com/TurningWheel/Barony>
+Primary source references:
 
-Working fork: <https://github.com/JMLegere/Barony>
+- upstream Barony: <https://github.com/TurningWheel/Barony>
+- working fork: <https://github.com/JMLegere/Barony>
 
-The implementation should be easy to review upstream:
+The implementation should be easy to reason about and eventually explain upstream:
 
 - keep hooks narrow and named by capability, not by Stash-only special cases;
 - keep Stash as the reference mod/test case for persistent named inventories and placement hooks;
 - preserve existing Custom Content, Workshop, JSON, map, and Barony Script behavior;
 - avoid dynamic native plugins, Lua, WASM, or arbitrary scripting in the MVP;
-- document all touched engine files and why each hook exists;
-- prefer data declarations plus engine-owned validation over mod-owned code execution.
+- document all supported installed executable builds and why each hook exists;
+- prefer data declarations plus BML-owned runtime validation over mod-owned code execution.
 
-Fallback if upstream is not ready:
-
-- maintain a small patch series against upstream releases;
-- keep patches isolated so rebasing is predictable;
-- avoid turning the user fork into the only explanation of the feature;
-- keep the framework shape reusable for future mods.
+Source patch artifacts may remain as semantic references, but the current v1 fallback is not a source-build path. If a store/platform build is unsupported, BML should report that clearly rather than launch an unproven replacement executable.
 
 ## Next implementation steps
 
-1. Confirm the exact upstream Barony revision to target in `JMLegere/Barony`.
-2. Identify the smallest C++ insertion points for:
-   - manifest loading;
-   - mod storage path resolution;
-   - named inventory serialization;
-   - Void Chest inventory binding;
+1. Define the installed PC executable runtime contract around Steam/Linux build `22630456` first.
+2. Add app-side executable provenance capture and installed-hook runtime registry fields.
+3. Implement hook launch dry-run: stock executable plus `LD_PRELOAD`, `BML_RUNTIME_MANIFEST`, `BML_PROFILE_DIR`, and storefront environment.
+4. Create `native/barony-modloader-hook/` with a no-op hook that writes canonical runtime-load-report output.
+5. Add a Steam/Linux symbol/provenance manifest for build `22630456`.
+6. Port Stash hooks in stages:
+   - manifest/provenance;
+   - diagnostics-only symbol probe;
    - lobby placement;
    - shop placement;
-   - multiplayer/version metadata.
-3. Draft the first manifest schema around Stash only, with fields for id, version, capabilities, persistent inventories, placement requests, and compatibility metadata.
-4. Implement engine-side manifest validation with unsupported capability rejection.
-5. Implement persistent named inventory storage for the Stash `void_chest_inventory` case.
-6. Add permanent Void Chest placement through lobby and shop hooks.
+   - Void Chest binding;
+   - persistent inventory serialization;
+   - multiplayer/version rejection.
 7. Verify the reference flow in single-player:
    - add item to Stash;
    - leave/end run;
@@ -195,5 +191,5 @@ Fallback if upstream is not ready:
    - host with Stash active;
    - client with matching Stash metadata;
    - client with missing/mismatched Stash metadata.
-9. Package a versioned patch series and optional Stash metadata package.
-10. Prepare an upstream proposal that describes the framework as a minimal modding extension proven by Stash.
+9. Package a versioned BML app + hook runtime + Stash metadata release for the verified PC target.
+10. Prepare an upstream-facing explanation that describes the framework as a minimal modding extension proven by Stash.
