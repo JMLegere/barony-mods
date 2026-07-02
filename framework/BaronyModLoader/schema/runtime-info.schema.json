@@ -177,6 +177,7 @@
         "partialStashLoadAllowed"
       ],
       "properties": {
+        "runtimeStrategy": { "type": "string", "minLength": 1 },
         "requiresValidatedManifest": { "type": "boolean" },
         "rejectsUnknownRequiredCapabilities": { "type": "boolean" },
         "partialStashLoadAllowed": { "type": "boolean" }

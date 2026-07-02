@@ -6,7 +6,7 @@
   "contractVersions": [
     "0.1.0"
   ],
-  "executable": "/path/to/libbarony_bml.so",
+  "executable": "/home/jerry/Workspace/barony-mods/native/barony-modloader-hook/build/libbarony_bml.so",
   "game": {
     "id": "barony",
     "name": "Barony",
@@ -24,8 +24,8 @@
   "platforms": [
     {
       "platform": "linux-x86_64",
-      "executable": "/path/to/libbarony_bml.so",
-      "artifact": "native/barony-modloader-hook/libbarony_bml.so",
+      "executable": "/home/jerry/Workspace/barony-mods/native/barony-modloader-hook/build/libbarony_bml.so",
+      "artifact": "native/barony-modloader-hook/build/libbarony_bml.so",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     }
   ],
@@ -76,7 +76,7 @@
   ],
   "runtimeReportPaths": {
     "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
-    "runtimeLoadReport": "BaronyModLoader/runtime-load-report.json",
+    "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
     "runtimeLog": "BaronyModLoader/logs/runtime.log",
     "stateRoot": "BaronyModLoader/state/"
   },

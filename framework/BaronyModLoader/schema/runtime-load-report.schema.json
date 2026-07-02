@@ -2,13 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://baronymodloader.local/schema/runtime-load-report.schema.json",
   "title": "BaronyModLoader v0 runtime load report",
-  "description": "Engine runtime report written after manifest validation and hook registration. Communicates loaded/failed status, per-mod capability coverage, warnings, and fatal errors.",
+  "description": "Native hook runtime report written after LD_PRELOAD injection and manifest inspection. Communicates loaded/failed status, runtime identity, per-mod capability coverage when a mod is present, warnings, and fatal errors.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "contract",
     "runtime",
-    "profileId",
     "status",
     "loadedMods",
     "warnings",
@@ -27,11 +26,13 @@
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtimeVersion", "gameRevision", "executable"],
+      "required": ["id", "version", "strategy"],
       "properties": {
-        "runtimeVersion": { "$ref": "#/$defs/version" },
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/version" },
+        "strategy": { "type": "string", "minLength": 1 },
         "gameRevision": { "type": "string", "minLength": 1 },
-        "executable": { "$ref": "#/$defs/absolutePath" }
+        "executable": { "type": "string", "minLength": 1 }
       }
     },
     "profileId": { "$ref": "#/$defs/id" },
@@ -78,7 +79,7 @@
         "version": { "$ref": "#/$defs/version" },
         "status": {
           "type": "string",
-          "enum": ["loaded", "skipped", "error"]
+          "enum": ["loaded", "failed", "skipped"]
         },
         "capabilities": {
           "type": "array",
@@ -116,18 +117,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "enum": [
-            "BML_RUNTIME_MANIFEST_MISSING",
-            "BML_RUNTIME_MANIFEST_PARSE_FAILED",
-            "BML_RUNTIME_CONTRACT_UNSUPPORTED",
-            "BML_RUNTIME_CAPABILITY_MISSING",
-            "BML_RUNTIME_MODULE_INVALID",
-            "BML_RUNTIME_STORAGE_UNAVAILABLE",
-            "BML_RUNTIME_MIGRATION_FAILED",
-            "BML_RUNTIME_MULTIPLAYER_INCOMPATIBLE",
-            "BML_RUNTIME_PLACEMENT_FAILED",
-            "BML_RUNTIME_BINDING_CONFLICT"
-          ]
+          "pattern": "^[A-Z0-9_]+$"
         },
         "severity": {
           "type": "string",

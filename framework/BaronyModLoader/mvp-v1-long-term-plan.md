@@ -161,7 +161,7 @@ Runtime registry fields:
   "steamExecutableSha256": "...",
   "steamExecutableBuildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a",
   "gameVersionString": "v5.0.2",
-  "hookLibrary": "/path/to/libbarony_bml.so",
+  "hookLibrary": "native/barony-modloader-hook/build/libbarony_bml.so",
   "hookLibrarySha256": "...",
   "hookManifest": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
   "runtimeInfo": "/path/to/runtime-info.installed-hook.json",
@@ -218,7 +218,7 @@ SteamAppId=371970
 SteamGameId=371970
 BML_PROFILE_DIR=<profile dir>
 BML_RUNTIME_MANIFEST=<profile>/BaronyModLoader/runtime-manifest.json
-LD_PRELOAD=<path/to/libbarony_bml.so>
+LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so
 LD_LIBRARY_PATH=<Steam Barony install>:$LD_LIBRARY_PATH
 ```
 
@@ -272,13 +272,13 @@ Current status: handshake patch artifact exists.
 
 MVP requirements:
 
-- parse `--bml-runtime-manifest`;
-- fallback to `BML_RUNTIME_MANIFEST` env var;
+- read `BML_RUNTIME_MANIFEST` from the launch environment;
+- do not require custom command-line flags that the stock installed Barony executable does not understand;
 - load manifest JSON;
 - validate contract id/version;
 - validate required capabilities;
 - reject unsafe/malformed manifest before gameplay;
-- write `runtime-load-report.json` with stable errors.
+- write `BaronyModLoader/reports/runtime-load-report.json` with stable errors.
 
 Acceptance criteria:
 

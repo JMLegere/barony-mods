@@ -4,9 +4,11 @@
     "version": "0.1.0"
   },
   "runtime": {
-    "runtimeVersion": "0.1.0",
-    "gameRevision": "git-sha-placeholder",
-    "executable": "/path/to/barony"
+    "id": "barony-bml-hook",
+    "version": "0.1.0",
+    "strategy": "installed-binary-hook",
+    "gameRevision": "steam-371970-22630456",
+    "executable": "native/barony-modloader-hook/build/libbarony_bml.so"
   },
   "profileId": "default",
   "status": "failed",

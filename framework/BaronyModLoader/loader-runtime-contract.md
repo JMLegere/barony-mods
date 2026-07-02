@@ -93,14 +93,14 @@ Suggested path:
 <profile>/BaronyModLoader/runtime-manifest.json
 ```
 
-The app passes this path to Barony through a launch argument and may also set an environment variable for discovery:
+For installed-executable hook runtimes, the app does not pass custom BML flags to the stock Barony executable. The app writes the manifest and exposes it through launch environment:
 
 ```text
-barony --bml-runtime-manifest <profile>/BaronyModLoader/runtime-manifest.json
-BML_RUNTIME_MANIFEST=<same path>
+BML_RUNTIME_MANIFEST=<profile>/BaronyModLoader/runtime-manifest.json
+BML_PROFILE_DIR=<profile>
+BML_HOOK_MANIFEST=<hook-manifest.json>
+BML_HOOK_LIBRARY=<libbarony_bml.so>
 ```
-
-The command-line argument wins if both are present.
 
 ### Runtime manifest shape
 
@@ -168,7 +168,7 @@ The app compares package requests to metadata from registered BML hook runtimes:
   "contractVersions": ["0.1.0"],
   "steamExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
   "steamExecutableBuildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a",
-  "hookLibrary": "/path/to/libbarony_bml.so",
+  "hookLibrary": "native/barony-modloader-hook/build/libbarony_bml.so",
   "hookManifest": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
   "capabilities": [
     { "id": "persistent_storage", "version": "0.1.0" },
@@ -198,23 +198,25 @@ Optional capabilities may be disabled only if the manifest describes a safe fall
 
 ## Engine runtime reports
 
-The engine writes a load report after manifest validation and hook registration.
+The current minimum Linux hook writes a load report after LD_PRELOAD injection and manifest inspection. This smoke proves injection/reporting only; it does not resolve Barony symbols, install gameplay hooks, or create the Stash chest in-game.
 
-Suggested path:
+Canonical path:
 
 ```text
-<profile>/BaronyModLoader/runtime-load-report.json
+<profile>/BaronyModLoader/reports/runtime-load-report.json
 ```
 
-The report follows the P2 `runtime-load-report` schema used by the app diagnostics fixtures:
+The report follows the v0 `runtime-load-report` schema used by the app diagnostics fixtures:
 
 ```json
 {
   "contract": { "id": "bml-runtime-contract", "version": "0.1.0" },
   "runtime": {
-    "runtimeVersion": "0.1.0",
-    "gameRevision": "git-sha-or-release-id",
-    "executable": "/path/to/barony"
+    "id": "barony-bml-hook",
+    "version": "0.1.0",
+    "strategy": "installed-binary-hook",
+    "gameRevision": "steam-371970-22630456",
+    "executable": "native/barony-modloader-hook/build/libbarony_bml.so"
   },
   "profileId": "default",
   "status": "loaded",
@@ -241,21 +243,24 @@ The report follows the P2 `runtime-load-report` schema used by the app diagnosti
     }
   ],
   "warnings": [],
-  "errors": []
+  "errors": [],
+  "reportedAt": "2026-07-02T00:00:00Z"
 }
 ```
 
-Top-level `status` is either `loaded` or `failed`. Each `loadedMods` entry carries its own `status`: `loaded`, `failed`, or `skipped`. Capability values in load reports are string ids only, and for the Stash v0 surface they must be exactly the canonical ids: `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
+Top-level `status` is either `loaded` or `failed`. Each `loadedMods` entry carries its own `status`: `loaded`, `failed`, or `skipped`. `loadedMods` includes `jml.stash` only when the runtime manifest contains Stash and the hook can read enough manifest data to report it. Capability values in load reports are string ids only, and for the Stash v0 surface they must be exactly the canonical ids: `persistent_storage`, `persistent_inventory`, `void_chest_binding`, `placement_lobby`, `placement_shop`, and `multiplayer_version_metadata`.
 
-If validation fails, `status` is `failed`. For the first Stash-focused handshake artifacts, partial load should be avoided: any Stash required capability failure should abort modded launch and write `loadedMods: []` plus a stable fatal error. Example failed report:
+If validation fails, `status` is `failed`. When `BML_PROFILE_DIR` is present, the hook should still write a failed report at the canonical reports path even if `BML_RUNTIME_MANIFEST`, `BML_HOOK_MANIFEST`, or their JSON content cannot be read. Example failed report:
 
 ```json
 {
   "contract": { "id": "bml-runtime-contract", "version": "0.1.0" },
   "runtime": {
-    "runtimeVersion": "0.1.0",
-    "gameRevision": "git-sha-or-release-id",
-    "executable": "/path/to/barony"
+    "id": "barony-bml-hook",
+    "version": "0.1.0",
+    "strategy": "installed-binary-hook",
+    "gameRevision": "steam-371970-22630456",
+    "executable": "native/barony-modloader-hook/build/libbarony_bml.so"
   },
   "profileId": "default",
   "status": "failed",
@@ -263,19 +268,13 @@ If validation fails, `status` is `failed`. For the first Stash-focused handshake
   "warnings": [],
   "errors": [
     {
-      "code": "BML_RUNTIME_CAPABILITY_MISSING",
+      "code": "BML_RUNTIME_MANIFEST_MISSING",
       "severity": "fatal",
-      "mod": "jml.stash",
-      "capability": "void_chest_binding",
-      "message": "Stash requires Void Chest binding, but this Barony runtime does not provide it.",
-      "details": {
-        "requested": "0.1.0",
-        "runtimeVersion": "0.1.0-dev",
-        "availableCapabilities": ["persistent_storage"]
-      },
+      "message": "BML_RUNTIME_MANIFEST was not set or did not point to a readable runtime manifest.",
       "action": "block-launch"
     }
-  ]
+  ],
+  "reportedAt": "2026-07-02T00:00:00Z"
 }
 ```
 
@@ -340,7 +339,7 @@ The app may delete and regenerate these files when the activation set changes.
 The engine runtime owns these profile-local files:
 
 ```text
-<profile>/BaronyModLoader/runtime-load-report.json
+<profile>/BaronyModLoader/reports/runtime-load-report.json
 <profile>/BaronyModLoader/logs/runtime.log
 <profile>/BaronyModLoader/state/<mod-id>/...
 ```

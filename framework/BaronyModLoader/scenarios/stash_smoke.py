@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Run the current BML + Stash smoke scenario against a Steam Barony install.
+"""Legacy future gameplay smoke scenario for a Steam Barony install.
 
-This scenario is intentionally black-box from the BML app boundary: it packages
-Stash, installs it into a temporary package store, registers a BML-enabled Barony
-runtime, creates a Steam-backed profile, launches the game for a short window,
-and verifies the runtime report plus Stash diagnostics written by the native
-runtime.
+This script still describes the later Stash gameplay verification flow: package
+Stash, install it into a temporary package store, register a compatible runtime,
+create a Steam-backed profile, launch the game for a short window, and verify
+Stash gameplay diagnostics.
 
-Default runtime paths match the local development build used by this repository:
-    /tmp/barony-bml-build/barony
-    /tmp/barony-bml-build/runtime-info.json
+It is not the current minimum native hook smoke. The current Linux hook smoke is
+the no-op LD_PRELOAD injection/reporting check documented in the README and
+runtime contract; it writes BaronyModLoader/reports/runtime-load-report.json and
+does not prove Stash chest placement or persistence.
 """
 
 from __future__ import annotations

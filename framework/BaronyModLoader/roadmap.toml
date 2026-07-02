@@ -131,7 +131,7 @@ engine_deliverables = [
   "runtime-load-report schema describing loaded or failed startup status, loaded mod entries, warnings, and stable errors",
   "fixtures for compatible runtime-info, successful runtime-load-report, and failed runtime-load-report cases",
   "load and validate framework capability declarations before gameplay once the patch is applied",
-  "report framework runtime, active mods, canonical capabilities, and startup validation errors through runtime-load-report.json",
+  "report framework runtime, active mods, canonical capabilities, and startup validation errors through BaronyModLoader/reports/runtime-load-report.json",
 ]
 stash_deliverables = [
   "Stash requirements are represented by capability declarations and handshake fixtures rather than arbitrary plugin code",

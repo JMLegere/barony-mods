@@ -81,18 +81,18 @@ Stash package
 
 ## Linux implementation shape
 
-For Linux, the likely MVP path is a wrapper launch using dynamic loader injection:
+For the current Linux smoke, the MVP path is dynamic loader injection with the built BML hook library:
 
 ```text
-LD_PRELOAD=/path/to/libbarony_bml.so \
+LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so \
 BML_RUNTIME_MANIFEST=<profile>/BaronyModLoader/runtime-manifest.json \
 BML_PROFILE_DIR=<profile> \
 SteamAppId=371970 \
 SteamGameId=371970 \
-/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64
+/usr/bin/true
 ```
 
-`libbarony_bml.so` should be treated as a small bootstrap/hook runtime, not as arbitrary mod code execution. The Stash package remains data/manifest-driven; the hook runtime owns the actual engine integration.
+`libbarony_bml.so` should be treated as a small bootstrap/hook runtime, not as arbitrary mod code execution. The current smoke proves injection and `BaronyModLoader/reports/runtime-load-report.json` writing only; it does not resolve Barony symbols, patch gameplay, or create the Stash chest in-game. Later installed-executable verification should use the same hook environment with `/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64`.
 
 ## Hook-loader architecture
 
@@ -127,7 +127,7 @@ The app must refuse to describe a runtime as Steam-compatible unless it records:
   "steamExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
   "steamExecutableSha256": "...",
   "gameVersionString": "v5.0.2",
-  "hookLibrary": "/path/to/libbarony_bml.so",
+  "hookLibrary": "native/barony-modloader-hook/build/libbarony_bml.so",
   "hookLibrarySha256": "...",
   "hookManifest": "/path/to/steam-371970-22630456.json",
   "capabilities": [

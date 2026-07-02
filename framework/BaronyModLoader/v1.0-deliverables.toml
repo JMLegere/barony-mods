@@ -56,7 +56,7 @@ required_artifacts = [
 evidence = [
   "BML launcher dry-run executes the installed Steam executable, not a source-built sidecar",
   "dry-run environment includes BML_RUNTIME_MANIFEST, BML_PROFILE_DIR, SteamAppId, SteamGameId, LD_LIBRARY_PATH, and hook preload configuration",
-  "no-op hook writes runtime-load-report.json using the canonical schema",
+  "no-op Linux hook writes BaronyModLoader/reports/runtime-load-report.json using the canonical schema",
   "mismatched executable provenance fails closed before gameplay hooks install",
 ]
 

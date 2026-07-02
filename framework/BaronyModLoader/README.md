@@ -124,7 +124,7 @@ python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bm
 python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-steam-profile --package .tmp/bml-package-store/jml.stash/0.1.0
 ```
 
-The next CLI slice should replace the old source-built runtime registration example with installed-executable hook registration:
+The current Linux hook smoke uses the built native hook library path from this repository. The example below is intentionally a development path; packaged releases can register a relocated absolute hook path while preserving the same installed-executable launch contract:
 
 ```sh
 python framework/BaronyModLoader/app/barony_mod_loader.py runtime register \
@@ -133,7 +133,7 @@ python framework/BaronyModLoader/app/barony_mod_loader.py runtime register \
   --runtime-strategy installed-binary-hook \
   --steam-build-id 22630456 \
   --steam-executable /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 \
-  --hook-library /path/to/libbarony_bml.so \
+  --hook-library native/barony-modloader-hook/build/libbarony_bml.so \
   --hook-manifest native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json \
   --runtime-info framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json
 ```
@@ -150,19 +150,19 @@ python framework/BaronyModLoader/app/barony_mod_loader.py launch \
   -- --example-barony-arg
 ```
 
-`package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, writes runtime-manifest/active-mods artifacts, and should dry-run the installed-executable hook launch before any gameplay hooks are attempted.
+`package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, writes runtime-manifest/active-mods artifacts, and dry-runs the installed-executable hook launch.
 
 ## Runnable verification scenarios
 
-The Stash smoke scenario must be rebuilt around the installed PC executable hook path before it can prove gameplay behavior. Opening Barony directly from a storefront launcher starts the unmodified game without BML; Stash appears only when the BML app launches the installed executable with the hook/bootstrap runtime and a validated profile manifest.
+The current native hook smoke is Linux-only and proves injection/reporting only: `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so /usr/bin/true` should load the hook and write `<profile>/BaronyModLoader/reports/runtime-load-report.json` when the BML environment points at a profile, runtime manifest, and hook manifest. It does not resolve Barony symbols, patch gameplay, or create the Stash chest in-game.
 
 The intended staged verification sequence is:
 
-1. **No-op hook load:** launch the installed Steam/Linux executable with `LD_PRELOAD=/path/to/libbarony_bml.so`, a BML profile, and a runtime manifest; verify a canonical `runtime-load-report.json` is written.
+1. **No-op hook load:** launch `/usr/bin/true` or the installed Steam/Linux executable with `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so`, a BML profile, and a runtime manifest; verify `BaronyModLoader/reports/runtime-load-report.json` is written.
 2. **Provenance success/failure:** verify matching Steam build/executable hash/version succeeds and mismatched provenance fails closed before gameplay hooks install.
 3. **Symbol probe:** resolve a harmless symbol/global for Steam/Linux build `22630456` and write diagnostics without mutating gameplay state.
-4. **Lobby/shop placement:** verify Stash access points are created by the installed game process when Stash is active.
-5. **Inventory persistence:** verify the shared Void Chest inventory survives save/resume, death/new-run, and relaunch boundaries.
+4. **Lobby/shop placement:** after gameplay hooks exist, verify Stash access points are created by the installed game process when Stash is active.
+5. **Inventory persistence:** after gameplay hooks exist, verify the shared Void Chest inventory survives save/resume, death/new-run, and relaunch boundaries.
 6. **Disabled/mismatch behavior:** verify no Stash hooks activate when Stash is disabled and incompatible runtime/package metadata blocks clearly.
 
 The previous `/tmp/barony-bml-build/barony` source-build smoke path is obsolete for v1 Steam-current support.
@@ -184,7 +184,7 @@ The principle is to borrow product shape and operational discipline, not arbitra
 
 Stash is the first reference mod and the first acceptance test for BaronyModLoader.
 
-Stash augments Barony's existing Void Chest behavior so that players get a profile-persistent shared stash:
+The current Linux hook smoke does not implement the Stash chest, placement, persistence, or gameplay hooks. The target Stash behavior remains:
 
 1. The Stash package declares a persistent named inventory mapped to Barony's existing `void_chest_inventory` concept.
 2. The engine runtime loads that inventory from Stash's profile storage namespace.

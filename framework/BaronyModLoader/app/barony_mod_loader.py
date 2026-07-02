@@ -921,6 +921,14 @@ def validate_runtime_report(report: dict[str, Any]) -> ValidationResult:
                 actual=f"{contract_id}@{contract_version}",
             )
 
+
+    runtime = report.get("runtime")
+    if not isinstance(runtime, dict):
+        result.add("BML_RUNTIME_REPORT_RUNTIME_INVALID", "fatal", "Runtime load report must include runtime object with id, version, and strategy.")
+    else:
+        validate_required_string(result, runtime, "id", "BML_RUNTIME_REPORT_RUNTIME_INVALID", "runtime")
+        validate_required_string(result, runtime, "version", "BML_RUNTIME_REPORT_RUNTIME_INVALID", "runtime", semver=True)
+        validate_required_string(result, runtime, "strategy", "BML_RUNTIME_REPORT_RUNTIME_INVALID", "runtime")
     status = report.get("status")
     if status not in {"loaded", "failed"}:
         result.add("BML_RUNTIME_REPORT_STATUS_INVALID", "fatal", "Runtime load report status must be loaded or failed.", status=status)
@@ -978,7 +986,15 @@ def print_runtime_report_summary(path: Path, report: dict[str, Any] | None, resu
         return
 
     contract_id, contract_version = runtime_report_contract(report)
+    runtime = report.get("runtime")
+    runtime_label = "<missing>"
+    if isinstance(runtime, dict):
+        runtime_id = runtime.get("id") if isinstance(runtime.get("id"), str) else "<missing>"
+        runtime_version = runtime.get("version") if isinstance(runtime.get("version"), str) else "<missing>"
+        runtime_strategy = runtime.get("strategy") if isinstance(runtime.get("strategy"), str) else "<missing>"
+        runtime_label = f"{runtime_id}@{runtime_version} ({runtime_strategy})"
     print(f"  Contract: {contract_id or '<missing>'}@{contract_version or '<missing>'}")
+    print(f"  Runtime: {runtime_label}")
     print(f"  Status: {report.get('status', '<missing>')}")
 
     loaded_mods = report.get("loadedMods")
@@ -1211,7 +1227,7 @@ def command_runtime_register(args: argparse.Namespace) -> int:
         combined.add("BML_RUNTIME_STEAM_EXECUTABLE_NOT_FILE", "fatal", f"Installed executable path is not a file: {steam_executable}")
 
     if hook_library is None:
-        combined.add("BML_RUNTIME_HOOK_LIBRARY_MISSING", "fatal", "Hook library path is required for installed-binary-hook registration.", hint="Pass --hook-library /path/to/libbarony_bml.so")
+        combined.add("BML_RUNTIME_HOOK_LIBRARY_MISSING", "fatal", "Hook library path is required for installed-binary-hook registration.", hint="Pass --hook-library native/barony-modloader-hook/build/libbarony_bml.so")
     elif not hook_library.exists():
         combined.add("BML_RUNTIME_HOOK_LIBRARY_NOT_FOUND", "fatal", f"Hook library not found: {hook_library}")
     elif not hook_library.is_file():
@@ -2404,7 +2420,7 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_register.add_argument("--runtime-strategy", choices=SUPPORTED_RUNTIME_STRATEGIES, default=RUNTIME_STRATEGY_INSTALLED_HOOK, help="Runtime integration strategy. v1 supports installed-binary-hook.")
     runtime_register.add_argument("--executable", help="Deprecated alias for --steam-executable.")
     runtime_register.add_argument("--steam-executable", help="Installed Barony executable path to launch, e.g. barony.x86_64.")
-    runtime_register.add_argument("--hook-library", help="BML hook library injected into the installed executable, e.g. libbarony_bml.so.")
+    runtime_register.add_argument("--hook-library", help="BML hook library injected into the installed executable, e.g. native/barony-modloader-hook/build/libbarony_bml.so.")
     runtime_register.add_argument("--hook-manifest", help="Build-specific hook manifest describing the symbol map and hook capabilities.")
     runtime_register.add_argument("--runtime-info", required=True, help="Runtime-info JSON path for this hook runtime.")
     runtime_register.add_argument("--steam-app-id", default=STEAM_BARONY_APP_ID, help="Steam app id this runtime targets.")

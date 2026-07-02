@@ -76,7 +76,7 @@
   ],
   "runtimeReportPaths": {
     "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
-    "runtimeLoadReport": "BaronyModLoader/runtime-load-report.json",
+    "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
     "runtimeLog": "BaronyModLoader/logs/runtime.log",
     "stateRoot": "BaronyModLoader/state/"
   },
