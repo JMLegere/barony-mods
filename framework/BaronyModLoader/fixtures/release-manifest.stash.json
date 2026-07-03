@@ -64,8 +64,8 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "223e2f6f1c51188ebbc9d11e0c0a1f05e38e7d122d23946f32a9d1c3600ea03c",
-        "size": 84912
+        "sha256": "488dd095cfe5ed60d63c730918b146142ee26d4ac6d5fa039ee61540d5000cda",
+        "size": 94720
       },
       "status": "built_available_fail_closed",
       "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install opt-in pass-through detours for Entity::addItemToVoidChestServer, the seven-target core inventory lifecycle set via BML_STASH_INSTALL_CORE_PASSTHROUGH=1, and the six-target access/placement set via BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1, prove fake-provider call-through for all six access/placement replacements via BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1, rewrite the access/placement install report at process exit with live stock-game replacement call counts, relocate backward relative branches such as the installed Entity::addItemToChest thunk into an absolute jump to the out-of-line body, skip inherited LD_PRELOAD inside non-Barony helper processes unless BML_HOOK_ALLOW_NON_BARONY=1 is set, run the fake-provider-only experimental state-backed core lifecycle self-test via BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 plus BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 including generic chest add/get mutation, pass a timed installed Steam/Linux behavior-detour plus access/placement install probe without claiming Stash loaded, and still fail closed because the behavior-changing in-game Stash gameplay hook set is incomplete."
@@ -225,6 +225,12 @@
           "path": "BaronyModLoader/reports/stash-access-placement-self-test-report.json",
           "status": "passed_fail_closed",
           "notes": "The native hook smoke runs with BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 under the fake provider and validates trampoline call-through for actChest, actChestLid, generateDungeon, assignActions, newEntity, and setSpriteAttributes, including generateDungeonResult=7 and at least one replacement call for every installed access/placement target. This remains a fake-provider call-through proof, not a stock-game placement or playable Stash behavior claim."
+        },
+        {
+          "kind": "stash-placement-discovery",
+          "path": "BaronyModLoader/reports/stash-placement-discovery-report.json",
+          "status": "passed_fail_closed",
+          "notes": "The native hook smoke runs with BML_STASH_PLACEMENT_DISCOVERY=1 plus the access/placement pass-through install and records non-mutating placement context only. A timed installed Steam/Linux probe observed assignActions on the global Start Map, 19 newEntity calls and 5 setSpriteAttributes calls inside assignActions, and no placed Stash sprites; this informs the next lobby-placement mutation boundary but does not claim playable Stash access."
         },
         {
           "kind": "stash-core-behavior",

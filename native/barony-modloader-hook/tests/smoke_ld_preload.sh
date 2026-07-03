@@ -44,6 +44,7 @@ ACCESS_INSTALL_SYMBOL_REPORT="$ACCESS_INSTALL_REPORT_DIR/symbol-probe-report.jso
 ACCESS_INSTALL_STASH_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-hook-report.json"
 STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-access-placement-detour-install-report.json"
 STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-access-placement-self-test-report.json"
+STASH_PLACEMENT_DISCOVERY_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-placement-discovery-report.json"
 BEHAVIOR_PROFILE_DIR="$PROFILE_DIR/behavior-profile"
 BEHAVIOR_REPORT_DIR="$BEHAVIOR_PROFILE_DIR/BaronyModLoader/reports"
 BEHAVIOR_REPORT="$BEHAVIOR_REPORT_DIR/runtime-load-report.json"
@@ -405,6 +406,7 @@ PY
 
 BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 \
 BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 \
+BML_STASH_PLACEMENT_DISCOVERY=1 \
 BML_PROFILE_DIR="$ACCESS_INSTALL_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -412,7 +414,7 @@ BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
 LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
 /usr/bin/true
 
-python - "$ACCESS_INSTALL_REPORT" "$ACCESS_INSTALL_SYMBOL_REPORT" "$ACCESS_INSTALL_STASH_REPORT" "$STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT" "$STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT" <<'PY'
+python - "$ACCESS_INSTALL_REPORT" "$ACCESS_INSTALL_SYMBOL_REPORT" "$ACCESS_INSTALL_STASH_REPORT" "$STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT" "$STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT" "$STASH_PLACEMENT_DISCOVERY_REPORT" <<'PY'
 import json
 import pathlib
 import sys
@@ -422,7 +424,8 @@ symbol_report_path = pathlib.Path(sys.argv[2])
 stash_report_path = pathlib.Path(sys.argv[3])
 access_install_report_path = pathlib.Path(sys.argv[4])
 access_self_test_report_path = pathlib.Path(sys.argv[5])
-for path in (report_path, symbol_report_path, stash_report_path, access_install_report_path, access_self_test_report_path):
+placement_discovery_report_path = pathlib.Path(sys.argv[6])
+for path in (report_path, symbol_report_path, stash_report_path, access_install_report_path, access_self_test_report_path, placement_discovery_report_path):
     if not path.is_file():
         raise SystemExit(f"missing opt-in access/placement install report: {path}")
 
@@ -431,6 +434,7 @@ symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
 stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
 access_install_report = json.loads(access_install_report_path.read_text(encoding="utf-8"))
 access_self_test_report = json.loads(access_self_test_report_path.read_text(encoding="utf-8"))
+placement_discovery_report = json.loads(placement_discovery_report_path.read_text(encoding="utf-8"))
 
 assert report["status"] == "failed", report
 runtime_codes = {error["code"] for error in report["errors"]}
@@ -487,6 +491,22 @@ self_test_targets = access_self_test_report["targets"]
 assert {target["targetName"] for target in self_test_targets} == expected_targets, self_test_targets
 for target in self_test_targets:
     assert target["replacementCalls"] >= 1, target
+
+assert placement_discovery_report["schemaVersion"] == "0.1.0"
+assert placement_discovery_report["test"] == "stash-placement-discovery"
+assert placement_discovery_report["status"] == "observed", placement_discovery_report
+assert placement_discovery_report["claimBoundary"] == "non-mutating-placement-context-only"
+assert placement_discovery_report["summary"]["assignActionsCalls"] >= 1, placement_discovery_report
+assert placement_discovery_report["summary"]["newEntityCalls"] >= 1, placement_discovery_report
+assert placement_discovery_report["summary"]["setSpriteAttributesCalls"] >= 1, placement_discovery_report
+assert placement_discovery_report["assignActions"]["observed"] is True, placement_discovery_report
+assert placement_discovery_report["assignActions"]["map"]["name"] == "fake-lobby", placement_discovery_report
+assert placement_discovery_report["assignActions"]["map"]["width"] == 64, placement_discovery_report
+assert placement_discovery_report["assignActions"]["map"]["height"] == 48, placement_discovery_report
+assert placement_discovery_report["newEntity"]["selectedSpriteCalls"]["1791"] >= 1, placement_discovery_report
+assert any(sample["sprite"] == 1791 for sample in placement_discovery_report["newEntity"]["samples"]), placement_discovery_report
+assert placement_discovery_report["setSpriteAttributes"]["sampled"] >= 1, placement_discovery_report
+assert "does not spawn, modify, or claim" in " ".join(placement_discovery_report["notes"])
 print(f"opt-in stash access/placement pass-through call-through self-test remains fail-closed ok: {access_install_report_path}")
 PY
 

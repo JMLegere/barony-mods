@@ -32,6 +32,7 @@
 #define BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-detour-install-report.json"
 #define BML_STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-access-placement-detour-install-report.json"
 #define BML_STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-access-placement-self-test-report.json"
+#define BML_STASH_PLACEMENT_DISCOVERY_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-placement-discovery-report.json"
 #define BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-behavior-report.json"
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
@@ -44,6 +45,7 @@
 #define BML_DETOUR_MAX_COPY_BYTES 32U
 #define BML_DETOUR_MAX_INSTRUCTIONS 32U
 #define BML_DETOUR_MAX_RELOCATED_BYTES ((BML_DETOUR_MAX_COPY_BYTES * 8U) + BML_DETOUR_PATCH_BYTES)
+#define BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT 16U
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -154,6 +156,45 @@ typedef struct BmlStashCoreDetourInstall {
     char error_code[BML_MAX_TEXT];
     char error_message[BML_MAX_TEXT];
 } BmlStashCoreDetourInstall;
+
+typedef struct BmlStashPlacementMapPrefix {
+    char name[32];
+    char author[32];
+    unsigned int width;
+    unsigned int height;
+    unsigned int skybox;
+    int32_t flags[16];
+    int32_t *tiles;
+} BmlStashPlacementMapPrefix;
+
+typedef struct BmlStashPlacementAssignActionsSnapshot {
+    bool observed;
+    void *map_argument;
+    void *global_map_symbol;
+    bool map_argument_matches_global;
+    char map_name[33];
+    unsigned int map_width;
+    unsigned int map_height;
+    unsigned int map_skybox;
+    int new_entity_calls_before;
+    int new_entity_calls_after;
+    int set_sprite_attributes_calls_before;
+    int set_sprite_attributes_calls_after;
+} BmlStashPlacementAssignActionsSnapshot;
+
+typedef struct BmlStashPlacementNewEntitySample {
+    int sprite;
+    uint32_t pos;
+    void *entity_list;
+    void *creature_list;
+    void *result;
+} BmlStashPlacementNewEntitySample;
+
+typedef struct BmlStashPlacementSetSpriteSample {
+    void *entity;
+    void *source;
+    void *parent;
+} BmlStashPlacementSetSpriteSample;
 
 typedef struct BmlBaronyNode {
     struct BmlBaronyNode *next;
@@ -2040,6 +2081,27 @@ static size_t g_bml_stash_access_placement_target_count = 0U;
 static char g_bml_stash_access_placement_report_path[PATH_MAX];
 static bool g_bml_stash_access_placement_exit_report_registered = false;
 
+static bool g_bml_stash_placement_discovery_active = false;
+static bool g_bml_stash_placement_discovery_exit_report_registered = false;
+static char g_bml_stash_placement_discovery_report_path[PATH_MAX];
+static void *g_bml_stash_placement_global_map_symbol = NULL;
+static BmlStashPlacementAssignActionsSnapshot g_bml_stash_placement_assign_actions_snapshot;
+static int g_bml_stash_placement_assign_actions_new_entity_delta_total = 0;
+static int g_bml_stash_placement_assign_actions_set_sprite_delta_total = 0;
+static int g_bml_stash_placement_assign_actions_depth = 0;
+static BmlStashPlacementNewEntitySample g_bml_stash_placement_assign_actions_new_entity_samples[BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT];
+static size_t g_bml_stash_placement_assign_actions_new_entity_sample_count = 0U;
+static BmlStashPlacementSetSpriteSample g_bml_stash_placement_assign_actions_set_sprite_samples[BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT];
+static size_t g_bml_stash_placement_assign_actions_set_sprite_sample_count = 0U;
+static BmlStashPlacementNewEntitySample g_bml_stash_placement_new_entity_samples[BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT];
+static size_t g_bml_stash_placement_new_entity_sample_count = 0U;
+static int g_bml_stash_placement_new_entity_sprite_188_calls = 0;
+static int g_bml_stash_placement_new_entity_sprite_1484_calls = 0;
+static int g_bml_stash_placement_new_entity_sprite_1790_calls = 0;
+static int g_bml_stash_placement_new_entity_sprite_1791_calls = 0;
+static BmlStashPlacementSetSpriteSample g_bml_stash_placement_set_sprite_samples[BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT];
+static size_t g_bml_stash_placement_set_sprite_sample_count = 0U;
+
 static bool g_bml_stash_core_behavior_active = false;
 static bool g_bml_stash_core_behavior_loaded = false;
 static bool g_bml_stash_core_behavior_dirty = false;
@@ -2051,6 +2113,261 @@ static BmlStashNewItemFunction g_bml_stash_new_item = NULL;
 static BmlStashListFreeAllFunction g_bml_stash_list_free_all = NULL;
 static char g_bml_stash_state_dir_path[PATH_MAX];
 static char g_bml_stash_inventory_path[PATH_MAX];
+
+static void bml_reset_stash_placement_discovery_state(void) {
+    g_bml_stash_placement_global_map_symbol = NULL;
+    memset(&g_bml_stash_placement_assign_actions_snapshot, 0, sizeof(g_bml_stash_placement_assign_actions_snapshot));
+    g_bml_stash_placement_assign_actions_new_entity_delta_total = 0;
+    g_bml_stash_placement_assign_actions_set_sprite_delta_total = 0;
+    g_bml_stash_placement_assign_actions_depth = 0;
+    memset(g_bml_stash_placement_assign_actions_new_entity_samples, 0, sizeof(g_bml_stash_placement_assign_actions_new_entity_samples));
+    g_bml_stash_placement_assign_actions_new_entity_sample_count = 0U;
+    memset(g_bml_stash_placement_assign_actions_set_sprite_samples, 0, sizeof(g_bml_stash_placement_assign_actions_set_sprite_samples));
+    g_bml_stash_placement_assign_actions_set_sprite_sample_count = 0U;
+    memset(g_bml_stash_placement_new_entity_samples, 0, sizeof(g_bml_stash_placement_new_entity_samples));
+    g_bml_stash_placement_new_entity_sample_count = 0U;
+    g_bml_stash_placement_new_entity_sprite_188_calls = 0;
+    g_bml_stash_placement_new_entity_sprite_1484_calls = 0;
+    g_bml_stash_placement_new_entity_sprite_1790_calls = 0;
+    g_bml_stash_placement_new_entity_sprite_1791_calls = 0;
+    memset(g_bml_stash_placement_set_sprite_samples, 0, sizeof(g_bml_stash_placement_set_sprite_samples));
+    g_bml_stash_placement_set_sprite_sample_count = 0U;
+}
+
+static void bml_stash_placement_record_assign_actions_before(void *map_argument, int new_entity_calls_before, int set_sprite_attributes_calls_before) {
+    BmlStashPlacementAssignActionsSnapshot *snapshot = &g_bml_stash_placement_assign_actions_snapshot;
+    if (!g_bml_stash_placement_discovery_active) {
+        return;
+    }
+    snapshot->observed = true;
+    snapshot->map_argument = map_argument;
+    snapshot->global_map_symbol = g_bml_stash_placement_global_map_symbol;
+    snapshot->map_argument_matches_global = map_argument != NULL && map_argument == g_bml_stash_placement_global_map_symbol;
+    snapshot->new_entity_calls_before = new_entity_calls_before;
+    snapshot->set_sprite_attributes_calls_before = set_sprite_attributes_calls_before;
+    memset(snapshot->map_name, 0, sizeof(snapshot->map_name));
+    snapshot->map_width = 0U;
+    snapshot->map_height = 0U;
+    snapshot->map_skybox = 0U;
+    if (map_argument != NULL) {
+        const BmlStashPlacementMapPrefix *map_prefix = (const BmlStashPlacementMapPrefix *)map_argument;
+        memcpy(snapshot->map_name, map_prefix->name, sizeof(map_prefix->name));
+        snapshot->map_name[sizeof(snapshot->map_name) - 1U] = '\0';
+        snapshot->map_width = map_prefix->width;
+        snapshot->map_height = map_prefix->height;
+        snapshot->map_skybox = map_prefix->skybox;
+    }
+}
+
+static void bml_stash_placement_record_assign_actions_after(int new_entity_calls_before, int set_sprite_attributes_calls_before) {
+    BmlStashPlacementAssignActionsSnapshot *snapshot = &g_bml_stash_placement_assign_actions_snapshot;
+    int new_entity_delta;
+    int set_sprite_delta;
+    if (!g_bml_stash_placement_discovery_active) {
+        return;
+    }
+    snapshot->new_entity_calls_after = g_bml_stash_new_entity_replacement_calls;
+    snapshot->set_sprite_attributes_calls_after = g_bml_stash_set_sprite_attributes_replacement_calls;
+    new_entity_delta = snapshot->new_entity_calls_after - new_entity_calls_before;
+    set_sprite_delta = snapshot->set_sprite_attributes_calls_after - set_sprite_attributes_calls_before;
+    if (new_entity_delta > 0) {
+        g_bml_stash_placement_assign_actions_new_entity_delta_total += new_entity_delta;
+    }
+    if (set_sprite_delta > 0) {
+        g_bml_stash_placement_assign_actions_set_sprite_delta_total += set_sprite_delta;
+    }
+}
+
+static void bml_stash_placement_record_new_entity(int sprite, uint32_t pos, BmlBaronyList *entity_list, BmlBaronyList *creature_list, void *result) {
+    if (!g_bml_stash_placement_discovery_active) {
+        return;
+    }
+    if (sprite == 188) {
+        g_bml_stash_placement_new_entity_sprite_188_calls += 1;
+    } else if (sprite == 1484) {
+        g_bml_stash_placement_new_entity_sprite_1484_calls += 1;
+    } else if (sprite == 1790) {
+        g_bml_stash_placement_new_entity_sprite_1790_calls += 1;
+    } else if (sprite == 1791) {
+        g_bml_stash_placement_new_entity_sprite_1791_calls += 1;
+    }
+    if (g_bml_stash_placement_new_entity_sample_count < BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT) {
+        BmlStashPlacementNewEntitySample *sample = &g_bml_stash_placement_new_entity_samples[g_bml_stash_placement_new_entity_sample_count++];
+        sample->sprite = sprite;
+        sample->pos = pos;
+        sample->entity_list = entity_list;
+        sample->creature_list = creature_list;
+        sample->result = result;
+    }
+    if (g_bml_stash_placement_assign_actions_depth > 0 && g_bml_stash_placement_assign_actions_new_entity_sample_count < BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT) {
+        BmlStashPlacementNewEntitySample *sample = &g_bml_stash_placement_assign_actions_new_entity_samples[g_bml_stash_placement_assign_actions_new_entity_sample_count++];
+        sample->sprite = sprite;
+        sample->pos = pos;
+        sample->entity_list = entity_list;
+        sample->creature_list = creature_list;
+        sample->result = result;
+    }
+}
+
+static void bml_stash_placement_record_set_sprite_attributes(void *entity, void *source, void *parent) {
+    if (!g_bml_stash_placement_discovery_active) {
+        return;
+    }
+    if (g_bml_stash_placement_set_sprite_sample_count < BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT) {
+        BmlStashPlacementSetSpriteSample *sample = &g_bml_stash_placement_set_sprite_samples[g_bml_stash_placement_set_sprite_sample_count++];
+        sample->entity = entity;
+        sample->source = source;
+        sample->parent = parent;
+    }
+    if (g_bml_stash_placement_assign_actions_depth > 0 && g_bml_stash_placement_assign_actions_set_sprite_sample_count < BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT) {
+        BmlStashPlacementSetSpriteSample *sample = &g_bml_stash_placement_assign_actions_set_sprite_samples[g_bml_stash_placement_assign_actions_set_sprite_sample_count++];
+        sample->entity = entity;
+        sample->source = source;
+        sample->parent = parent;
+    }
+}
+
+static int bml_write_stash_placement_discovery_report(const char *report_path) {
+    const BmlStashPlacementAssignActionsSnapshot *snapshot = &g_bml_stash_placement_assign_actions_snapshot;
+    FILE *file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-placement-discovery\",\n  \"status\": ", file);
+    bml_json_write_escaped(file, snapshot->observed || g_bml_stash_new_entity_replacement_calls > 0 || g_bml_stash_set_sprite_attributes_replacement_calls > 0 ? "observed" : "installed_no_calls");
+    fputs(",\n  \"claimBoundary\": \"non-mutating-placement-context-only\",\n  \"summary\": {", file);
+    fprintf(file, "\n    \"assignActionsCalls\": %d,\n    \"newEntityCalls\": %d,\n    \"setSpriteAttributesCalls\": %d,\n    \"assignActionsNewEntityDelta\": %d,\n    \"assignActionsSetSpriteAttributesDelta\": %d\n  },",
+            g_bml_stash_assign_actions_replacement_calls,
+            g_bml_stash_new_entity_replacement_calls,
+            g_bml_stash_set_sprite_attributes_replacement_calls,
+            g_bml_stash_placement_assign_actions_new_entity_delta_total,
+            g_bml_stash_placement_assign_actions_set_sprite_delta_total);
+    fputs("\n  \"assignActions\": {\n    \"observed\": ", file);
+    fputs(snapshot->observed ? "true" : "false", file);
+    fputs(",\n    \"map\": ", file);
+    if (snapshot->observed) {
+        fputs("{\"argument\": ", file);
+        bml_write_address_or_null(file, snapshot->map_argument);
+        fputs(", \"globalMapSymbol\": ", file);
+        bml_write_address_or_null(file, snapshot->global_map_symbol);
+        fputs(", \"argumentMatchesGlobal\": ", file);
+        fputs(snapshot->map_argument_matches_global ? "true" : "false", file);
+        fputs(", \"name\": ", file);
+        bml_json_write_escaped(file, snapshot->map_name);
+        fprintf(file, ", \"width\": %u, \"height\": %u, \"skybox\": %u}", snapshot->map_width, snapshot->map_height, snapshot->map_skybox);
+    } else {
+        fputs("null", file);
+    }
+    fprintf(file, ",\n    \"lastNewEntityCallsBefore\": %d,\n    \"lastNewEntityCallsAfter\": %d,\n    \"lastSetSpriteAttributesCallsBefore\": %d,\n    \"lastSetSpriteAttributesCallsAfter\": %d,\n    \"scopedNewEntitySampled\": %zu,\n    \"scopedNewEntitySamples\": [",
+            snapshot->new_entity_calls_before,
+            snapshot->new_entity_calls_after,
+            snapshot->set_sprite_attributes_calls_before,
+            snapshot->set_sprite_attributes_calls_after,
+            g_bml_stash_placement_assign_actions_new_entity_sample_count);
+    for (size_t index = 0U; index < g_bml_stash_placement_assign_actions_new_entity_sample_count; ++index) {
+        const BmlStashPlacementNewEntitySample *sample = &g_bml_stash_placement_assign_actions_new_entity_samples[index];
+        fputs(index == 0U ? "\n      " : ",\n      ", file);
+        fprintf(file, "{\"sprite\": %d, \"pos\": %u, \"entityList\": ", sample->sprite, sample->pos);
+        bml_write_address_or_null(file, sample->entity_list);
+        fputs(", \"creatureList\": ", file);
+        bml_write_address_or_null(file, sample->creature_list);
+        fputs(", \"result\": ", file);
+        bml_write_address_or_null(file, sample->result);
+        fputc('}', file);
+    }
+    if (g_bml_stash_placement_assign_actions_new_entity_sample_count > 0U) {
+        fputs("\n    ", file);
+    }
+    fputs("],\n    \"scopedSetSpriteAttributesSampled\": ", file);
+    fprintf(file, "%zu", g_bml_stash_placement_assign_actions_set_sprite_sample_count);
+    fputs(",\n    \"scopedSetSpriteAttributesSamples\": [", file);
+    for (size_t index = 0U; index < g_bml_stash_placement_assign_actions_set_sprite_sample_count; ++index) {
+        const BmlStashPlacementSetSpriteSample *sample = &g_bml_stash_placement_assign_actions_set_sprite_samples[index];
+        fputs(index == 0U ? "\n      " : ",\n      ", file);
+        fputs("{\"entity\": ", file);
+        bml_write_address_or_null(file, sample->entity);
+        fputs(", \"source\": ", file);
+        bml_write_address_or_null(file, sample->source);
+        fputs(", \"parent\": ", file);
+        bml_write_address_or_null(file, sample->parent);
+        fputc('}', file);
+    }
+    if (g_bml_stash_placement_assign_actions_set_sprite_sample_count > 0U) {
+        fputs("\n    ", file);
+    }
+    fputs("]\n  },", file);
+    fputs("\n  \"newEntity\": {\n    \"selectedSpriteCalls\": {", file);
+    fprintf(file, "\n      \"188\": %d,\n      \"1484\": %d,\n      \"1790\": %d,\n      \"1791\": %d\n    },\n    \"sampleLimit\": %u,\n    \"sampled\": %zu,\n    \"samples\": [",
+            g_bml_stash_placement_new_entity_sprite_188_calls,
+            g_bml_stash_placement_new_entity_sprite_1484_calls,
+            g_bml_stash_placement_new_entity_sprite_1790_calls,
+            g_bml_stash_placement_new_entity_sprite_1791_calls,
+            (unsigned)BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT,
+            g_bml_stash_placement_new_entity_sample_count);
+    for (size_t index = 0U; index < g_bml_stash_placement_new_entity_sample_count; ++index) {
+        const BmlStashPlacementNewEntitySample *sample = &g_bml_stash_placement_new_entity_samples[index];
+        fputs(index == 0U ? "\n      " : ",\n      ", file);
+        fprintf(file, "{\"sprite\": %d, \"pos\": %u, \"entityList\": ", sample->sprite, sample->pos);
+        bml_write_address_or_null(file, sample->entity_list);
+        fputs(", \"creatureList\": ", file);
+        bml_write_address_or_null(file, sample->creature_list);
+        fputs(", \"result\": ", file);
+        bml_write_address_or_null(file, sample->result);
+        fputc('}', file);
+    }
+    if (g_bml_stash_placement_new_entity_sample_count > 0U) {
+        fputs("\n    ", file);
+    }
+    fputs("]\n  },\n  \"setSpriteAttributes\": {", file);
+    fprintf(file, "\n    \"sampleLimit\": %u,\n    \"sampled\": %zu,\n    \"samples\": [",
+            (unsigned)BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT,
+            g_bml_stash_placement_set_sprite_sample_count);
+    for (size_t index = 0U; index < g_bml_stash_placement_set_sprite_sample_count; ++index) {
+        const BmlStashPlacementSetSpriteSample *sample = &g_bml_stash_placement_set_sprite_samples[index];
+        fputs(index == 0U ? "\n      " : ",\n      ", file);
+        fputs("{\"entity\": ", file);
+        bml_write_address_or_null(file, sample->entity);
+        fputs(", \"source\": ", file);
+        bml_write_address_or_null(file, sample->source);
+        fputs(", \"parent\": ", file);
+        bml_write_address_or_null(file, sample->parent);
+        fputc('}', file);
+    }
+    if (g_bml_stash_placement_set_sprite_sample_count > 0U) {
+        fputs("\n    ", file);
+    }
+    fputs("]\n  },\n  \"notes\": [\n    \"Discovery mode only records call context and argument pointers from the access/placement pass-through replacements.\",\n    \"It does not spawn, modify, or claim any Stash access point.\"\n  ],\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static void bml_write_stash_placement_discovery_exit_report(void) {
+    if (!g_bml_stash_placement_discovery_active || !bml_has_value(g_bml_stash_placement_discovery_report_path)) {
+        return;
+    }
+    (void)bml_write_stash_placement_discovery_report(g_bml_stash_placement_discovery_report_path);
+}
+
+static void bml_configure_stash_placement_discovery(const char *report_path) {
+    if (!bml_has_value(report_path)) {
+        return;
+    }
+    bml_reset_stash_placement_discovery_state();
+    g_bml_stash_placement_discovery_active = true;
+    g_bml_stash_placement_global_map_symbol = dlsym(RTLD_DEFAULT, "map");
+    bml_copy_string(g_bml_stash_placement_discovery_report_path, sizeof(g_bml_stash_placement_discovery_report_path), report_path);
+    if (!g_bml_stash_placement_discovery_exit_report_registered) {
+        if (atexit(bml_write_stash_placement_discovery_exit_report) == 0) {
+            g_bml_stash_placement_discovery_exit_report_registered = true;
+        }
+    }
+}
 
 static BmlBaronyList *bml_stash_stats_void_chest_inventory(void) {
     void *stats_symbol = dlsym(RTLD_DEFAULT, "stats");
@@ -2388,22 +2705,35 @@ static int bml_stash_generate_dungeon_replacement(char *levelset, uint32_t seed,
 }
 
 static void bml_stash_assign_actions_replacement(void *map) {
+    int new_entity_calls_before = g_bml_stash_new_entity_replacement_calls;
+    int set_sprite_attributes_calls_before = g_bml_stash_set_sprite_attributes_replacement_calls;
     ++g_bml_stash_assign_actions_replacement_calls;
+    bml_stash_placement_record_assign_actions_before(map, new_entity_calls_before, set_sprite_attributes_calls_before);
+    if (g_bml_stash_placement_discovery_active) {
+        g_bml_stash_placement_assign_actions_depth += 1;
+    }
     if (g_bml_stash_assign_actions_original != NULL) {
         g_bml_stash_assign_actions_original(map);
     }
+    if (g_bml_stash_placement_discovery_active && g_bml_stash_placement_assign_actions_depth > 0) {
+        g_bml_stash_placement_assign_actions_depth -= 1;
+    }
+    bml_stash_placement_record_assign_actions_after(new_entity_calls_before, set_sprite_attributes_calls_before);
 }
 
 static void *bml_stash_new_entity_replacement(int sprite, uint32_t pos, BmlBaronyList *entity_list, BmlBaronyList *creature_list) {
+    void *result = NULL;
     ++g_bml_stash_new_entity_replacement_calls;
     if (g_bml_stash_new_entity_original != NULL) {
-        return g_bml_stash_new_entity_original(sprite, pos, entity_list, creature_list);
+        result = g_bml_stash_new_entity_original(sprite, pos, entity_list, creature_list);
     }
-    return NULL;
+    bml_stash_placement_record_new_entity(sprite, pos, entity_list, creature_list, result);
+    return result;
 }
 
 static void bml_stash_set_sprite_attributes_replacement(void *entity, void *source, void *parent) {
     ++g_bml_stash_set_sprite_attributes_replacement_calls;
+    bml_stash_placement_record_set_sprite_attributes(entity, source, parent);
     if (g_bml_stash_set_sprite_attributes_original != NULL) {
         g_bml_stash_set_sprite_attributes_original(entity, source, parent);
     }
@@ -2579,6 +2909,9 @@ static void bml_reset_stash_access_placement_state(void) {
     g_bml_stash_assign_actions_replacement_calls = 0;
     g_bml_stash_new_entity_replacement_calls = 0;
     g_bml_stash_set_sprite_attributes_replacement_calls = 0;
+    g_bml_stash_placement_discovery_active = false;
+    g_bml_stash_placement_discovery_report_path[0] = '\0';
+    bml_reset_stash_placement_discovery_state();
 }
 
 static void bml_init_stash_core_detour_target(BmlStashCoreDetourInstall *target, const char *target_name, const char *target_symbol, void *replacement_address) {
@@ -2889,6 +3222,8 @@ static int bml_write_stash_access_placement_self_test_report(const char *report_
 
 static int bml_run_stash_access_placement_self_test(char *error_code, size_t error_code_size, char *error_message, size_t error_message_size, int *generate_dungeon_result) {
     void *fake_provider_marker = dlsym(RTLD_DEFAULT, "bml_fake_detour_counter");
+    void *fake_assign_actions_map_symbol = dlsym(RTLD_DEFAULT, "bml_fake_assign_actions_map");
+    void *fake_assign_actions_map = NULL;
     void *act_chest_address = dlsym(RTLD_DEFAULT, "_Z8actChestP6Entity");
     void *act_chest_lid_address = dlsym(RTLD_DEFAULT, "_Z11actChestLidP6Entity");
     void *generate_dungeon_address = dlsym(RTLD_DEFAULT, "_Z15generateDungeonPcjSt5tupleIJiiiiEE");
@@ -2912,6 +3247,9 @@ static int bml_run_stash_access_placement_self_test(char *error_code, size_t err
         bml_copy_string(error_message, error_message_size, "Stash access/placement self-test requires the fake provider plus all six access/placement symbols.");
         return -1;
     }
+    if (fake_assign_actions_map_symbol != NULL) {
+        memcpy(&fake_assign_actions_map, fake_assign_actions_map_symbol, sizeof(fake_assign_actions_map));
+    }
 
     memset(fake_entity, 0, sizeof(fake_entity));
     target_act_chest = bml_stash_entity_action_function_from_address(act_chest_address);
@@ -2924,7 +3262,7 @@ static int bml_run_stash_access_placement_self_test(char *error_code, size_t err
     target_act_chest(fake_entity);
     target_act_chest_lid(fake_entity);
     generated = target_generate_dungeon(NULL, 123U, 0U, 0U);
-    target_assign_actions(NULL);
+    target_assign_actions(fake_assign_actions_map);
     (void)target_new_entity(1791, 1U, NULL, NULL);
     target_set_sprite_attributes(NULL, NULL, NULL);
 
@@ -2946,7 +3284,7 @@ static int bml_run_stash_access_placement_self_test(char *error_code, size_t err
     return 0;
 }
 
-static int bml_run_stash_access_placement_passthrough_install(const char *report_path, const char *self_test_report_path, bool self_test_requested) {
+static int bml_run_stash_access_placement_passthrough_install(const char *report_path, const char *self_test_report_path, bool self_test_requested, const char *placement_discovery_report_path, bool placement_discovery_requested) {
     BmlStashCoreDetourInstall targets[6];
     const size_t target_count = sizeof(targets) / sizeof(targets[0]);
     int result = 0;
@@ -2957,6 +3295,9 @@ static int bml_run_stash_access_placement_passthrough_install(const char *report
     memset(self_test_error_code, 0, sizeof(self_test_error_code));
     memset(self_test_error_message, 0, sizeof(self_test_error_message));
     bml_reset_stash_access_placement_state();
+    if (placement_discovery_requested) {
+        bml_configure_stash_placement_discovery(placement_discovery_report_path);
+    }
     bml_init_stash_core_detour_target(&targets[0], "actChest", "_Z8actChestP6Entity", bml_stash_entity_action_function_address(bml_stash_act_chest_replacement));
     bml_init_stash_core_detour_target(&targets[1], "actChestLid", "_Z11actChestLidP6Entity", bml_stash_entity_action_function_address(bml_stash_act_chest_lid_replacement));
     bml_init_stash_core_detour_target(&targets[2], "generateDungeon", "_Z15generateDungeonPcjSt5tupleIJiiiiEE", bml_stash_generate_dungeon_function_address(bml_stash_generate_dungeon_replacement));
@@ -3217,6 +3558,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *stash_install_core_passthrough;
     const char *stash_install_access_placement_passthrough;
     const char *stash_access_placement_self_test;
+    const char *stash_placement_discovery;
     const char *stash_enable_core_behavior;
     const char *stash_core_behavior_self_test;
     BmlError errors[BML_MAX_ERRORS];
@@ -3232,6 +3574,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     bool stash_enable_core_behavior_requested;
     bool stash_core_behavior_self_test_requested;
     bool stash_access_placement_self_test_requested;
+    bool stash_placement_discovery_requested;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
     char symbol_report_path[PATH_MAX];
@@ -3242,6 +3585,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char stash_core_detour_install_report_path[PATH_MAX];
     char stash_access_placement_detour_install_report_path[PATH_MAX];
     char stash_access_placement_self_test_report_path[PATH_MAX];
+    char stash_placement_discovery_report_path[PATH_MAX];
     char stash_core_behavior_report_path[PATH_MAX];
     char *runtime_json = NULL;
 
@@ -3267,6 +3611,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_install_core_passthrough = getenv("BML_STASH_INSTALL_CORE_PASSTHROUGH");
     stash_install_access_placement_passthrough = getenv("BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH");
     stash_access_placement_self_test = getenv("BML_STASH_ACCESS_PLACEMENT_SELF_TEST");
+    stash_placement_discovery = getenv("BML_STASH_PLACEMENT_DISCOVERY");
     stash_enable_core_behavior = getenv("BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR");
     stash_core_behavior_self_test = getenv("BML_STASH_CORE_BEHAVIOR_SELF_TEST");
     stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
@@ -3274,6 +3619,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_install_core_passthrough_requested = strcmp(stash_install_core_passthrough != NULL ? stash_install_core_passthrough : "", "1") == 0;
     stash_install_access_placement_passthrough_requested = strcmp(stash_install_access_placement_passthrough != NULL ? stash_install_access_placement_passthrough : "", "1") == 0;
     stash_access_placement_self_test_requested = strcmp(stash_access_placement_self_test != NULL ? stash_access_placement_self_test : "", "1") == 0;
+    stash_placement_discovery_requested = strcmp(stash_placement_discovery != NULL ? stash_placement_discovery : "", "1") == 0;
     stash_enable_core_behavior_requested = strcmp(stash_enable_core_behavior != NULL ? stash_enable_core_behavior : "", "1") == 0;
     stash_core_behavior_self_test_requested = strcmp(stash_core_behavior_self_test != NULL ? stash_core_behavior_self_test : "", "1") == 0;
 
@@ -3308,6 +3654,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_access_placement_detour_install_report_path, sizeof(stash_access_placement_detour_install_report_path), profile_dir, BML_STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_access_placement_self_test_report_path, sizeof(stash_access_placement_self_test_report_path), profile_dir, BML_STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(stash_placement_discovery_report_path, sizeof(stash_placement_discovery_report_path), profile_dir, BML_STASH_PLACEMENT_DISCOVERY_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_core_behavior_report_path, sizeof(stash_core_behavior_report_path), profile_dir, BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
@@ -3336,7 +3683,9 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_DETOUR_SELF_TEST_FAILED", "BML_DETOUR_SELF_TEST=1 was requested, but the native absolute-jump detour substrate self-test failed.", "BML_DETOUR_SELF_TEST", detour_self_test_report_path);
     }
 
-    if (stash_access_placement_self_test_requested && !stash_install_access_placement_passthrough_requested) {
+    if (stash_placement_discovery_requested && !stash_install_access_placement_passthrough_requested) {
+        bml_add_error(errors, &error_count, "BML_STASH_PLACEMENT_DISCOVERY_WITHOUT_INSTALL", "BML_STASH_PLACEMENT_DISCOVERY=1 requires BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1.", "BML_STASH_PLACEMENT_DISCOVERY", stash_placement_discovery_report_path);
+    } else if (stash_access_placement_self_test_requested && !stash_install_access_placement_passthrough_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_WITHOUT_INSTALL", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 requires BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1.", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST", stash_access_placement_self_test_report_path);
     } else if (stash_core_behavior_self_test_requested && !stash_enable_core_behavior_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_WITHOUT_BEHAVIOR", "BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 requires BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1.", "BML_STASH_CORE_BEHAVIOR_SELF_TEST", stash_core_behavior_report_path);
@@ -3358,7 +3707,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         }
 
         if (stash_install_access_placement_passthrough_requested &&
-            bml_run_stash_access_placement_passthrough_install(stash_access_placement_detour_install_report_path, stash_access_placement_self_test_report_path, stash_access_placement_self_test_requested) != 0) {
+            bml_run_stash_access_placement_passthrough_install(stash_access_placement_detour_install_report_path, stash_access_placement_self_test_report_path, stash_access_placement_self_test_requested, stash_placement_discovery_report_path, stash_placement_discovery_requested) != 0) {
             bml_add_error(errors, &error_count, "BML_STASH_ACCESS_PLACEMENT_INSTALL_FAILED", "BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 was requested, but the access/placement Stash pass-through detour set could not be fully installed.", "BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH", stash_access_placement_detour_install_report_path);
         }
 

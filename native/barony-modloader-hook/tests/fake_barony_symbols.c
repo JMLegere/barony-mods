@@ -48,6 +48,16 @@ typedef struct BmlFakeStat {
     BmlFakeList void_chest_inventory;
 } BmlFakeStat;
 
+typedef struct BmlFakeMapPrefix {
+    char name[32];
+    char author[32];
+    unsigned int width;
+    unsigned int height;
+    unsigned int skybox;
+    int32_t flags[16];
+    int32_t *tiles;
+} BmlFakeMapPrefix;
+
 static BmlFakeStat bml_fake_stat_zero;
 void *bml_fake_stats[1] __asm__("stats") = { &bml_fake_stat_zero };
 
@@ -521,7 +531,16 @@ __asm__(
     "  ret\n"
     ".size _Z19setSpriteAttributesP6EntityS0_S0_, .-_Z19setSpriteAttributesP6EntityS0_S0_\n");
 
-int bml_fake_map __asm__("map") = 1;
+BmlFakeMapPrefix bml_fake_map __asm__("map") = {
+    "fake-lobby",
+    "bml-fake",
+    64U,
+    48U,
+    0U,
+    {0},
+    NULL,
+};
+void *bml_fake_assign_actions_map __asm__("bml_fake_assign_actions_map") = &bml_fake_map;
 int bml_fake_map_rng __asm__("map_rng") = 1;
 int bml_fake_map_server_rng __asm__("map_server_rng") = 1;
 int bml_fake_multiplayer __asm__("multiplayer") = 1;
