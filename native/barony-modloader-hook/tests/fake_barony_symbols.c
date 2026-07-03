@@ -373,6 +373,8 @@ void *bml_fake_new_entity_last_entity __asm__("bml_fake_new_entity_last_entity")
 void *bml_fake_new_entity_last_entity_list __asm__("bml_fake_new_entity_last_entity_list") = NULL;
 int bml_fake_entity_list_count __asm__("bml_fake_entity_list_count") = 0;
 uint32_t bml_fake_next_entity_uid __asm__("bml_fake_next_entity_uid") = 1000U;
+static void *bml_fake_created_entities[128];
+static size_t bml_fake_created_entity_count = 0U;
 
 static void bml_fake_entity_deconstructor(void *data) {
     free(data);
@@ -406,6 +408,9 @@ void *bml_fake_new_entity_impl(int sprite, uint32_t pos, BmlFakeList *entity_lis
     bml_fake_write_double(entity, BML_FAKE_ENTITY_Y_OFFSET, (double)((pos / 256U) % 256U));
     bml_fake_write_double(entity, BML_FAKE_ENTITY_Z_OFFSET, 0.0);
     bml_fake_write_i32(entity, BML_FAKE_ENTITY_SPRITE_OFFSET, sprite);
+    if (bml_fake_created_entity_count < (sizeof(bml_fake_created_entities) / sizeof(bml_fake_created_entities[0]))) {
+        bml_fake_created_entities[bml_fake_created_entity_count++] = entity;
+    }
 
     if (entity_list != NULL) {
         node = bml_fake_list_AddNodeLast(entity_list);
@@ -637,6 +642,50 @@ static bool bml_fake_shoparea_storage[64U * 48U] = {
     [8U + 8U * 48U] = true,
 };
 void *bml_fake_TileEntityList __asm__("TileEntityList") = &bml_fake_tile_entity_list_storage;
+static void *bml_fake_find_created_entity_by_uid(int uid) {
+    for (size_t index = 0U; index < bml_fake_created_entity_count; ++index) {
+        void *entity = bml_fake_created_entities[index];
+        if (entity != NULL && bml_fake_read_i32(entity, BML_FAKE_ENTITY_UID_OFFSET) == uid) {
+            return entity;
+        }
+    }
+    for (size_t index = 0U; index < (sizeof(bml_fake_selected_entity) / sizeof(bml_fake_selected_entity[0])); ++index) {
+        void *entity = bml_fake_selected_entity[index];
+        if (entity != NULL && bml_fake_read_i32(entity, BML_FAKE_ENTITY_UID_OFFSET) == uid) {
+            return entity;
+        }
+    }
+    return NULL;
+}
+
+void *bml_fake_uid_to_entity_impl(int uid) {
+    return bml_fake_find_created_entity_by_uid(uid);
+}
+
+void bml_fake_uidToEntity(void) __asm__("_Z11uidToEntityi");
+
+__asm__(
+    ".text\n"
+    ".globl _Z11uidToEntityi\n"
+    ".type _Z11uidToEntityi, @function\n"
+    "_Z11uidToEntityi:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_uid_to_entity_impl@PLT\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z11uidToEntityi, .-_Z11uidToEntityi\n");
+
 
 void bml_fake_assign_actions_impl(void *map_argument) {
     (void)map_argument;

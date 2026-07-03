@@ -161,7 +161,7 @@ def modrm_uses_rip_relative(modrm: int) -> bool:
     return (modrm & 0xC7) == 0x05
 
 def opcode_uses_supported_modrm(op: int) -> bool:
-    return op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B, 0x8D}
+    return op in {0x31, 0x39, 0x3B, 0x63, 0x85, 0x89, 0x8B, 0x8D}
 
 
 def opcode_uses_supported_modrm_immediate(op: int) -> bool:
@@ -208,6 +208,23 @@ def decode_modrm_copyable_length(
     if offset + length > limit:
         return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
     return length, None, None
+
+def decode_register_only_group_copyable_length(
+    code: bytes,
+    offset: int,
+    limit: int,
+    opcode_length: int,
+    truncated_message: str,
+    unsupported_message: str,
+) -> tuple[int | None, str | None, str | None]:
+    if offset + opcode_length + 1 > limit:
+        return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
+
+    modrm = code[offset + opcode_length]
+    reg_opcode = (modrm >> 3) & 0x07
+    if not modrm_is_register_only(modrm) or reg_opcode in {0, 1}:
+        return None, "BML_DETOUR_UNSUPPORTED_INSTRUCTION", unsupported_message
+    return opcode_length + 1, None, None
 
 def decode_modrm_immediate_copyable_length(
     code: bytes,
@@ -335,6 +352,15 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
                 4,
                 "Detour target prologue ended in the middle of a supported REX imm32 arithmetic/comparison instruction.",
                 "Detour target prologue uses an unsupported REX imm32 arithmetic/comparison form.",
+            )
+        if next_op == 0xF7:
+            return decode_register_only_group_copyable_length(
+                code,
+                offset,
+                limit,
+                2,
+                "Detour target prologue ended in the middle of a supported REX register-only group instruction.",
+                "Detour target prologue uses an unsupported REX group instruction form.",
             )
 
     if op == 0x90 or 0x50 <= op <= 0x57 or 0x58 <= op <= 0x5F:

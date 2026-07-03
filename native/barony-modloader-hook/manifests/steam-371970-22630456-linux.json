@@ -197,6 +197,17 @@
       ]
     },
     {
+      "id": "uid_to_entity",
+      "kind": "function",
+      "mangledSymbol": "_Z11uidToEntityi",
+      "demangledLabel": "uidToEntity(int)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
       "id": "new_item",
       "kind": "function",
       "mangledSymbol": "_Z7newItem8ItemType6StatusssjbP6list_t",
@@ -408,6 +419,7 @@
         "new_entity",
         "set_sprite_attributes",
         "language_get",
+        "uid_to_entity",
         "map",
         "map_rng",
         "map_server_rng",
@@ -428,6 +440,7 @@
         "new_entity",
         "set_sprite_attributes",
         "language_get",
+        "uid_to_entity",
         "map",
         "map_rng",
         "map_server_rng",

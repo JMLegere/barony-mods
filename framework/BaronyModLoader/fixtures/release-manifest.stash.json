@@ -64,18 +64,18 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "c9345663aaaa4d6dfbb8f1c81dcbbc67bfd0adc955f47d97b5df696eac0a8593",
-        "size": 109192
+        "sha256": "71c303dd79f1e44f3a0c721c3fa2f4dbedcead594dcb3a82a2e78242704b4fdd",
+        "size": 113768
       },
       "status": "built_available_production_stash",
-      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install the production playable Stash bundle for validated jml.stash manifests, place the lobby access point at x=232/y=456 on Start Map, bind framework and spell Void Chests to the persistent stash inventory, install generated-shop placement, and detour Language::get so framework Stash access points show the scoped prompt \"Open stash\" instead of the vanilla \"Open chest\". The opt-in access/placement pass-through proof now covers seven targets: actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, and Language::get."
+      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install the production playable Stash bundle for validated jml.stash manifests, place the lobby access point at x=232/y=456 on Start Map, bind framework and spell Void Chests to the persistent stash inventory, install generated-shop placement, and detour uidToEntity plus Language::get so framework Stash access points show the scoped hover prompt \"Open stash\" instead of the vanilla \"Open chest\". The opt-in access/placement pass-through proof now covers eight targets: actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get."
     },
     "hookManifest": {
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "c5322f5068f42421b313f5ef3ebfc2e73bad36a3265724b22151356408cb5209",
-        "size": 12590
+        "sha256": "9d85832737839a0c059633b9831f9a0318676e49a0fc85951b60ef5d0bd4d64b",
+        "size": 12908
       },
       "status": "present",
       "notes": "Pins Steam app/build, Linux platform, game version, executable hash/build id, symbol probes, and fail-closed Stash hook targets."

@@ -468,8 +468,8 @@ assert access_install_report["backend"] == {
     "decoder": "fixture-safe-subset",
 }
 assert access_install_report["summary"] == {
-    "requested": 7,
-    "installed": 7,
+    "requested": 8,
+    "installed": 8,
     "failed": 0,
     "failClosed": True,
 }, access_install_report
@@ -480,6 +480,7 @@ expected_targets = {
     "assignActions",
     "newEntity",
     "setSpriteAttributes",
+    "uidToEntity",
     "Language::get",
 }
 targets = access_install_report["targets"]
