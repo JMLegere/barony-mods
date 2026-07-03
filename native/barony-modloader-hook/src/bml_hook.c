@@ -80,14 +80,25 @@
 #define BML_STASH_CHEST_VOID_STATE_PERMANENT ((int32_t)(-1))
 #define BML_STASH_INTERNAL_MARKER_SKILL58 ((int32_t)0x424D4C00)
 #define BML_STASH_MAP_OFFSET_ENTITIES ((uintptr_t)208U)
-#define BML_STASH_PLACEMENT_ANCHOR_OFFSET_X 32.0
-#define BML_STASH_PLACEMENT_LID_OFFSET_Y (-3.0)
+#define BML_STASH_LOBBY_PLACEMENT_X 232.0
+#define BML_STASH_LOBBY_PLACEMENT_Y 456.0
+#define BML_STASH_PI 3.14159265358979323846
+// Barony's assignActions chest setup labels yaw=0 as east-facing and yaw=3*PI/2 as north-facing.
+#define BML_STASH_YAW_EAST 0.0
+#define BML_STASH_YAW_SOUTH (BML_STASH_PI / 2.0)
+#define BML_STASH_YAW_WEST BML_STASH_PI
+#define BML_STASH_YAW_NORTH (3.0 * BML_STASH_PI / 2.0)
+#define BML_STASH_LOBBY_PLACEMENT_YAW BML_STASH_YAW_NORTH
+#define BML_STASH_PLACEMENT_LID_HINGE_OFFSET 3.0
 #define BML_STASH_PLACEMENT_LID_OFFSET_Z (-2.75)
 #define BML_STASH_MULTIPLAYER_CLIENT 2
 #define BML_STASH_MULTIPLAYER_DIRECTCLIENT 4
 #define BML_STASH_SPRITE_LOBBY_CHEST 1791
 #define BML_STASH_SPRITE_LOBBY_LID 1790
 #define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
+#define BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST 4005
+#define BML_STASH_PROMPT_OPEN_STASH "Open stash"
+#define BML_STASH_SELECTED_ENTITY_PLAYERS 4U
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -285,6 +296,7 @@ static const BmlRequiredSymbol BML_REQUIRED_SYMBOLS[] = {
     {"assignActions", "_Z13assignActionsP5map_t", "function"},
     {"newEntity", "_Z9newEntityijP6list_tS0_", "function"},
     {"setSpriteAttributes", "_Z19setSpriteAttributesP6EntityS0_S0_", "function"},
+    {"Language::get", "_ZN8Language3getEi", "function"},
     {"newItem", "_Z7newItem8ItemType6StatusssjbP6list_t", "function"},
     {"list_FreeAll", "_Z12list_FreeAllP6list_t", "function"},
     {"list_RemoveNode", "_Z15list_RemoveNodeP6node_t", "function"},
@@ -297,6 +309,7 @@ static const BmlRequiredSymbol BML_REQUIRED_SYMBOLS[] = {
     {"multiplayer", "multiplayer", "data"},
     {"clientnum", "clientnum", "data"},
     {"openedChest", "openedChest", "data"},
+    {"selectedEntity", "selectedEntity", "data"},
     {"shoparea", "shoparea", "data"},
     {"TileEntityList", "TileEntityList", "data"}
 };
@@ -308,7 +321,9 @@ static const char *const BML_STASH_VOID_CHEST_BINDING_TARGETS[] = {
     "_Z11actChestLidP6Entity",
     "_ZN6Entity21getChestInventoryListEv",
     "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_",
-    "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi"
+    "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi",
+    "_ZN8Language3getEi",
+    "selectedEntity"
 };
 
 static const char *const BML_STASH_INVENTORY_PERSISTENCE_TARGETS[] = {
@@ -329,9 +344,11 @@ static const char *const BML_STASH_LOBBY_PLACEMENT_TARGETS[] = {
     "_Z13assignActionsP5map_t",
     "_Z9newEntityijP6list_tS0_",
     "_Z19setSpriteAttributesP6EntityS0_S0_",
+    "_ZN8Language3getEi",
     "map",
     "map_rng",
     "map_server_rng",
+    "selectedEntity",
     "TileEntityList"
 };
 
@@ -340,9 +357,11 @@ static const char *const BML_STASH_SHOP_PLACEMENT_TARGETS[] = {
     "_Z13assignActionsP5map_t",
     "_Z9newEntityijP6list_tS0_",
     "_Z19setSpriteAttributesP6EntityS0_S0_",
+    "_ZN8Language3getEi",
     "map",
     "map_rng",
     "map_server_rng",
+    "selectedEntity",
     "shoparea",
     "TileEntityList"
 };
@@ -1942,6 +1961,7 @@ typedef void *(*BmlStashNewEntityFunction)(int, uint32_t, BmlBaronyList *, BmlBa
 typedef void (*BmlStashSetSpriteAttributesFunction)(void *, void *, void *);
 typedef void *(*BmlStashNewItemFunction)(int, int, int16_t, int16_t, uint32_t, bool, BmlBaronyList *);
 typedef void (*BmlStashListFreeAllFunction)(BmlBaronyList *);
+typedef const char *(*BmlLanguageGetFunction)(int);
 _Static_assert(sizeof(BmlStashGetChestInventoryListFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect getChestInventoryList pointers to fit in void pointers");
 _Static_assert(sizeof(BmlStashRemoveItemFromVoidChestServerFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect removeItemFromVoidChestServer pointers to fit in void pointers");
 _Static_assert(sizeof(BmlStashAddItemToChestFunction) == sizeof(void *), "BML Linux x86_64 Stash behavior expects addItemToChest pointers to fit in void pointers");
@@ -1954,6 +1974,7 @@ _Static_assert(sizeof(BmlStashGenerateDungeonFunction) == sizeof(void *), "BML L
 _Static_assert(sizeof(BmlStashAssignActionsFunction) == sizeof(void *), "BML Linux x86_64 Stash access placement expects assignActions pointers to fit in void pointers");
 _Static_assert(sizeof(BmlStashNewEntityFunction) == sizeof(void *), "BML Linux x86_64 Stash access placement expects newEntity pointers to fit in void pointers");
 _Static_assert(sizeof(BmlStashSetSpriteAttributesFunction) == sizeof(void *), "BML Linux x86_64 Stash access placement expects setSpriteAttributes pointers to fit in void pointers");
+_Static_assert(sizeof(BmlLanguageGetFunction) == sizeof(void *), "BML Linux x86_64 Stash access placement expects Language::get pointers to fit in void pointers");
 
 static BmlStashAddItemToVoidChestServerFunction bml_stash_add_item_function_from_address(void *address) {
     BmlStashAddItemToVoidChestServerFunction function;
@@ -2087,6 +2108,18 @@ static void *bml_stash_set_sprite_attributes_function_address(BmlStashSetSpriteA
     return address;
 }
 
+static BmlLanguageGetFunction bml_language_get_function_from_address(void *address) {
+    BmlLanguageGetFunction function;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_language_get_function_address(BmlLanguageGetFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
 static BmlStashAddItemToVoidChestServerFunction g_bml_stash_add_item_original = NULL;
 static int g_bml_stash_add_item_replacement_calls = 0;
 static void *g_bml_stash_add_item_original_result = NULL;
@@ -2111,14 +2144,16 @@ static BmlStashGenerateDungeonFunction g_bml_stash_generate_dungeon_original = N
 static BmlStashAssignActionsFunction g_bml_stash_assign_actions_original = NULL;
 static BmlStashNewEntityFunction g_bml_stash_new_entity_original = NULL;
 static BmlStashSetSpriteAttributesFunction g_bml_stash_set_sprite_attributes_original = NULL;
+static BmlLanguageGetFunction g_bml_language_get_original = NULL;
 static int g_bml_stash_act_chest_replacement_calls = 0;
 static int g_bml_stash_act_chest_lid_replacement_calls = 0;
 static int g_bml_stash_generate_dungeon_replacement_calls = 0;
 static int g_bml_stash_assign_actions_replacement_calls = 0;
 static int g_bml_stash_new_entity_replacement_calls = 0;
 static int g_bml_stash_set_sprite_attributes_replacement_calls = 0;
+static int g_bml_language_get_replacement_calls = 0;
 
-static BmlStashCoreDetourInstall g_bml_stash_access_placement_targets[6];
+static BmlStashCoreDetourInstall g_bml_stash_access_placement_targets[7];
 static size_t g_bml_stash_access_placement_target_count = 0U;
 static char g_bml_stash_access_placement_report_path[PATH_MAX];
 static bool g_bml_stash_access_placement_exit_report_registered = false;
@@ -2526,6 +2561,26 @@ static void bml_entity_set_parent(void *entity, int32_t parent_uid) {
 static int32_t bml_entity_get_uid(void *entity) {
     return bml_entity_get_s32(entity, BML_STASH_ENTITY_OFFSET_UID);
 }
+static bool bml_stash_entity_is_framework_stash_access(void *entity) {
+    if (entity == NULL) {
+        return false;
+    }
+    return bml_entity_get_s32(entity, BML_STASH_ENTITY_OFFSET_SKILL58) == BML_STASH_INTERNAL_MARKER_SKILL58;
+}
+static bool bml_stash_any_selected_entity_is_framework_stash_access(void) {
+    void *selected_entity_symbol = dlsym(RTLD_DEFAULT, "selectedEntity");
+    void **selected_entities = NULL;
+    if (selected_entity_symbol == NULL) {
+        return false;
+    }
+    selected_entities = (void **)selected_entity_symbol;
+    for (size_t index = 0U; index < BML_STASH_SELECTED_ENTITY_PLAYERS; ++index) {
+        if (bml_stash_entity_is_framework_stash_access(selected_entities[index])) {
+            return true;
+        }
+    }
+    return false;
+}
 static void bml_entity_set_flag(void *entity, int flag_bit, bool value) {
     if (entity == NULL || flag_bit < 0) {
         return;
@@ -2836,6 +2891,16 @@ static void bml_stash_act_chest_lid_replacement(void *entity) {
         g_bml_stash_act_chest_lid_original(entity);
     }
 }
+static const char *bml_language_get_replacement(int language_id) {
+    ++g_bml_language_get_replacement_calls;
+    if (language_id == BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST && bml_stash_any_selected_entity_is_framework_stash_access()) {
+        return BML_STASH_PROMPT_OPEN_STASH;
+    }
+    if (g_bml_language_get_original != NULL) {
+        return g_bml_language_get_original(language_id);
+    }
+    return "";
+}
 
 static bool bml_stash_playable_try_place_shop_chest_and_lid(void *map_argument);
 static void *bml_stash_playable_get_map_symbol(void);
@@ -2914,8 +2979,19 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
     int32_t lid_uid;
     double chest_z = 6.0;
     double lid_x = chest_x;
-    double lid_y = chest_y + BML_STASH_PLACEMENT_LID_OFFSET_Y;
+    double lid_y = chest_y;
     double lid_z = chest_z + BML_STASH_PLACEMENT_LID_OFFSET_Z;
+    if (chest_yaw == BML_STASH_YAW_EAST) {
+        lid_x = chest_x - BML_STASH_PLACEMENT_LID_HINGE_OFFSET;
+    } else if (chest_yaw == BML_STASH_YAW_SOUTH) {
+        lid_y = chest_y - BML_STASH_PLACEMENT_LID_HINGE_OFFSET;
+    } else if (chest_yaw == BML_STASH_YAW_WEST) {
+        lid_x = chest_x + BML_STASH_PLACEMENT_LID_HINGE_OFFSET;
+    } else if (chest_yaw == BML_STASH_YAW_NORTH) {
+        lid_y = chest_y + BML_STASH_PLACEMENT_LID_HINGE_OFFSET;
+    } else {
+        lid_y = chest_y - BML_STASH_PLACEMENT_LID_HINGE_OFFSET;
+    }
 
     if (chest_out != NULL) {
         *chest_out = NULL;
@@ -2954,6 +3030,9 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
         ++g_bml_stash_playable_new_entity_calls;
         chest = g_bml_stash_new_entity_original(BML_STASH_SPRITE_LOBBY_CHEST, 1U, entity_list, NULL);
         if (chest != NULL) {
+            if (g_bml_stash_set_sprite_attributes_original != NULL) {
+                g_bml_stash_set_sprite_attributes_original(chest, NULL, NULL);
+            }
             bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_X, chest_x);
             bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_Y, chest_y);
             bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_Z, chest_z);
@@ -2976,6 +3055,9 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
         ++g_bml_stash_playable_new_entity_calls;
         lid = g_bml_stash_new_entity_original(BML_STASH_SPRITE_LOBBY_LID, 0U, entity_list, NULL);
         if (lid != NULL) {
+            if (g_bml_stash_set_sprite_attributes_original != NULL) {
+                g_bml_stash_set_sprite_attributes_original(lid, NULL, NULL);
+            }
             bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_X, lid_x);
             bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_Y, lid_y);
             bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_Z, lid_z);
@@ -2987,6 +3069,7 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
             bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LOBBY_LID);
             memcpy((unsigned char *)lid + BML_STASH_ENTITY_OFFSET_BEHAVIOR, &act_chest_lid_fn_storage, sizeof(act_chest_lid_fn_storage));
             bml_entity_set_flag(lid, 12, true);
+            bml_entity_set_skill(lid, 58, BML_STASH_INTERNAL_MARKER_SKILL58);
         }
     }
 
@@ -3037,12 +3120,12 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     if (g_bml_stash_assign_actions_original != NULL) {
         g_bml_stash_assign_actions_original(map_argument);
     }
-    if (bml_stash_playable_place_chest_and_lid_at(map_argument, BML_STASH_PLACEMENT_ANCHOR_OFFSET_X, 0.0, 0.0, &chest, &lid)) {
+    if (bml_stash_playable_place_chest_and_lid_at(map_argument, BML_STASH_LOBBY_PLACEMENT_X, BML_STASH_LOBBY_PLACEMENT_Y, BML_STASH_LOBBY_PLACEMENT_YAW, &chest, &lid)) {
         g_bml_stash_playable_last_placed_chest = chest;
         g_bml_stash_playable_last_placed_lid = lid;
         {
             BmlStashPlacementMapPrefix *map_prefix = (BmlStashPlacementMapPrefix *)map_argument;
-            bml_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix != NULL ? map_prefix->name : NULL, true, BML_STASH_PLACEMENT_ANCHOR_OFFSET_X, 0.0, -1);
+            bml_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix != NULL ? map_prefix->name : NULL, true, BML_STASH_LOBBY_PLACEMENT_X, BML_STASH_LOBBY_PLACEMENT_Y, -1);
         }
         g_bml_stash_playable_lobby_placements_succeeded += 1;
         return true;
@@ -3320,12 +3403,14 @@ static void bml_reset_stash_access_placement_state(void) {
     g_bml_stash_assign_actions_original = NULL;
     g_bml_stash_new_entity_original = NULL;
     g_bml_stash_set_sprite_attributes_original = NULL;
+    g_bml_language_get_original = NULL;
     g_bml_stash_act_chest_replacement_calls = 0;
     g_bml_stash_act_chest_lid_replacement_calls = 0;
     g_bml_stash_generate_dungeon_replacement_calls = 0;
     g_bml_stash_assign_actions_replacement_calls = 0;
     g_bml_stash_new_entity_replacement_calls = 0;
     g_bml_stash_set_sprite_attributes_replacement_calls = 0;
+    g_bml_language_get_replacement_calls = 0;
     g_bml_stash_placement_discovery_active = false;
     g_bml_stash_placement_discovery_report_path[0] = '\0';
     bml_reset_stash_placement_discovery_state();
@@ -3380,6 +3465,9 @@ static int bml_stash_core_replacement_calls_for_symbol(const char *symbol) {
     if (strcmp(symbol, "_Z19setSpriteAttributesP6EntityS0_S0_") == 0) {
         return g_bml_stash_set_sprite_attributes_replacement_calls;
     }
+    if (strcmp(symbol, "_ZN8Language3getEi") == 0) {
+        return g_bml_language_get_replacement_calls;
+    }
     return 0;
 }
 
@@ -3410,6 +3498,8 @@ static void bml_bind_stash_core_original(const BmlStashCoreDetourInstall *target
         g_bml_stash_new_entity_original = bml_stash_new_entity_function_from_address(target->install.trampoline);
     } else if (strcmp(target->target_symbol, "_Z19setSpriteAttributesP6EntityS0_S0_") == 0) {
         g_bml_stash_set_sprite_attributes_original = bml_stash_set_sprite_attributes_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_ZN8Language3getEi") == 0) {
+        g_bml_language_get_original = bml_language_get_function_from_address(target->install.trampoline);
     }
 }
 
@@ -3647,21 +3737,25 @@ static int bml_run_stash_access_placement_self_test(char *error_code, size_t err
     void *assign_actions_address = dlsym(RTLD_DEFAULT, "_Z13assignActionsP5map_t");
     void *new_entity_address = dlsym(RTLD_DEFAULT, "_Z9newEntityijP6list_tS0_");
     void *set_sprite_attributes_address = dlsym(RTLD_DEFAULT, "_Z19setSpriteAttributesP6EntityS0_S0_");
+    void *language_get_address = dlsym(RTLD_DEFAULT, "_ZN8Language3getEi");
+    void *selected_entity_symbol = dlsym(RTLD_DEFAULT, "selectedEntity");
     BmlStashEntityActionFunction target_act_chest;
     BmlStashEntityActionFunction target_act_chest_lid;
     BmlStashGenerateDungeonFunction target_generate_dungeon;
     BmlStashAssignActionsFunction target_assign_actions;
     BmlStashNewEntityFunction target_new_entity;
     BmlStashSetSpriteAttributesFunction target_set_sprite_attributes;
+    BmlLanguageGetFunction target_language_get;
+    void **selected_entities = NULL;
     unsigned char fake_entity[1024];
     int generated;
 
     if (generate_dungeon_result != NULL) {
         *generate_dungeon_result = 0;
     }
-    if (fake_provider_marker == NULL || act_chest_address == NULL || act_chest_lid_address == NULL || generate_dungeon_address == NULL || assign_actions_address == NULL || new_entity_address == NULL || set_sprite_attributes_address == NULL) {
+    if (fake_provider_marker == NULL || act_chest_address == NULL || act_chest_lid_address == NULL || generate_dungeon_address == NULL || assign_actions_address == NULL || new_entity_address == NULL || set_sprite_attributes_address == NULL || language_get_address == NULL || selected_entity_symbol == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_SYMBOL_MISSING");
-        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test requires the fake provider plus all six access/placement symbols.");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test requires the fake provider plus all seven access/placement symbols and selectedEntity.");
         return -1;
     }
     if (fake_assign_actions_map_symbol != NULL) {
@@ -3675,13 +3769,24 @@ static int bml_run_stash_access_placement_self_test(char *error_code, size_t err
     target_assign_actions = bml_stash_assign_actions_function_from_address(assign_actions_address);
     target_new_entity = bml_stash_new_entity_function_from_address(new_entity_address);
     target_set_sprite_attributes = bml_stash_set_sprite_attributes_function_from_address(set_sprite_attributes_address);
+    target_language_get = bml_language_get_function_from_address(language_get_address);
+    selected_entities = (void **)selected_entity_symbol;
 
+    bml_entity_set_skill(fake_entity, 58, BML_STASH_INTERNAL_MARKER_SKILL58);
+    selected_entities[0] = fake_entity;
     target_act_chest(fake_entity);
     target_act_chest_lid(fake_entity);
     generated = target_generate_dungeon(NULL, 123U, 0U, 0U);
     target_assign_actions(fake_assign_actions_map);
     (void)target_new_entity(1791, 1U, NULL, NULL);
     target_set_sprite_attributes(NULL, NULL, NULL);
+    if (strcmp(target_language_get(BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST), BML_STASH_PROMPT_OPEN_STASH) != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_PROMPT_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not rename the framework access-point prompt to Open stash.");
+        selected_entities[0] = NULL;
+        return -1;
+    }
+    selected_entities[0] = NULL;
 
     if (generate_dungeon_result != NULL) {
         *generate_dungeon_result = generated;
@@ -3702,7 +3807,7 @@ static int bml_run_stash_access_placement_self_test(char *error_code, size_t err
 }
 
 static int bml_run_stash_access_placement_passthrough_install(const char *report_path, const char *self_test_report_path, bool self_test_requested, const char *placement_discovery_report_path, bool placement_discovery_requested) {
-    BmlStashCoreDetourInstall targets[6];
+    BmlStashCoreDetourInstall targets[7];
     const size_t target_count = sizeof(targets) / sizeof(targets[0]);
     int result = 0;
     int self_test_generate_dungeon_result = 0;
@@ -3721,6 +3826,7 @@ static int bml_run_stash_access_placement_passthrough_install(const char *report
     bml_init_stash_core_detour_target(&targets[3], "assignActions", "_Z13assignActionsP5map_t", bml_stash_assign_actions_function_address(bml_stash_assign_actions_replacement));
     bml_init_stash_core_detour_target(&targets[4], "newEntity", "_Z9newEntityijP6list_tS0_", bml_stash_new_entity_function_address(bml_stash_new_entity_replacement));
     bml_init_stash_core_detour_target(&targets[5], "setSpriteAttributes", "_Z19setSpriteAttributesP6EntityS0_S0_", bml_stash_set_sprite_attributes_function_address(bml_stash_set_sprite_attributes_replacement));
+    bml_init_stash_core_detour_target(&targets[6], "Language::get", "_ZN8Language3getEi", bml_language_get_function_address(bml_language_get_replacement));
 
     for (size_t index = 0U; index < target_count; ++index) {
         if (bml_prepare_stash_core_detour_target(&targets[index]) != 0) {
@@ -3970,7 +4076,7 @@ static int bml_write_stash_playable_install_report(const char *report_path, cons
 }
 static int bml_run_stash_playable_install(const char *report_path, const char *profile_dir, bool self_test_requested) {
     BmlStashCoreDetourInstall core_targets[7];
-    BmlStashCoreDetourInstall access_targets[6];
+    BmlStashCoreDetourInstall access_targets[7];
     size_t core_target_count = sizeof(core_targets) / sizeof(core_targets[0]);
     size_t access_target_count = sizeof(access_targets) / sizeof(access_targets[0]);
     int result = 0;
@@ -4054,6 +4160,7 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
     bml_init_stash_core_detour_target(&access_targets[3], "assignActions", "_Z13assignActionsP5map_t", bml_stash_assign_actions_function_address(bml_stash_assign_actions_replacement));
     bml_init_stash_core_detour_target(&access_targets[4], "newEntity", "_Z9newEntityijP6list_tS0_", bml_stash_new_entity_function_address(bml_stash_new_entity_replacement));
     bml_init_stash_core_detour_target(&access_targets[5], "setSpriteAttributes", "_Z19setSpriteAttributesP6EntityS0_S0_", bml_stash_set_sprite_attributes_function_address(bml_stash_set_sprite_attributes_replacement));
+    bml_init_stash_core_detour_target(&access_targets[6], "Language::get", "_ZN8Language3getEi", bml_language_get_function_address(bml_language_get_replacement));
 
     for (size_t index = 0U; index < access_target_count; ++index) {
         if (bml_prepare_stash_core_detour_target(&access_targets[index]) != 0) {

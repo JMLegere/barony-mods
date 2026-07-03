@@ -468,8 +468,8 @@ assert access_install_report["backend"] == {
     "decoder": "fixture-safe-subset",
 }
 assert access_install_report["summary"] == {
-    "requested": 6,
-    "installed": 6,
+    "requested": 7,
+    "installed": 7,
     "failed": 0,
     "failClosed": True,
 }, access_install_report
@@ -480,6 +480,7 @@ expected_targets = {
     "assignActions",
     "newEntity",
     "setSpriteAttributes",
+    "Language::get",
 }
 targets = access_install_report["targets"]
 assert {target["targetName"] for target in targets} == expected_targets, targets
@@ -681,7 +682,7 @@ assert playable_install_report["error"] is None, playable_install_report
 diagnostics_path = playable_install_report_path.parents[1] / "state" / "stash-diagnostics.jsonl"
 assert diagnostics_path.is_file(), diagnostics_path
 diagnostics = [json.loads(line) for line in diagnostics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby" and event["map"] == "fake-lobby" for event in diagnostics), diagnostics
+assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby" and event["map"] == "fake-lobby" and event["x"] == 232.0 and event["y"] == 456.0 for event in diagnostics), diagnostics
 assert any(event["event"] == "stash_access_point_created" and event["kind"] == "shop" and event["map"] == "fake-shop" for event in diagnostics), diagnostics
 assert any(event["event"] == "stash_inventory_loaded" and event["rows"] >= 0 for event in diagnostics), diagnostics
 print(f"production playable stash fake-provider lobby/shop/spell/metadata ok: {playable_install_report_path}")

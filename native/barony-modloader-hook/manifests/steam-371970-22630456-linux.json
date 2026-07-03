@@ -185,6 +185,18 @@
       ]
     },
     {
+      "id": "language_get",
+      "kind": "function",
+      "mangledSymbol": "_ZN8Language3getEi",
+      "demangledLabel": "Language::get(int)",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
       "id": "new_item",
       "kind": "function",
       "mangledSymbol": "_Z7newItem8ItemType6StatusssjbP6list_t",
@@ -310,6 +322,18 @@
       ]
     },
     {
+      "id": "selected_entity",
+      "kind": "data",
+      "mangledSymbol": "selectedEntity",
+      "demangledLabel": "selectedEntity",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
       "id": "shoparea",
       "kind": "data",
       "mangledSymbol": "shoparea",
@@ -346,7 +370,9 @@
         "act_chest_lid",
         "entity_get_chest_inventory_list",
         "entity_add_item_to_void_chest_server",
-        "entity_remove_item_from_void_chest_server"
+        "entity_remove_item_from_void_chest_server",
+        "language_get",
+        "selected_entity"
       ],
       "installStrategy": "relocation-safe-detour-required",
       "installStatus": "not_installed",
@@ -381,9 +407,11 @@
         "assign_actions",
         "new_entity",
         "set_sprite_attributes",
+        "language_get",
         "map",
         "map_rng",
         "map_server_rng",
+        "selected_entity",
         "tile_entity_list"
       ],
       "installStrategy": "relocation-safe-detour-required",
@@ -399,9 +427,11 @@
         "assign_actions",
         "new_entity",
         "set_sprite_attributes",
+        "language_get",
         "map",
         "map_rng",
         "map_server_rng",
+        "selected_entity",
         "shoparea",
         "tile_entity_list"
       ],

@@ -76,6 +76,8 @@ typedef struct BmlFakeMapPrefix {
 #define BML_FAKE_CHEST_VOID_STATE_SKILL_INDEX 17U
 #define BML_FAKE_CHEST_SPRITE 1791
 #define BML_FAKE_CHEST_LID_SPRITE 1790
+#define BML_FAKE_INTERNAL_MARKER_SKILL58 ((int32_t)0x424D4C00)
+void *bml_fake_selected_entity[4] __asm__("selectedEntity") = { NULL, NULL, NULL, NULL };
 
 static void bml_fake_write_u32(void *base, size_t offset, uint32_t value) {
     memcpy((unsigned char *)base + offset, &value, sizeof(value));
@@ -108,6 +110,37 @@ static void *bml_fake_function_address(void (*function)(void)) {
 
 static BmlFakeStat bml_fake_stat_zero;
 void *bml_fake_stats[1] __asm__("stats") = { &bml_fake_stat_zero };
+
+const char *bml_fake_language_get_impl(int language_id) {
+    if (language_id == 4005) {
+        return "Open chest";
+    }
+    return "Fake language";
+}
+
+void bml_fake_languageGet(void) __asm__("_ZN8Language3getEi");
+
+__asm__(
+    ".text\n"
+    ".globl _ZN8Language3getEi\n"
+    ".type _ZN8Language3getEi, @function\n"
+    "_ZN8Language3getEi:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_language_get_impl@PLT\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZN8Language3getEi, .-_ZN8Language3getEi\n");
 
 static void bml_fake_item_deconstructor(void *data) {
     free(data);
