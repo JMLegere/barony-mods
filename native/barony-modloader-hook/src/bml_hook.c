@@ -96,6 +96,7 @@ typedef struct BmlTargetAnalysis {
     const char *status;
     const char *blocker_code;
     const char *message;
+    size_t patch_size;
     void *address;
 } BmlTargetAnalysis;
 
@@ -694,22 +695,6 @@ static bool bml_byte_is_short_relative_branch(unsigned char byte) {
     return byte >= 0x70U && byte <= 0x7fU;
 }
 
-static bool bml_instruction_uses_rip_relative(const unsigned char *code, size_t index, size_t limit) {
-    if (index + 2U >= limit) {
-        return false;
-    }
-    if (code[index] == 0x83U && code[index + 1U] == 0x3dU) {
-        return true;
-    }
-    if (code[index] == 0x48U && index + 2U < limit) {
-        const unsigned char op = code[index + 1U];
-        const unsigned char modrm = code[index + 2U];
-        if ((op == 0x8bU || op == 0x8dU || op == 0x3bU) && (modrm & 0xc7U) == 0x05U) {
-            return true;
-        }
-    }
-    return false;
-}
 
 static bool bml_modrm_is_register_only(unsigned char modrm) {
     return (modrm & 0xc0U) == 0xc0U;
@@ -896,6 +881,32 @@ static int bml_page_span_for_patch(void *target, size_t patch_size, uintptr_t *o
     return 0;
 }
 
+static int bml_measure_supported_patch_window(const unsigned char *target_bytes, size_t *out_patch_size, const char **out_code, const char **out_message) {
+    size_t patch_size = 0U;
+
+    *out_patch_size = 0U;
+    *out_code = NULL;
+    *out_message = NULL;
+
+    while (patch_size < BML_DETOUR_PATCH_BYTES) {
+        size_t instruction_length = 0U;
+        const char *decode_code = NULL;
+        const char *decode_message = NULL;
+
+        if (bml_decode_supported_x86_64_instruction(target_bytes, patch_size, BML_DETOUR_MAX_COPY_BYTES, &instruction_length, &decode_code, &decode_message) != 0 ||
+            instruction_length == 0U || patch_size + instruction_length > BML_DETOUR_MAX_COPY_BYTES) {
+            *out_code = decode_code != NULL ? decode_code : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
+            *out_message = decode_message != NULL ? decode_message : "Detour target prologue is not safe for the conservative decoder.";
+            *out_patch_size = patch_size;
+            return -1;
+        }
+        patch_size += instruction_length;
+    }
+
+    *out_patch_size = patch_size;
+    return 0;
+}
+
 static int bml_install_absolute_jump_detour(void *target, void *replacement, BmlDetourInstall *install, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     const unsigned char *target_bytes = (const unsigned char *)target;
     unsigned char original[BML_DETOUR_MAX_COPY_BYTES];
@@ -913,18 +924,14 @@ static int bml_install_absolute_jump_detour(void *target, void *replacement, Bml
         return -1;
     }
 
-    while (patch_size < BML_DETOUR_PATCH_BYTES) {
-        size_t instruction_length = 0U;
+    {
         const char *decode_code = NULL;
         const char *decode_message = NULL;
-
-        if (bml_decode_supported_x86_64_instruction(target_bytes, patch_size, BML_DETOUR_MAX_COPY_BYTES, &instruction_length, &decode_code, &decode_message) != 0 ||
-            instruction_length == 0U || patch_size + instruction_length > BML_DETOUR_MAX_COPY_BYTES) {
+        if (bml_measure_supported_patch_window(target_bytes, &patch_size, &decode_code, &decode_message) != 0) {
             bml_copy_string(error_code, error_code_size, decode_code != NULL ? decode_code : "BML_DETOUR_UNSUPPORTED_INSTRUCTION");
             bml_copy_string(error_message, error_message_size, decode_message != NULL ? decode_message : "Detour target prologue is not safe for the conservative decoder.");
             return -1;
         }
-        patch_size += instruction_length;
     }
 
     memcpy(original, target, patch_size);
@@ -1003,32 +1010,22 @@ static void bml_analyze_detour_target(BmlTargetAnalysis *analysis, const BmlSymb
     }
 
     const unsigned char *code = (const unsigned char *)probe_result->address;
-    const size_t scan_limit = BML_STASH_HOOK_BACKEND.patch_bytes + 8U;
-    for (size_t index = 0U; index < scan_limit; ++index) {
-        if (bml_instruction_uses_rip_relative(code, index, scan_limit)) {
-            analysis->status = "blocked";
-            analysis->blocker_code = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED";
-            analysis->message = "Target prologue uses RIP-relative addressing; backend must relocate it before patching.";
-            return;
-        }
-        if (code[index] == 0xe8U || code[index] == 0xe9U || bml_byte_is_short_relative_branch(code[index]) ||
-            (code[index] == 0x0fU && index + 1U < scan_limit && code[index + 1U] >= 0x80U && code[index + 1U] <= 0x8fU)) {
-            analysis->status = "blocked";
-            analysis->blocker_code = "BML_DETOUR_RELATIVE_CONTROL_FLOW_UNSUPPORTED";
-            analysis->message = "Target prologue contains relative control flow; backend must relocate branch/call targets before patching.";
-            return;
-        }
-        if (code[index] == 0xc3U) {
-            analysis->status = "blocked";
-            analysis->blocker_code = "BML_DETOUR_EARLY_RETURN_UNSUPPORTED";
-            analysis->message = "Target prologue returns before the backend can reserve a safe patch window.";
-            return;
-        }
+    const char *decode_code = NULL;
+    const char *decode_message = NULL;
+    size_t patch_size = 0U;
+
+    if (bml_measure_supported_patch_window(code, &patch_size, &decode_code, &decode_message) == 0) {
+        analysis->status = "ready";
+        analysis->blocker_code = "";
+        analysis->patch_size = patch_size;
+        analysis->message = "Target prologue can reserve a safe absolute-jump patch window; Stash gameplay remains analyze-only until a relocation-safe hook is installed and verified.";
+        return;
     }
 
     analysis->status = "blocked";
-    analysis->blocker_code = "BML_DETOUR_INSTRUCTION_DECODER_REQUIRED";
-    analysis->message = "Analyze-only backend requires an instruction decoder/relocator before function prologues can be considered patch-safe.";
+    analysis->blocker_code = decode_code != NULL ? decode_code : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
+    analysis->message = decode_message != NULL ? decode_message : "Target prologue is not safe for the conservative detour decoder.";
+    analysis->patch_size = patch_size;
 }
 
 static void bml_analyze_stash_hook_plan(BmlStashHookPlan *plan, const BmlSymbolProbe *probe) {
@@ -1076,6 +1073,9 @@ static void bml_write_target_analysis(FILE *file, const BmlTargetAnalysis *targe
     bml_json_write_escaped(file, target->status);
     fputs(", \"address\": ", file);
     bml_write_address_or_null(file, target->address);
+    if (target->patch_size > 0U) {
+        fprintf(file, ", \"patchWindowBytes\": %zu", target->patch_size);
+    }
     if (bml_has_value(target->blocker_code)) {
         fputs(", \"blockerCode\": ", file);
         bml_json_write_escaped(file, target->blocker_code);

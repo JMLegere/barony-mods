@@ -146,20 +146,15 @@
                       {
                         "if": {
                           "properties": {
-                            "kind": {
-                              "const": "function"
+                            "status": {
+                              "const": "blocked"
                             }
                           }
                         },
                         "then": {
                           "required": [
                             "blockerCode"
-                          ],
-                          "properties": {
-                            "status": {
-                              "const": "blocked"
-                            }
-                          }
+                          ]
                         }
                       }
                     ]
@@ -471,6 +466,10 @@
             "string",
             "null"
           ]
+        },
+        "patchWindowBytes": {
+          "type": "integer",
+          "minimum": 1
         },
         "blockerCode": {
           "type": "string",

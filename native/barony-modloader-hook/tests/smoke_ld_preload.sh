@@ -206,9 +206,14 @@ function_targets = [target for target in all_targets if target["kind"] == "funct
 data_targets = [target for target in all_targets if target["kind"] == "data"]
 assert function_targets, all_targets
 assert data_targets, all_targets
-assert all(target["status"] == "blocked" for target in function_targets), function_targets
+ready_function_targets = [target for target in function_targets if target["status"] == "ready"]
+blocked_function_targets = [target for target in function_targets if target["status"] == "blocked"]
+assert ready_function_targets, function_targets
+assert blocked_function_targets, function_targets
+assert all(target["patchWindowBytes"] >= 14 for target in ready_function_targets), ready_function_targets
+assert all("blockerCode" not in target for target in ready_function_targets), ready_function_targets
+assert all("blockerCode" in target for target in blocked_function_targets), blocked_function_targets
 assert all(target["status"] == "ready" for target in data_targets), data_targets
-assert all("blockerCode" in target for target in function_targets), function_targets
 assert all("blockerCode" not in target for target in data_targets), data_targets
 assert any(error["code"] == "BML_STASH_HOOKS_NOT_INSTALLED" and error["severity"] == "fatal" for error in stash_report["errors"]), stash_report["errors"]
 print(f"smoke symbol resolved and stash fail-closed ok: {report_path}")

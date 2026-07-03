@@ -64,11 +64,11 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "3cd00d56d3f3b6190e86dab8159b24fb3257bc36dd4b976d12bfff80e9db7f5b",
-        "size": 42792
+        "sha256": "eba2968e9d5f237b8084801c12fdf7afde40101d7de717a946e5df989d3ba39c",
+        "size": 42904
       },
       "status": "built_available_fail_closed",
-      "notes": "The hook library can load, report, and pass the fake-symbol absolute-jump detour self-test, but Stash gameplay targets remain blocked until relocation-safe Stash detours are installed."
+      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, and classify decoder-safe Stash target prologues, but Stash gameplay targets remain fail-closed until relocation-safe Stash detours are installed and verified in game."
     },
     "hookManifest": {
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",

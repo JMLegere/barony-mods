@@ -11,7 +11,7 @@ Current state:
 - `manifests/steam-371970-22630456-linux.json` mirrors the local verified Steam/Linux Barony executable identity, required symbol probe targets, and fail-closed Stash hook targets passed as `BML_HOOK_MANIFEST`; the current native hook validates the path is readable and uses compiled-in tables for probing/analysis.
 - The hook validates launch inputs and writes `BaronyModLoader/reports/runtime-load-report.json` under `BML_PROFILE_DIR`; executable provenance is still enforced by the app/runtime registry before launch.
 - The hook resolves required installed-binary symbols with `dlsym(RTLD_DEFAULT, mangledSymbol)` and writes `BaronyModLoader/reports/symbol-probe-report.json`.
-- Stash gameplay hooks are grouped behind the abstract `linux-x86_64-direct-stash-detour` backend. The current backend mode remains `analyze-only`: it keeps data symbols `ready`, keeps all Stash function targets `blocked`, and fails closed for active Stash profiles. A separate `BML_DETOUR_SELF_TEST=1` path verifies only the narrow Linux x86_64 absolute-jump detour substrate against the fake test symbol provider.
+- Stash gameplay hooks are grouped behind the abstract `linux-x86_64-direct-stash-detour` backend. The current backend mode remains `analyze-only`: it keeps data symbols `ready`, runs the same conservative decoder used by the detour self-test to classify function prologues as `ready` or `blocked`, records `patchWindowBytes` for decoder-safe targets, and fails closed for active Stash profiles until relocation-safe gameplay hooks are actually installed and verified. A separate `BML_DETOUR_SELF_TEST=1` path verifies only the narrow Linux x86_64 absolute-jump detour substrate against the fake test symbol provider.
 
 Build and test:
 
@@ -37,6 +37,6 @@ Set `BML_DETOUR_SELF_TEST=1` with the fake symbol provider preloaded to write `B
 
 Current non-goals:
 
-- Do not claim playable Stash behavior: the verified native detour coverage is limited to the fake-symbol self-test substrate, and Stash function targets remain analyze-only/blocked.
+- Do not claim playable Stash behavior: the verified native detour coverage is still limited to the fake-symbol self-test substrate plus analyze-only target readiness reporting; no real Stash gameplay detour is installed or in-game verified yet.
 - Do not treat `native/barony-modloader-runtime/patches/` as the runtime path. Those source-fork patches are semantic reference only.
 - Do not claim Windows or macOS native injection support yet.
