@@ -113,16 +113,106 @@ __asm__(
     "  ret\n"
     ".size _Z11actChestLidP6Entity, .-_Z11actChestLidP6Entity\n");
 
+void bml_fake_getChestInventoryList(void) __asm__("_ZN6Entity21getChestInventoryListEv");
+
+__asm__(
+    ".text\n"
+    ".globl _ZN6Entity21getChestInventoryListEv\n"
+    ".type _ZN6Entity21getChestInventoryListEv, @function\n"
+    "_ZN6Entity21getChestInventoryListEv:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  mov $43, %eax\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZN6Entity21getChestInventoryListEv, .-_ZN6Entity21getChestInventoryListEv\n");
+
+void bml_fake_removeItemFromVoidChestServer(void) __asm__("_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi");
+
+__asm__(
+    ".text\n"
+    ".globl _ZN6Entity29removeItemFromVoidChestServerEiP4Itemi\n"
+    ".type _ZN6Entity29removeItemFromVoidChestServerEiP4Itemi, @function\n"
+    "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  mov $1, %eax\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZN6Entity29removeItemFromVoidChestServerEiP4Itemi, .-_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi\n");
+
+void bml_fake_closeChest(void) __asm__("_ZN6Entity10closeChestEv");
+
+__asm__(
+    ".text\n"
+    ".globl _ZN6Entity10closeChestEv\n"
+    ".type _ZN6Entity10closeChestEv, @function\n"
+    "_ZN6Entity10closeChestEv:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZN6Entity10closeChestEv, .-_ZN6Entity10closeChestEv\n");
+
+void bml_fake_closeChestServer(void) __asm__("_ZN6Entity16closeChestServerEv");
+
+__asm__(
+    ".text\n"
+    ".globl _ZN6Entity16closeChestServerEv\n"
+    ".type _ZN6Entity16closeChestServerEv, @function\n"
+    "_ZN6Entity16closeChestServerEv:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZN6Entity16closeChestServerEv, .-_ZN6Entity16closeChestServerEv\n");
+
 #define BML_FAKE_FUNCTION(c_name, elf_name) \
     void c_name(void) __asm__(elf_name); \
     void c_name(void) {}
 
-BML_FAKE_FUNCTION(bml_fake_getChestInventoryList, "_ZN6Entity21getChestInventoryListEv")
 BML_FAKE_FUNCTION(bml_fake_addItemToChest, "_ZN6Entity14addItemToChestEP4ItembS1_")
 BML_FAKE_FUNCTION(bml_fake_getItemFromChest, "_ZN6Entity16getItemFromChestEP4Itemib")
-BML_FAKE_FUNCTION(bml_fake_removeItemFromVoidChestServer, "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi")
-BML_FAKE_FUNCTION(bml_fake_closeChest, "_ZN6Entity10closeChestEv")
-BML_FAKE_FUNCTION(bml_fake_closeChestServer, "_ZN6Entity16closeChestServerEv")
 BML_FAKE_FUNCTION(bml_fake_generateDungeon, "_Z15generateDungeonPcjSt5tupleIJiiiiEE")
 BML_FAKE_FUNCTION(bml_fake_assignActions, "_Z13assignActionsP5map_t")
 BML_FAKE_FUNCTION(bml_fake_setSpriteAttributes, "_Z19setSpriteAttributesP6EntityS0_S0_")

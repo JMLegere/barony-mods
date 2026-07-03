@@ -29,6 +29,7 @@
 #define BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/detour-self-test-report.json"
 #define BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-detour-self-test-report.json"
 #define BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-detour-install-report.json"
+#define BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-detour-install-report.json"
 #define BML_MAX_ERRORS 12
 #define BML_MAX_TEXT 256
 #define BML_MAX_MANIFEST_BYTES (1024U * 1024U)
@@ -136,6 +137,17 @@ typedef struct BmlDetourInstall {
     void *trampoline;
     size_t patch_size;
 } BmlDetourInstall;
+
+typedef struct BmlStashCoreDetourInstall {
+    const char *target_name;
+    const char *target_symbol;
+    void *replacement_address;
+    void *target_address;
+    BmlDetourInstall install;
+    const char *status;
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+} BmlStashCoreDetourInstall;
 
 typedef struct BmlPatchInstruction {
     size_t source_offset;
@@ -1787,6 +1799,12 @@ static int bml_run_detour_self_test(const char *report_path) {
 
 typedef void *(*BmlStashAddItemToVoidChestServerFunction)(void *, int, void *, bool, void *);
 _Static_assert(sizeof(BmlStashAddItemToVoidChestServerFunction) == sizeof(void *), "BML Linux x86_64 Stash detour self-test expects function pointers to fit in void pointers");
+typedef void *(*BmlStashGetChestInventoryListFunction)(void *);
+typedef bool (*BmlStashRemoveItemFromVoidChestServerFunction)(void *, int, void *, int);
+typedef void (*BmlStashCloseChestFunction)(void *);
+_Static_assert(sizeof(BmlStashGetChestInventoryListFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect getChestInventoryList pointers to fit in void pointers");
+_Static_assert(sizeof(BmlStashRemoveItemFromVoidChestServerFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect removeItemFromVoidChestServer pointers to fit in void pointers");
+_Static_assert(sizeof(BmlStashCloseChestFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect closeChest pointers to fit in void pointers");
 
 static BmlStashAddItemToVoidChestServerFunction bml_stash_add_item_function_from_address(void *address) {
     BmlStashAddItemToVoidChestServerFunction function;
@@ -1795,6 +1813,42 @@ static BmlStashAddItemToVoidChestServerFunction bml_stash_add_item_function_from
 }
 
 static void *bml_stash_add_item_function_address(BmlStashAddItemToVoidChestServerFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
+static BmlStashGetChestInventoryListFunction bml_stash_get_inventory_function_from_address(void *address) {
+    BmlStashGetChestInventoryListFunction function;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_stash_get_inventory_function_address(BmlStashGetChestInventoryListFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
+static BmlStashRemoveItemFromVoidChestServerFunction bml_stash_remove_item_function_from_address(void *address) {
+    BmlStashRemoveItemFromVoidChestServerFunction function;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_stash_remove_item_function_address(BmlStashRemoveItemFromVoidChestServerFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
+static BmlStashCloseChestFunction bml_stash_close_chest_function_from_address(void *address) {
+    BmlStashCloseChestFunction function;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_stash_close_chest_function_address(BmlStashCloseChestFunction function) {
     void *address = NULL;
     memcpy(&address, &function, sizeof(address));
     return address;
@@ -1814,6 +1868,45 @@ static void *bml_stash_add_item_to_void_chest_server_replacement(void *entity, i
     return g_bml_stash_add_item_replacement_result;
 }
 
+
+static BmlStashGetChestInventoryListFunction g_bml_stash_get_inventory_original = NULL;
+static BmlStashRemoveItemFromVoidChestServerFunction g_bml_stash_remove_item_original = NULL;
+static BmlStashCloseChestFunction g_bml_stash_close_chest_original = NULL;
+static BmlStashCloseChestFunction g_bml_stash_close_chest_server_original = NULL;
+static int g_bml_stash_get_inventory_replacement_calls = 0;
+static int g_bml_stash_remove_item_replacement_calls = 0;
+static int g_bml_stash_close_chest_replacement_calls = 0;
+static int g_bml_stash_close_chest_server_replacement_calls = 0;
+
+static void *bml_stash_get_chest_inventory_list_replacement(void *entity) {
+    ++g_bml_stash_get_inventory_replacement_calls;
+    if (g_bml_stash_get_inventory_original != NULL) {
+        return g_bml_stash_get_inventory_original(entity);
+    }
+    return NULL;
+}
+
+static bool bml_stash_remove_item_from_void_chest_server_replacement(void *entity, int player, void *item, int count) {
+    ++g_bml_stash_remove_item_replacement_calls;
+    if (g_bml_stash_remove_item_original != NULL) {
+        return g_bml_stash_remove_item_original(entity, player, item, count);
+    }
+    return false;
+}
+
+static void bml_stash_close_chest_replacement(void *entity) {
+    ++g_bml_stash_close_chest_replacement_calls;
+    if (g_bml_stash_close_chest_original != NULL) {
+        g_bml_stash_close_chest_original(entity);
+    }
+}
+
+static void bml_stash_close_chest_server_replacement(void *entity) {
+    ++g_bml_stash_close_chest_server_replacement_calls;
+    if (g_bml_stash_close_chest_server_original != NULL) {
+        g_bml_stash_close_chest_server_original(entity);
+    }
+}
 static int bml_write_stash_add_item_detour_report(const char *report_path, const char *test_name, const char *status, const char *error_code, const char *error_message, const BmlDetourInstall *install, void *direct_result, void *original_result, int replacement_calls) {
     FILE *file = fopen(report_path, "wb");
     if (file == NULL) {
@@ -1953,6 +2046,215 @@ static int bml_run_stash_add_item_passthrough_install(const char *report_path) {
     return bml_write_stash_add_item_detour_report(report_path, "stash-add-item-passthrough-install", "installed", NULL, NULL, &install, NULL, NULL, g_bml_stash_add_item_replacement_calls);
 }
 
+static void bml_reset_stash_core_passthrough_state(void) {
+    g_bml_stash_get_inventory_original = NULL;
+    g_bml_stash_add_item_original = NULL;
+    g_bml_stash_remove_item_original = NULL;
+    g_bml_stash_close_chest_original = NULL;
+    g_bml_stash_close_chest_server_original = NULL;
+    g_bml_stash_get_inventory_replacement_calls = 0;
+    g_bml_stash_add_item_replacement_calls = 0;
+    g_bml_stash_remove_item_replacement_calls = 0;
+    g_bml_stash_close_chest_replacement_calls = 0;
+    g_bml_stash_close_chest_server_replacement_calls = 0;
+    g_bml_stash_add_item_original_result = NULL;
+    g_bml_stash_add_item_replacement_result = NULL;
+}
+
+static void bml_init_stash_core_detour_target(BmlStashCoreDetourInstall *target, const char *target_name, const char *target_symbol, void *replacement_address) {
+    memset(target, 0, sizeof(*target));
+    target->target_name = target_name;
+    target->target_symbol = target_symbol;
+    target->replacement_address = replacement_address;
+    target->status = "pending";
+    target->install.replacement = replacement_address;
+}
+
+static int bml_stash_core_replacement_calls_for_symbol(const char *symbol) {
+    if (strcmp(symbol, "_ZN6Entity21getChestInventoryListEv") == 0) {
+        return g_bml_stash_get_inventory_replacement_calls;
+    }
+    if (strcmp(symbol, "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_") == 0) {
+        return g_bml_stash_add_item_replacement_calls;
+    }
+    if (strcmp(symbol, "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi") == 0) {
+        return g_bml_stash_remove_item_replacement_calls;
+    }
+    if (strcmp(symbol, "_ZN6Entity10closeChestEv") == 0) {
+        return g_bml_stash_close_chest_replacement_calls;
+    }
+    if (strcmp(symbol, "_ZN6Entity16closeChestServerEv") == 0) {
+        return g_bml_stash_close_chest_server_replacement_calls;
+    }
+    return 0;
+}
+
+static void bml_bind_stash_core_original(const BmlStashCoreDetourInstall *target) {
+    if (strcmp(target->target_symbol, "_ZN6Entity21getChestInventoryListEv") == 0) {
+        g_bml_stash_get_inventory_original = bml_stash_get_inventory_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_") == 0) {
+        g_bml_stash_add_item_original = bml_stash_add_item_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi") == 0) {
+        g_bml_stash_remove_item_original = bml_stash_remove_item_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_ZN6Entity10closeChestEv") == 0) {
+        g_bml_stash_close_chest_original = bml_stash_close_chest_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_ZN6Entity16closeChestServerEv") == 0) {
+        g_bml_stash_close_chest_server_original = bml_stash_close_chest_function_from_address(target->install.trampoline);
+    }
+}
+
+static int bml_prepare_stash_core_detour_target(BmlStashCoreDetourInstall *target) {
+    const unsigned char *target_bytes;
+    const char *decode_code = NULL;
+    const char *decode_message = NULL;
+    size_t patch_size = 0U;
+
+    target->target_address = dlsym(RTLD_DEFAULT, target->target_symbol);
+    target->install.target = target->target_address;
+    if (target->target_address == NULL) {
+        target->status = "failed";
+        bml_copy_string(target->error_code, sizeof(target->error_code), "BML_STASH_CORE_INSTALL_SYMBOL_MISSING");
+        bml_copy_string(target->error_message, sizeof(target->error_message), "Required Stash core pass-through detour target was not resolvable.");
+        return -1;
+    }
+
+    target_bytes = (const unsigned char *)target->target_address;
+    if (bml_measure_supported_patch_window(target_bytes, &patch_size, &decode_code, &decode_message) != 0) {
+        target->status = "failed";
+        target->install.patch_size = patch_size;
+        bml_copy_string(target->error_code, sizeof(target->error_code), decode_code != NULL ? decode_code : "BML_DETOUR_UNSUPPORTED_INSTRUCTION");
+        bml_copy_string(target->error_message, sizeof(target->error_message), decode_message != NULL ? decode_message : "Stash core pass-through detour target prologue is not safe for the conservative decoder.");
+        return -1;
+    }
+
+    target->status = "ready";
+    target->install.patch_size = patch_size;
+    return 0;
+}
+
+static int bml_install_stash_core_detour_target(BmlStashCoreDetourInstall *target) {
+    if (bml_install_absolute_jump_detour(target->target_address, target->replacement_address, &target->install, target->error_code, sizeof(target->error_code), target->error_message, sizeof(target->error_message)) != 0) {
+        target->status = "failed";
+        if (!bml_has_value(target->error_code)) {
+            bml_copy_string(target->error_code, sizeof(target->error_code), "BML_STASH_CORE_INSTALL_FAILED");
+        }
+        if (!bml_has_value(target->error_message)) {
+            bml_copy_string(target->error_message, sizeof(target->error_message), "Stash core pass-through detour installation failed.");
+        }
+        return -1;
+    }
+
+    target->status = "installed";
+    bml_bind_stash_core_original(target);
+    return 0;
+}
+
+static int bml_write_stash_core_detour_install_report(const char *report_path, const BmlStashCoreDetourInstall *targets, size_t target_count) {
+    size_t installed_count = 0U;
+    size_t failed_count = 0U;
+    FILE *file;
+
+    for (size_t index = 0U; index < target_count; ++index) {
+        if (strcmp(targets[index].status, "installed") == 0) {
+            installed_count += 1U;
+        } else if (strcmp(targets[index].status, "failed") == 0) {
+            failed_count += 1U;
+        }
+    }
+
+    file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-core-passthrough-install\",\n  \"status\": ", file);
+    bml_json_write_escaped(file, failed_count == 0U && installed_count == target_count ? "installed" : "failed");
+    fputs(",\n  \"backend\": {\n    \"patchStyle\": \"rip-relative-indirect-jmp-absolute-slot\",\n    \"patchBytes\": ", file);
+    fprintf(file, "%u", (unsigned)BML_DETOUR_PATCH_BYTES);
+    fputs(",\n    \"decoder\": \"fixture-safe-subset\"\n  },", file);
+    fprintf(file, "\n  \"summary\": {\n    \"requested\": %zu,\n    \"installed\": %zu,\n    \"failed\": %zu,\n    \"failClosed\": true\n  },\n  \"targets\": [", target_count, installed_count, failed_count);
+    for (size_t index = 0U; index < target_count; ++index) {
+        const BmlStashCoreDetourInstall *target = &targets[index];
+        if (index == 0U) {
+            fputs("\n    ", file);
+        } else {
+            fputs(",\n    ", file);
+        }
+        fputs("{\"targetName\": ", file);
+        bml_json_write_escaped(file, target->target_name);
+        fputs(", \"targetSymbol\": ", file);
+        bml_json_write_escaped(file, target->target_symbol);
+        fputs(", \"status\": ", file);
+        bml_json_write_escaped(file, target->status);
+        fputs(", \"targetAddress\": ", file);
+        bml_write_address_or_null(file, target->target_address);
+        fputs(", \"replacementAddress\": ", file);
+        bml_write_address_or_null(file, target->replacement_address);
+        fputs(", \"trampolineAddress\": ", file);
+        bml_write_address_or_null(file, target->install.trampoline);
+        fputs(", \"patchSize\": ", file);
+        fprintf(file, "%zu", target->install.patch_size);
+        fputs(", \"replacementInvoked\": ", file);
+        fputs(bml_stash_core_replacement_calls_for_symbol(target->target_symbol) > 0 ? "true" : "false", file);
+        fputs(", \"replacementCalls\": ", file);
+        fprintf(file, "%d", bml_stash_core_replacement_calls_for_symbol(target->target_symbol));
+        fputs(", \"error\": ", file);
+        if (bml_has_value(target->error_code) || bml_has_value(target->error_message)) {
+            fputs("{\"code\": ", file);
+            bml_json_write_escaped(file, bml_has_value(target->error_code) ? target->error_code : "BML_STASH_CORE_INSTALL_FAILED");
+            fputs(", \"message\": ", file);
+            bml_json_write_escaped(file, bml_has_value(target->error_message) ? target->error_message : "Stash core pass-through detour installation failed.");
+            fputc('}', file);
+        } else {
+            fputs("null", file);
+        }
+        fputc('}', file);
+    }
+    if (target_count > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_run_stash_core_passthrough_install(const char *report_path) {
+    BmlStashCoreDetourInstall targets[5];
+    const size_t target_count = sizeof(targets) / sizeof(targets[0]);
+    int result = 0;
+
+    bml_reset_stash_core_passthrough_state();
+    bml_init_stash_core_detour_target(&targets[0], "Entity::getChestInventoryList", "_ZN6Entity21getChestInventoryListEv", bml_stash_get_inventory_function_address(bml_stash_get_chest_inventory_list_replacement));
+    bml_init_stash_core_detour_target(&targets[1], "Entity::addItemToVoidChestServer", "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_", bml_stash_add_item_function_address(bml_stash_add_item_to_void_chest_server_replacement));
+    bml_init_stash_core_detour_target(&targets[2], "Entity::removeItemFromVoidChestServer", "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi", bml_stash_remove_item_function_address(bml_stash_remove_item_from_void_chest_server_replacement));
+    bml_init_stash_core_detour_target(&targets[3], "Entity::closeChest", "_ZN6Entity10closeChestEv", bml_stash_close_chest_function_address(bml_stash_close_chest_replacement));
+    bml_init_stash_core_detour_target(&targets[4], "Entity::closeChestServer", "_ZN6Entity16closeChestServerEv", bml_stash_close_chest_function_address(bml_stash_close_chest_server_replacement));
+
+    for (size_t index = 0U; index < target_count; ++index) {
+        if (bml_prepare_stash_core_detour_target(&targets[index]) != 0) {
+            result = -1;
+        }
+    }
+    if (result == 0) {
+        for (size_t index = 0U; index < target_count; ++index) {
+            if (bml_install_stash_core_detour_target(&targets[index]) != 0) {
+                result = -1;
+                break;
+            }
+        }
+    }
+
+    if (bml_write_stash_core_detour_install_report(report_path, targets, target_count) != 0) {
+        return -1;
+    }
+    return result;
+}
+
 __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *profile_dir;
     const char *runtime_manifest;
@@ -1961,6 +2263,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *detour_self_test;
     const char *stash_detour_self_test;
     const char *stash_install_add_item_passthrough;
+    const char *stash_install_core_passthrough;
     BmlError errors[BML_MAX_ERRORS];
     size_t error_count = 0U;
     BmlReportInfo info;
@@ -1969,6 +2272,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     bool stash_hooks_installed;
     bool stash_detour_self_test_requested;
     bool stash_install_add_item_passthrough_requested;
+    bool stash_install_core_passthrough_requested;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
     char symbol_report_path[PATH_MAX];
@@ -1976,6 +2280,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char detour_self_test_report_path[PATH_MAX];
     char stash_detour_self_test_report_path[PATH_MAX];
     char stash_detour_install_report_path[PATH_MAX];
+    char stash_core_detour_install_report_path[PATH_MAX];
     char *runtime_json = NULL;
 
     if (g_bml_initialized != 0) {
@@ -1992,8 +2297,10 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     detour_self_test = getenv("BML_DETOUR_SELF_TEST");
     stash_detour_self_test = getenv("BML_STASH_DETOUR_SELF_TEST");
     stash_install_add_item_passthrough = getenv("BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH");
+    stash_install_core_passthrough = getenv("BML_STASH_INSTALL_CORE_PASSTHROUGH");
     stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
     stash_install_add_item_passthrough_requested = strcmp(stash_install_add_item_passthrough != NULL ? stash_install_add_item_passthrough : "", "1") == 0;
+    stash_install_core_passthrough_requested = strcmp(stash_install_core_passthrough != NULL ? stash_install_core_passthrough : "", "1") == 0;
 
     bml_report_info_init(&info, hook_library);
 
@@ -2022,7 +2329,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(stash_hook_report_path, sizeof(stash_hook_report_path), profile_dir, BML_STASH_HOOK_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(detour_self_test_report_path, sizeof(detour_self_test_report_path), profile_dir, BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_self_test_report_path, sizeof(stash_detour_self_test_report_path), profile_dir, BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
-        bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0) {
+        bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
         return g_bml_init_result;
@@ -2050,9 +2358,16 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_DETOUR_SELF_TEST_FAILED", "BML_DETOUR_SELF_TEST=1 was requested, but the native absolute-jump detour substrate self-test failed.", "BML_DETOUR_SELF_TEST", detour_self_test_report_path);
     }
 
-    if (stash_install_add_item_passthrough_requested && stash_detour_self_test_requested) {
+    if (stash_install_core_passthrough_requested && (stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
+        bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 targets Entity::addItemToVoidChestServer alongside other Stash detour modes in the same process; enable only one Stash detour install/self-test mode.", "BML_STASH_INSTALL_CORE_PASSTHROUGH", stash_core_detour_install_report_path);
+    } else if (stash_install_add_item_passthrough_requested && stash_detour_self_test_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 and BML_STASH_DETOUR_SELF_TEST=1 both target Entity::addItemToVoidChestServer in the same process; enable only one.", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH", stash_detour_install_report_path);
     } else {
+        if (stash_install_core_passthrough_requested &&
+            bml_run_stash_core_passthrough_install(stash_core_detour_install_report_path) != 0) {
+            bml_add_error(errors, &error_count, "BML_STASH_CORE_INSTALL_FAILED", "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 was requested, but the core Stash pass-through detour set could not be fully installed.", "BML_STASH_INSTALL_CORE_PASSTHROUGH", stash_core_detour_install_report_path);
+        }
+
         if (stash_install_add_item_passthrough_requested &&
             bml_run_stash_add_item_passthrough_install(stash_detour_install_report_path) != 0) {
             bml_add_error(errors, &error_count, "BML_STASH_ADD_ITEM_INSTALL_FAILED", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 was requested, but the Entity::addItemToVoidChestServer pass-through detour could not be installed.", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH", stash_detour_install_report_path);

@@ -64,11 +64,11 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "5bbd22a82f8e2e2bd89ae1f2a6e0d4993d756b73da34a37b48fb12a481c0e7b7",
-        "size": 55848
+        "sha256": "e459679f686d6fe7eb1cb76ab50c8a71e16b945e23692a60b5074bb9eff3c1a7",
+        "size": 64936
       },
       "status": "built_available_fail_closed",
-      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test with near-target trampoline allocation, relocated RIP-relative cmp displacement, relocated short conditional branch call-through, classify decoder-safe Stash target prologues including REX-prefixed callee-saved push/register-move windows, non-RIP-memory and RIP-relative ModRM windows, terminal returns that exactly complete the patch window, relative-control-flow windows, movzx/multi-byte NOP, pxor, and lea prologue instructions, pass an opt-in fake-symbol Entity::addItemToVoidChestServer detour call-through self-test, and write a separate opt-in Entity::addItemToVoidChestServer pass-through install report while Stash remains fail-closed until behavior-changing detours are installed and verified in game."
+      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install opt-in pass-through detours for Entity::addItemToVoidChestServer and the core Void Chest lifecycle set via BML_STASH_INSTALL_CORE_PASSTHROUGH=1, and still fail closed because the behavior-changing Stash gameplay hook set is incomplete."
     },
     "hookManifest": {
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
@@ -207,6 +207,12 @@
           "path": "BaronyModLoader/reports/stash-detour-install-report.json",
           "status": "passed_fail_closed",
           "notes": "The native hook smoke runs with BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 and validates an opt-in process-lifetime pass-through detour install for Entity::addItemToVoidChestServer while runtime-load-report still contains BML_STASH_HOOKS_NOT_INSTALLED for the incomplete Stash hook set."
+        },
+        {
+          "kind": "stash-core-detour-install",
+          "path": "BaronyModLoader/reports/stash-core-detour-install-report.json",
+          "status": "passed_fail_closed",
+          "notes": "The native hook smoke runs with BML_STASH_INSTALL_CORE_PASSTHROUGH=1 and validates opt-in process-lifetime pass-through detour installs for Entity::getChestInventoryList, Entity::addItemToVoidChestServer, Entity::removeItemFromVoidChestServer, Entity::closeChest, and Entity::closeChestServer while runtime-load-report still contains BML_STASH_HOOKS_NOT_INSTALLED for the incomplete Stash hook set."
         },
         {
           "kind": "stash-hook",
