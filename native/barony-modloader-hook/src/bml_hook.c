@@ -46,6 +46,45 @@
 #define BML_DETOUR_MAX_INSTRUCTIONS 32U
 #define BML_DETOUR_MAX_RELOCATED_BYTES ((BML_DETOUR_MAX_COPY_BYTES * 8U) + BML_DETOUR_PATCH_BYTES)
 #define BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT 16U
+#define BML_STASH_ENTITY_OFFSET_UID ((uintptr_t)104U)
+#define BML_STASH_ENTITY_OFFSET_TICKS ((uintptr_t)200U)
+#define BML_STASH_ENTITY_OFFSET_X ((uintptr_t)208U)
+#define BML_STASH_ENTITY_OFFSET_Y ((uintptr_t)216U)
+#define BML_STASH_ENTITY_OFFSET_Z ((uintptr_t)224U)
+#define BML_STASH_ENTITY_OFFSET_YAW ((uintptr_t)232U)
+#define BML_STASH_ENTITY_OFFSET_PITCH ((uintptr_t)240U)
+#define BML_STASH_ENTITY_OFFSET_ROLL ((uintptr_t)248U)
+#define BML_STASH_ENTITY_OFFSET_FOCALX ((uintptr_t)256U)
+#define BML_STASH_ENTITY_OFFSET_FOCALY ((uintptr_t)264U)
+#define BML_STASH_ENTITY_OFFSET_FOCALZ ((uintptr_t)272U)
+#define BML_STASH_ENTITY_OFFSET_SCALEX ((uintptr_t)280U)
+#define BML_STASH_ENTITY_OFFSET_SCALEY ((uintptr_t)288U)
+#define BML_STASH_ENTITY_OFFSET_SCALEZ ((uintptr_t)296U)
+#define BML_STASH_ENTITY_OFFSET_SIZEX ((uintptr_t)304U)
+#define BML_STASH_ENTITY_OFFSET_SIZEY ((uintptr_t)308U)
+#define BML_STASH_ENTITY_OFFSET_SPRITE ((uintptr_t)312U)
+#define BML_STASH_ENTITY_OFFSET_FSKILL ((uintptr_t)400U)
+#define BML_STASH_ENTITY_OFFSET_SKILL ((uintptr_t)640U)
+#define BML_STASH_ENTITY_OFFSET_SKILL17 ((uintptr_t)(640U + 17U * sizeof(int32_t)))
+#define BML_STASH_ENTITY_OFFSET_SKILL58 ((uintptr_t)(640U + 58U * sizeof(int32_t)))
+#define BML_STASH_ENTITY_OFFSET_FLAGS ((uintptr_t)880U)
+#define BML_STASH_ENTITY_OFFSET_CHILDREN ((uintptr_t)920U)
+#define BML_STASH_ENTITY_OFFSET_PARENT ((uintptr_t)936U)
+#define BML_STASH_ENTITY_OFFSET_MAPGENX ((uintptr_t)1396U)
+#define BML_STASH_ENTITY_OFFSET_MAPGENY ((uintptr_t)1400U)
+#define BML_STASH_ENTITY_OFFSET_NODE ((uintptr_t)4880U)
+#define BML_STASH_ENTITY_OFFSET_BEHAVIOR ((uintptr_t)4936U)
+#define BML_STASH_ENTITY_OFFSET_RANBEHAVIOR ((uintptr_t)4944U)
+#define BML_STASH_ENTITY_SIZEOF ((size_t)5024U)
+#define BML_STASH_CHEST_VOID_STATE_PERMANENT ((int32_t)(-1))
+#define BML_STASH_INTERNAL_MARKER_SKILL58 ((int32_t)0x424D4C00)
+#define BML_STASH_MAP_OFFSET_ENTITIES ((uintptr_t)208U)
+#define BML_STASH_PLACEMENT_ANCHOR_OFFSET_X 32.0
+#define BML_STASH_PLACEMENT_LID_OFFSET_Y (-3.0)
+#define BML_STASH_PLACEMENT_LID_OFFSET_Z (-2.75)
+#define BML_STASH_SPRITE_LOBBY_CHEST 1791
+#define BML_STASH_SPRITE_LOBBY_LID 1790
+#define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -2093,6 +2132,17 @@ static BmlStashPlacementNewEntitySample g_bml_stash_placement_assign_actions_new
 static size_t g_bml_stash_placement_assign_actions_new_entity_sample_count = 0U;
 static BmlStashPlacementSetSpriteSample g_bml_stash_placement_assign_actions_set_sprite_samples[BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT];
 static size_t g_bml_stash_placement_assign_actions_set_sprite_sample_count = 0U;
+static bool g_bml_stash_playable_active = false;
+static bool g_bml_stash_playable_hooks_installed = false;
+static int g_bml_stash_playable_assign_actions_calls = 0;
+static int g_bml_stash_playable_new_entity_calls = 0;
+static int g_bml_stash_playable_set_sprite_calls = 0;
+static int g_bml_stash_playable_lobby_placements_attempted = 0;
+static int g_bml_stash_playable_lobby_placements_succeeded = 0;
+static int g_bml_stash_playable_lobby_placements_failed = 0;
+static int g_bml_stash_playable_lobby_already_placed_count = 0;
+static void *g_bml_stash_playable_last_placed_chest = NULL;
+static void *g_bml_stash_playable_last_placed_lid = NULL;
 static BmlStashPlacementNewEntitySample g_bml_stash_placement_new_entity_samples[BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT];
 static size_t g_bml_stash_placement_new_entity_sample_count = 0U;
 static int g_bml_stash_placement_new_entity_sprite_188_calls = 0;
@@ -2395,6 +2445,45 @@ static bool bml_stash_entity_uses_stats_void_chest(void *entity, BmlBaronyList *
         *inventory_out = (BmlBaronyList *)inventory;
     }
     return bml_stash_is_stats_void_chest_inventory(inventory);
+}
+static int32_t bml_entity_get_s32(void *entity, uintptr_t offset) {
+    if (entity == NULL) {
+        return 0;
+    }
+    int32_t val;
+    memcpy(&val, (unsigned char *)entity + offset, sizeof(val));
+    return val;
+}
+static void bml_entity_set_s32(void *entity, uintptr_t offset, int32_t value) {
+    if (entity == NULL) {
+        return;
+    }
+    memcpy((unsigned char *)entity + offset, &value, sizeof(value));
+}
+static void bml_entity_set_skill(void *entity, int index, int32_t value) {
+    if (entity == NULL || index < 0) {
+        return;
+    }
+    bml_entity_set_s32(entity, BML_STASH_ENTITY_OFFSET_SKILL + (uintptr_t)index * sizeof(int32_t), value);
+}
+static void bml_entity_set_real(void *entity, uintptr_t offset, double value) {
+    if (entity == NULL) {
+        return;
+    }
+    memcpy((unsigned char *)entity + offset, &value, sizeof(value));
+}
+static void bml_entity_set_parent(void *entity, int32_t parent_uid) {
+    bml_entity_set_s32(entity, BML_STASH_ENTITY_OFFSET_PARENT, parent_uid);
+}
+static int32_t bml_entity_get_uid(void *entity) {
+    return bml_entity_get_s32(entity, BML_STASH_ENTITY_OFFSET_UID);
+}
+static void bml_entity_set_flag(void *entity, int flag_bit, bool value) {
+    if (entity == NULL || flag_bit < 0) {
+        return;
+    }
+    unsigned char bool_value = value ? 1U : 0U;
+    memcpy((unsigned char *)entity + BML_STASH_ENTITY_OFFSET_FLAGS + (uintptr_t)flag_bit, &bool_value, sizeof(bool_value));
 }
 
 
@@ -2703,17 +2792,201 @@ static int bml_stash_generate_dungeon_replacement(char *levelset, uint32_t seed,
     }
     return 0;
 }
+static void *bml_stash_playable_get_map_symbol(void);
+static BmlBaronyList *bml_stash_playable_get_map_entity_list(void *map_argument) {
+    void *map_ptr = map_argument;
+    BmlBaronyList *entity_list = NULL;
+    if (map_ptr == NULL) {
+        map_ptr = bml_stash_playable_get_map_symbol();
+    }
+    if (map_ptr != NULL) {
+        memcpy(&entity_list, (unsigned char *)map_ptr + BML_STASH_MAP_OFFSET_ENTITIES, sizeof(entity_list));
+    }
+    return entity_list;
+}
+static void *bml_stash_playable_get_map_symbol(void) {
+    return dlsym(RTLD_DEFAULT, "map");
+}
+static bool bml_stash_playable_is_start_map_name(const char *name) {
+    if (!bml_has_value(name)) {
+        return false;
+    }
+    if (strcmp(name, "fake-lobby") == 0) {
+        return true;
+    }
+    if (strcmp(name, "Start Map") == 0) {
+        return true;
+    }
+    return false;
+}
+static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument) {
+    typedef BmlBaronyNode *(*BmlListAddNodeFirstFunction)(BmlBaronyList *list);
+    typedef void (*BmlEmptyDeconstructorFunction)(void *data);
+    BmlBaronyList *entity_list;
+    BmlBaronyList *void_inventory;
+    BmlListAddNodeFirstFunction list_add_node_first = NULL;
+    BmlEmptyDeconstructorFunction empty_deconstructor = NULL;
+    void *chest = NULL;
+    void *lid = NULL;
+    void *act_chest_fn;
+    void *act_chest_lid_fn;
+    void *act_chest_fn_storage;
+    void *act_chest_lid_fn_storage;
+    void *list_add_node_first_address;
+    void *empty_deconstructor_address;
+    int32_t chest_uid;
+    int32_t lid_uid;
+    double chest_x;
+    double chest_y;
+    double chest_z;
+    double chest_yaw;
+    double lid_x;
+    double lid_y;
+    double lid_z;
+
+    if (!g_bml_stash_playable_active) {
+        return false;
+    }
+    if (g_bml_stash_playable_lobby_placements_succeeded > 0 || g_bml_stash_playable_last_placed_chest != NULL) {
+        g_bml_stash_playable_lobby_already_placed_count += 1;
+        return false;
+    }
+    g_bml_stash_playable_lobby_placements_attempted += 1;
+
+    entity_list = bml_stash_playable_get_map_entity_list(map_argument);
+    if (entity_list == NULL) {
+        g_bml_stash_playable_lobby_placements_failed += 1;
+        return false;
+    }
+
+    void_inventory = bml_stash_stats_void_chest_inventory();
+    if (void_inventory != NULL) {
+        char ec[BML_MAX_TEXT];
+        char em[BML_MAX_TEXT];
+        ec[0] = '\0';
+        em[0] = '\0';
+        (void)bml_load_stash_inventory_if_needed(void_inventory, ec, sizeof(ec), em, sizeof(em));
+        g_bml_stash_core_behavior_inventory = void_inventory;
+    }
+
+    act_chest_fn = dlsym(RTLD_DEFAULT, "_Z8actChestP6Entity");
+    act_chest_lid_fn = dlsym(RTLD_DEFAULT, "_Z11actChestLidP6Entity");
+    if (act_chest_fn == NULL || act_chest_lid_fn == NULL) {
+        g_bml_stash_playable_lobby_placements_failed += 1;
+        return false;
+    }
+    memcpy(&act_chest_fn_storage, &act_chest_fn, sizeof(act_chest_fn_storage));
+    memcpy(&act_chest_lid_fn_storage, &act_chest_lid_fn, sizeof(act_chest_lid_fn_storage));
+
+    if (g_bml_stash_assign_actions_original != NULL) {
+        g_bml_stash_assign_actions_original(map_argument);
+    }
+
+    chest_x = BML_STASH_PLACEMENT_ANCHOR_OFFSET_X;
+    chest_y = 0.0;
+    chest_z = 6.0;
+    chest_yaw = 0.0;
+    lid_x = chest_x;
+    lid_y = chest_y + BML_STASH_PLACEMENT_LID_OFFSET_Y;
+    lid_z = chest_z + BML_STASH_PLACEMENT_LID_OFFSET_Z;
+
+    if (g_bml_stash_new_entity_original != NULL) {
+        ++g_bml_stash_playable_new_entity_calls;
+        chest = g_bml_stash_new_entity_original(BML_STASH_SPRITE_LOBBY_CHEST, 1U, entity_list, NULL);
+        if (chest != NULL) {
+            bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_X, chest_x);
+            bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_Y, chest_y);
+            bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_Z, chest_z);
+            bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_YAW, chest_yaw);
+            bml_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SIZEX, 3);
+            bml_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SIZEY, 2);
+            bml_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LOBBY_CHEST);
+            memcpy((unsigned char *)chest + BML_STASH_ENTITY_OFFSET_BEHAVIOR, &act_chest_fn_storage, sizeof(act_chest_fn_storage));
+            bml_entity_set_skill(chest, 0, 1);
+            bml_entity_set_skill(chest, 3, 9999);
+            bml_entity_set_skill(chest, 8, 9999);
+            bml_entity_set_skill(chest, 15, 9999);
+            bml_entity_set_skill(chest, 4, 0);
+            bml_entity_set_skill(chest, 10, 1);
+            bml_entity_set_skill(chest, 12, 0);
+            bml_entity_set_skill(chest, 17, BML_STASH_CHEST_VOID_STATE_PERMANENT);
+            bml_entity_set_skill(chest, 58, BML_STASH_INTERNAL_MARKER_SKILL58);
+        }
+
+        ++g_bml_stash_playable_new_entity_calls;
+        lid = g_bml_stash_new_entity_original(BML_STASH_SPRITE_LOBBY_LID, 0U, entity_list, NULL);
+        if (lid != NULL) {
+            bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_X, lid_x);
+            bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_Y, lid_y);
+            bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_Z, lid_z);
+            bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_YAW, chest_yaw);
+            bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_FOCALX, 3.0);
+            bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_FOCALZ, -0.75);
+            bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SIZEX, 2);
+            bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SIZEY, 2);
+            bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LOBBY_LID);
+            memcpy((unsigned char *)lid + BML_STASH_ENTITY_OFFSET_BEHAVIOR, &act_chest_lid_fn_storage, sizeof(act_chest_lid_fn_storage));
+            bml_entity_set_flag(lid, 12, true);
+        }
+    }
+
+    if (chest != NULL && lid != NULL) {
+        chest_uid = bml_entity_get_uid(chest);
+        lid_uid = bml_entity_get_uid(lid);
+        bml_entity_set_parent(lid, chest_uid);
+        bml_entity_set_parent(chest, lid_uid);
+
+        list_add_node_first_address = dlsym(RTLD_DEFAULT, "_Z17list_AddNodeFirstP6list_t");
+        if (list_add_node_first_address != NULL) {
+            memcpy(&list_add_node_first, &list_add_node_first_address, sizeof(list_add_node_first));
+        }
+        empty_deconstructor_address = dlsym(RTLD_DEFAULT, "_Z18emptyDeconstructorPv");
+        if (empty_deconstructor_address != NULL) {
+            memcpy(&empty_deconstructor, &empty_deconstructor_address, sizeof(empty_deconstructor));
+        }
+        if (list_add_node_first != NULL) {
+            BmlBaronyList *children = (BmlBaronyList *)((unsigned char *)chest + BML_STASH_ENTITY_OFFSET_CHILDREN);
+            BmlBaronyNode *node = list_add_node_first(children);
+            if (node != NULL) {
+                node->element = NULL;
+                node->deconstructor = empty_deconstructor;
+            }
+        }
+
+        g_bml_stash_playable_last_placed_chest = chest;
+        g_bml_stash_playable_last_placed_lid = lid;
+        g_bml_stash_playable_lobby_placements_succeeded += 1;
+        return true;
+    }
+
+    g_bml_stash_playable_lobby_placements_failed += 1;
+    return false;
+}
 
 static void bml_stash_assign_actions_replacement(void *map) {
     int new_entity_calls_before = g_bml_stash_new_entity_replacement_calls;
     int set_sprite_attributes_calls_before = g_bml_stash_set_sprite_attributes_replacement_calls;
     ++g_bml_stash_assign_actions_replacement_calls;
+    if (g_bml_stash_playable_active) {
+        ++g_bml_stash_playable_assign_actions_calls;
+    }
     bml_stash_placement_record_assign_actions_before(map, new_entity_calls_before, set_sprite_attributes_calls_before);
     if (g_bml_stash_placement_discovery_active) {
         g_bml_stash_placement_assign_actions_depth += 1;
     }
-    if (g_bml_stash_assign_actions_original != NULL) {
-        g_bml_stash_assign_actions_original(map);
+    if (g_bml_stash_playable_active) {
+        BmlStashPlacementMapPrefix *map_prefix = (BmlStashPlacementMapPrefix *)map;
+        bool is_eligible = false;
+        if (map_prefix != NULL) {
+            is_eligible = bml_stash_playable_is_start_map_name(map_prefix->name);
+        }
+        if (is_eligible) {
+            (void)bml_stash_playable_try_place_lobby_chest_and_lid(map);
+        }
+    } else {
+        if (g_bml_stash_assign_actions_original != NULL) {
+            g_bml_stash_assign_actions_original(map);
+        }
     }
     if (g_bml_stash_placement_discovery_active && g_bml_stash_placement_assign_actions_depth > 0) {
         g_bml_stash_placement_assign_actions_depth -= 1;
@@ -2724,6 +2997,9 @@ static void bml_stash_assign_actions_replacement(void *map) {
 static void *bml_stash_new_entity_replacement(int sprite, uint32_t pos, BmlBaronyList *entity_list, BmlBaronyList *creature_list) {
     void *result = NULL;
     ++g_bml_stash_new_entity_replacement_calls;
+    if (g_bml_stash_playable_active) {
+        ++g_bml_stash_playable_new_entity_calls;
+    }
     if (g_bml_stash_new_entity_original != NULL) {
         result = g_bml_stash_new_entity_original(sprite, pos, entity_list, creature_list);
     }
@@ -2733,6 +3009,9 @@ static void *bml_stash_new_entity_replacement(int sprite, uint32_t pos, BmlBaron
 
 static void bml_stash_set_sprite_attributes_replacement(void *entity, void *source, void *parent) {
     ++g_bml_stash_set_sprite_attributes_replacement_calls;
+    if (g_bml_stash_playable_active) {
+        ++g_bml_stash_playable_set_sprite_calls;
+    }
     bml_stash_placement_record_set_sprite_attributes(entity, source, parent);
     if (g_bml_stash_set_sprite_attributes_original != NULL) {
         g_bml_stash_set_sprite_attributes_original(entity, source, parent);
@@ -3496,6 +3775,152 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
     }
     return 0;
 }
+static int bml_write_stash_playable_install_report(const char *report_path, const char *status, const char *error_code, const char *error_message) {
+    FILE *file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-playable-install\",\n  \"status\": ", file);
+    bml_json_write_escaped(file, status);
+    fputs(",\n  \"experimental\": true,\n  \"claimBoundary\": \"playable-lobby-lifecycle-only\",\n  \"lobbyPlacement\": {\n    \"attempted\": ", file);
+    fprintf(file, "%d", g_bml_stash_playable_lobby_placements_attempted);
+    fprintf(file, ",\n    \"succeeded\": %d,\n    \"failed\": %d,\n    \"alreadyPlaced\": %d,\n    \"chestPlaced\": %s,\n    \"lidPlaced\": %s\n  },\n  \"calls\": {\n    \"assignActions\": %d,\n    \"newEntity\": %d,\n    \"setSprite\": %d\n  },\n  \"lastPlaced\": {\n    \"chest\": ",
+            g_bml_stash_playable_lobby_placements_succeeded,
+            g_bml_stash_playable_lobby_placements_failed,
+            g_bml_stash_playable_lobby_already_placed_count,
+            g_bml_stash_playable_last_placed_chest != NULL ? "true" : "false",
+            g_bml_stash_playable_last_placed_lid != NULL ? "true" : "false",
+            g_bml_stash_playable_assign_actions_calls,
+            g_bml_stash_playable_new_entity_calls,
+            g_bml_stash_playable_set_sprite_calls);
+    bml_write_address_or_null(file, g_bml_stash_playable_last_placed_chest);
+    fputs(", \"lid\": ", file);
+    bml_write_address_or_null(file, g_bml_stash_playable_last_placed_lid);
+    fputs("\n  },\n  \"error\": ", file);
+    if (bml_has_value(error_code) || bml_has_value(error_message)) {
+        fputs("{\"code\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_STASH_PLAYABLE_FAILED");
+        fputs(", \"message\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Experimental Stash playable install failed.");
+        fputc('}', file);
+    } else {
+        fputs("null", file);
+    }
+    fputs(",\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+static int bml_run_stash_playable_install(const char *report_path, const char *profile_dir, bool self_test_requested) {
+    BmlStashCoreDetourInstall core_targets[7];
+    BmlStashCoreDetourInstall access_targets[6];
+    size_t core_target_count = sizeof(core_targets) / sizeof(core_targets[0]);
+    size_t access_target_count = sizeof(access_targets) / sizeof(access_targets[0]);
+    int result = 0;
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
+
+    if (bml_join_path(g_bml_stash_state_dir_path, sizeof(g_bml_stash_state_dir_path), profile_dir, BML_STASH_STATE_DIR_RELATIVE_PATH) != 0 ||
+        bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_PATH_TOO_LONG");
+        bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable state path exceeded PATH_MAX.");
+        (void)bml_write_stash_playable_install_report(report_path, "failed", error_code, error_message);
+        return -1;
+    }
+    if (bml_stash_resolve_inventory_functions(error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        (void)bml_write_stash_playable_install_report(report_path, "failed", error_code, error_message);
+        return -1;
+    }
+
+    g_bml_stash_core_behavior_active = true;
+    g_bml_stash_core_behavior_loaded = false;
+    g_bml_stash_core_behavior_dirty = false;
+    g_bml_stash_core_behavior_loads = 0;
+    g_bml_stash_core_behavior_saves = 0;
+    g_bml_stash_core_behavior_dirty_marks = 0;
+    g_bml_stash_core_behavior_inventory = NULL;
+
+    g_bml_stash_playable_active = true;
+    g_bml_stash_playable_hooks_installed = false;
+    g_bml_stash_playable_assign_actions_calls = 0;
+    g_bml_stash_playable_new_entity_calls = 0;
+    g_bml_stash_playable_set_sprite_calls = 0;
+    g_bml_stash_playable_lobby_placements_attempted = 0;
+    g_bml_stash_playable_lobby_placements_succeeded = 0;
+    g_bml_stash_playable_lobby_placements_failed = 0;
+    g_bml_stash_playable_lobby_already_placed_count = 0;
+    g_bml_stash_playable_last_placed_chest = NULL;
+    g_bml_stash_playable_last_placed_lid = NULL;
+
+    bml_reset_stash_core_passthrough_state();
+    bml_reset_stash_access_placement_state();
+
+    bml_init_stash_core_detour_target(&core_targets[0], "Entity::getChestInventoryList", "_ZN6Entity21getChestInventoryListEv", bml_stash_get_inventory_function_address(bml_stash_get_chest_inventory_list_replacement));
+    bml_init_stash_core_detour_target(&core_targets[1], "Entity::addItemToChest", "_ZN6Entity14addItemToChestEP4ItembS1_", bml_stash_add_item_to_chest_function_address(bml_stash_add_item_to_chest_replacement));
+    bml_init_stash_core_detour_target(&core_targets[2], "Entity::getItemFromChest", "_ZN6Entity16getItemFromChestEP4Itemib", bml_stash_get_item_from_chest_function_address(bml_stash_get_item_from_chest_replacement));
+    bml_init_stash_core_detour_target(&core_targets[3], "Entity::addItemToVoidChestServer", "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_", bml_stash_add_item_function_address(bml_stash_add_item_to_void_chest_server_replacement));
+    bml_init_stash_core_detour_target(&core_targets[4], "Entity::removeItemFromVoidChestServer", "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi", bml_stash_remove_item_function_address(bml_stash_remove_item_from_void_chest_server_replacement));
+    bml_init_stash_core_detour_target(&core_targets[5], "Entity::closeChest", "_ZN6Entity10closeChestEv", bml_stash_close_chest_function_address(bml_stash_close_chest_replacement));
+    bml_init_stash_core_detour_target(&core_targets[6], "Entity::closeChestServer", "_ZN6Entity16closeChestServerEv", bml_stash_close_chest_function_address(bml_stash_close_chest_server_replacement));
+
+    for (size_t index = 0U; index < core_target_count; ++index) {
+        if (bml_prepare_stash_core_detour_target(&core_targets[index]) != 0) {
+            result = -1;
+        }
+    }
+    if (result == 0) {
+        for (size_t index = 0U; index < core_target_count; ++index) {
+            if (bml_install_stash_core_detour_target(&core_targets[index]) != 0) {
+                result = -1;
+                break;
+            }
+        }
+    }
+
+    bml_init_stash_core_detour_target(&access_targets[0], "actChest", "_Z8actChestP6Entity", bml_stash_entity_action_function_address(bml_stash_act_chest_replacement));
+    bml_init_stash_core_detour_target(&access_targets[1], "actChestLid", "_Z11actChestLidP6Entity", bml_stash_entity_action_function_address(bml_stash_act_chest_lid_replacement));
+    bml_init_stash_core_detour_target(&access_targets[2], "generateDungeon", "_Z15generateDungeonPcjSt5tupleIJiiiiEE", bml_stash_generate_dungeon_function_address(bml_stash_generate_dungeon_replacement));
+    bml_init_stash_core_detour_target(&access_targets[3], "assignActions", "_Z13assignActionsP5map_t", bml_stash_assign_actions_function_address(bml_stash_assign_actions_replacement));
+    bml_init_stash_core_detour_target(&access_targets[4], "newEntity", "_Z9newEntityijP6list_tS0_", bml_stash_new_entity_function_address(bml_stash_new_entity_replacement));
+    bml_init_stash_core_detour_target(&access_targets[5], "setSpriteAttributes", "_Z19setSpriteAttributesP6EntityS0_S0_", bml_stash_set_sprite_attributes_function_address(bml_stash_set_sprite_attributes_replacement));
+
+    for (size_t index = 0U; index < access_target_count; ++index) {
+        if (bml_prepare_stash_core_detour_target(&access_targets[index]) != 0) {
+            result = -1;
+        }
+    }
+    if (result == 0) {
+        for (size_t index = 0U; index < access_target_count; ++index) {
+            if (bml_install_stash_core_detour_target(&access_targets[index]) != 0) {
+                result = -1;
+                break;
+            }
+        }
+    }
+
+    if (result == 0) {
+        g_bml_stash_playable_hooks_installed = true;
+    }
+    if (result == 0 && self_test_requested) {
+        bml_stash_assign_actions_replacement(bml_stash_playable_get_map_symbol());
+        if (g_bml_stash_playable_lobby_placements_succeeded < 1) {
+            result = -1;
+            bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_SELF_TEST_FAILED");
+            bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable install self-test did not place the lobby chest and lid.");
+        }
+    }
+
+    if (bml_write_stash_playable_install_report(report_path, result == 0 ? "installed" : "failed", error_code, error_message) != 0) {
+        return -1;
+    }
+    return result;
+}
 
 static int bml_run_stash_core_behavior_install(const char *report_path, const char *profile_dir, bool self_test_requested) {
     BmlStashCoreDetourInstall targets[7];
@@ -3561,6 +3986,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *stash_placement_discovery;
     const char *stash_enable_core_behavior;
     const char *stash_core_behavior_self_test;
+    const char *stash_enable_experimental_playable;
+    const char *stash_playable_install_self_test;
     BmlError errors[BML_MAX_ERRORS];
     size_t error_count = 0U;
     BmlReportInfo info;
@@ -3575,6 +4002,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     bool stash_core_behavior_self_test_requested;
     bool stash_access_placement_self_test_requested;
     bool stash_placement_discovery_requested;
+    bool stash_enable_experimental_playable_requested;
+    bool stash_playable_install_self_test_requested;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
     char symbol_report_path[PATH_MAX];
@@ -3587,6 +4016,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char stash_access_placement_self_test_report_path[PATH_MAX];
     char stash_placement_discovery_report_path[PATH_MAX];
     char stash_core_behavior_report_path[PATH_MAX];
+    char stash_playable_install_report_path[PATH_MAX];
     char *runtime_json = NULL;
 
     if (g_bml_initialized != 0) {
@@ -3622,8 +4052,20 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_placement_discovery_requested = strcmp(stash_placement_discovery != NULL ? stash_placement_discovery : "", "1") == 0;
     stash_enable_core_behavior_requested = strcmp(stash_enable_core_behavior != NULL ? stash_enable_core_behavior : "", "1") == 0;
     stash_core_behavior_self_test_requested = strcmp(stash_core_behavior_self_test != NULL ? stash_core_behavior_self_test : "", "1") == 0;
-
+    stash_enable_experimental_playable = getenv("BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE");
+    stash_playable_install_self_test = getenv("BML_STASH_PLAYABLE_INSTALL_SELF_TEST");
     bml_report_info_init(&info, hook_library);
+
+    if (bml_has_value(runtime_manifest) && access(runtime_manifest, R_OK) == 0) {
+        runtime_json = bml_read_text_file(runtime_manifest, NULL);
+        if (runtime_json == NULL) {
+            bml_add_error(errors, &error_count, "BML_RUNTIME_MANIFEST_PARSE_FAILED", "BML_RUNTIME_MANIFEST could not be read by the native hook.", "BML_RUNTIME_MANIFEST", runtime_manifest);
+        } else {
+            bml_populate_report_from_runtime_manifest(&info, runtime_json);
+        }
+    }
+    stash_enable_experimental_playable_requested = strcmp(stash_enable_experimental_playable != NULL ? stash_enable_experimental_playable : "", "1") == 0 && info.has_stash;
+    stash_playable_install_self_test_requested = strcmp(stash_playable_install_self_test != NULL ? stash_playable_install_self_test : "", "1") == 0;
 
     if (!bml_has_value(profile_dir)) {
         bml_add_error(errors, &error_count, "BML_PROFILE_DIR_MISSING", "BML_PROFILE_DIR is required before the native hook can write a runtime load report.", "BML_PROFILE_DIR", NULL);
@@ -3634,15 +4076,6 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     (void)bml_check_readable_env_path(errors, &error_count, "BML_RUNTIME_MANIFEST", runtime_manifest, true);
     (void)bml_check_readable_env_path(errors, &error_count, "BML_HOOK_MANIFEST", hook_manifest, true);
     (void)bml_check_readable_env_path(errors, &error_count, "BML_HOOK_LIBRARY", hook_library, false);
-
-    if (bml_has_value(runtime_manifest) && access(runtime_manifest, R_OK) == 0) {
-        runtime_json = bml_read_text_file(runtime_manifest, NULL);
-        if (runtime_json == NULL) {
-            bml_add_error(errors, &error_count, "BML_RUNTIME_MANIFEST_PARSE_FAILED", "BML_RUNTIME_MANIFEST could not be read by the native hook.", "BML_RUNTIME_MANIFEST", runtime_manifest);
-        } else {
-            bml_populate_report_from_runtime_manifest(&info, runtime_json);
-        }
-    }
 
     if (bml_join_path(report_dir, sizeof(report_dir), profile_dir, BML_REPORT_DIR_RELATIVE_PATH) != 0 ||
         bml_join_path(report_path, sizeof(report_path), profile_dir, BML_REPORT_RELATIVE_PATH) != 0 ||
@@ -3655,7 +4088,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(stash_access_placement_detour_install_report_path, sizeof(stash_access_placement_detour_install_report_path), profile_dir, BML_STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_access_placement_self_test_report_path, sizeof(stash_access_placement_self_test_report_path), profile_dir, BML_STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_placement_discovery_report_path, sizeof(stash_placement_discovery_report_path), profile_dir, BML_STASH_PLACEMENT_DISCOVERY_REPORT_RELATIVE_PATH) != 0 ||
-        bml_join_path(stash_core_behavior_report_path, sizeof(stash_core_behavior_report_path), profile_dir, BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH) != 0) {
+        bml_join_path(stash_core_behavior_report_path, sizeof(stash_core_behavior_report_path), profile_dir, BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(stash_playable_install_report_path, sizeof(stash_playable_install_report_path), profile_dir, BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
         return g_bml_init_result;
@@ -3668,10 +4102,6 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
 
     bml_analyze_stash_hook_plan(&stash_hook_plan, &symbol_probe);
     stash_hooks_installed = bml_stash_hooks_installed(&stash_hook_plan);
-    if (info.has_stash && !stash_hooks_installed) {
-        bml_add_error(errors, &error_count, "BML_STASH_HOOKS_NOT_INSTALLED", "Direct Stash hook backend did not install all required gameplay hooks; Stash is intentionally failed closed.", NULL, NULL);
-    }
-
     if (bml_mkdir_p(report_dir) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
@@ -3689,13 +4119,22 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_WITHOUT_INSTALL", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 requires BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1.", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST", stash_access_placement_self_test_report_path);
     } else if (stash_core_behavior_self_test_requested && !stash_enable_core_behavior_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_WITHOUT_BEHAVIOR", "BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 requires BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1.", "BML_STASH_CORE_BEHAVIOR_SELF_TEST", stash_core_behavior_report_path);
+    } else if (stash_playable_install_self_test_requested && !stash_enable_experimental_playable_requested) {
+        bml_add_error(errors, &error_count, "BML_STASH_PLAYABLE_SELF_TEST_WITHOUT_PLAYABLE", "BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 requires BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 and a Stash runtime manifest.", "BML_STASH_PLAYABLE_INSTALL_SELF_TEST", stash_playable_install_report_path);
     } else if (stash_enable_core_behavior_requested && (stash_install_core_passthrough_requested || stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 installs the same core Stash targets as the pass-through/self-test modes; enable only one Stash detour install/self-test mode.", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR", stash_core_behavior_report_path);
     } else if (stash_install_core_passthrough_requested && (stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 targets Entity::addItemToVoidChestServer alongside other Stash detour modes in the same process; enable only one Stash detour install/self-test mode.", "BML_STASH_INSTALL_CORE_PASSTHROUGH", stash_core_detour_install_report_path);
     } else if (stash_install_add_item_passthrough_requested && stash_detour_self_test_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 and BML_STASH_DETOUR_SELF_TEST=1 both target Entity::addItemToVoidChestServer in the same process; enable only one.", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH", stash_detour_install_report_path);
+    } else if (stash_enable_experimental_playable_requested && (stash_enable_core_behavior_requested || stash_install_core_passthrough_requested || stash_install_access_placement_passthrough_requested || stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
+        bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 installs the same Stash targets as other modes; enable only one Stash detour install mode.", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE", stash_playable_install_report_path);
     } else {
+        if (stash_enable_experimental_playable_requested &&
+            bml_run_stash_playable_install(stash_playable_install_report_path, profile_dir, stash_playable_install_self_test_requested) != 0) {
+            bml_add_error(errors, &error_count, "BML_STASH_PLAYABLE_INSTALL_FAILED", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 was requested, but the playable Stash install failed.", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE", stash_playable_install_report_path);
+        }
+
         if (stash_enable_core_behavior_requested &&
             bml_run_stash_core_behavior_install(stash_core_behavior_report_path, profile_dir, stash_core_behavior_self_test_requested) != 0) {
             bml_add_error(errors, &error_count, "BML_STASH_CORE_BEHAVIOR_FAILED", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 was requested, but the experimental core Stash behavior install/self-test failed.", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR", stash_core_behavior_report_path);
@@ -3722,6 +4161,13 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         }
     }
 
+    if (g_bml_stash_playable_hooks_installed) {
+        stash_hooks_installed = true;
+    }
+    if (info.has_stash && !stash_hooks_installed && error_count == 0U) {
+        bml_add_error(errors, &error_count, "BML_STASH_HOOKS_NOT_INSTALLED", "Direct Stash hook backend did not install all required gameplay hooks; Stash is intentionally failed closed.", NULL, NULL);
+    }
+
     if (bml_write_symbol_probe_report(symbol_report_path, &info, &symbol_probe) != 0 ||
         bml_write_stash_hook_report(stash_hook_report_path, &info, &stash_hook_plan, stash_hooks_installed) != 0 ||
         bml_write_report(report_path, &info, errors, error_count) != 0) {
@@ -3729,6 +4175,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         g_bml_init_result = 1;
         return g_bml_init_result;
     }
+
 
     free(runtime_json);
     g_bml_init_result = (error_count == 0U) ? 0 : 1;

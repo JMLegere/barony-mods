@@ -51,6 +51,14 @@ BEHAVIOR_REPORT="$BEHAVIOR_REPORT_DIR/runtime-load-report.json"
 BEHAVIOR_SYMBOL_REPORT="$BEHAVIOR_REPORT_DIR/symbol-probe-report.json"
 BEHAVIOR_STASH_REPORT="$BEHAVIOR_REPORT_DIR/stash-hook-report.json"
 STASH_CORE_BEHAVIOR_REPORT="$BEHAVIOR_REPORT_DIR/stash-core-behavior-report.json"
+PLAYABLE_PROFILE_DIR="$PROFILE_DIR/playable-profile"
+PLAYABLE_REPORT_DIR="$PLAYABLE_PROFILE_DIR/BaronyModLoader/reports"
+PLAYABLE_REPORT="$PLAYABLE_REPORT_DIR/runtime-load-report.json"
+PLAYABLE_SYMBOL_REPORT="$PLAYABLE_REPORT_DIR/symbol-probe-report.json"
+PLAYABLE_STASH_REPORT="$PLAYABLE_REPORT_DIR/stash-hook-report.json"
+STASH_PLAYABLE_CORE_BEHAVIOR_REPORT="$PLAYABLE_REPORT_DIR/stash-core-behavior-report.json"
+STASH_PLAYABLE_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT="$PLAYABLE_REPORT_DIR/stash-access-placement-detour-install-report.json"
+STASH_PLAYABLE_INSTALL_REPORT="$PLAYABLE_REPORT_DIR/stash-playable-install-report.json"
 
 
 cleanup() {
@@ -58,7 +66,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
+mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$PLAYABLE_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
 cat > "$RUNTIME_MANIFEST" <<'JSON'
 {
   "contract": {
@@ -584,6 +592,65 @@ for target in behavior_report["targets"]:
 print(f"experimental stash core behavior self-test remains fail-closed ok: {behavior_report_path}")
 PY
 
+BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 \
+BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 \
+BML_PROFILE_DIR="$PLAYABLE_PROFILE_DIR" \
+BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
+BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
+BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
+LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
+/usr/bin/true
+
+python - "$PLAYABLE_REPORT" "$PLAYABLE_SYMBOL_REPORT" "$PLAYABLE_STASH_REPORT" "$STASH_PLAYABLE_INSTALL_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1])
+symbol_report_path = pathlib.Path(sys.argv[2])
+stash_report_path = pathlib.Path(sys.argv[3])
+playable_install_report_path = pathlib.Path(sys.argv[4])
+for path in (report_path, symbol_report_path, stash_report_path, playable_install_report_path):
+    if not path.is_file():
+        raise SystemExit(f"missing experimental playable report: {path}")
+
+report = json.loads(report_path.read_text(encoding="utf-8"))
+symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
+stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+playable_install_report = json.loads(playable_install_report_path.read_text(encoding="utf-8"))
+
+assert report["status"] == "loaded", report
+assert any(mod.get("id") == "jml.stash" and mod.get("version") == "0.1.0" for mod in report["loadedMods"]), report
+runtime_codes = {error["code"] for error in report["errors"]}
+assert "BML_STASH_HOOKS_NOT_INSTALLED" not in runtime_codes, report["errors"]
+assert "BML_STASH_PLAYABLE_INSTALL_FAILED" not in runtime_codes, report["errors"]
+assert symbol_report["summary"]["missing"] == 0, symbol_report
+assert stash_report["summary"]["failClosed"] is False, stash_report
+
+assert playable_install_report["schemaVersion"] == "0.1.0", playable_install_report
+assert playable_install_report["test"] == "stash-playable-install", playable_install_report
+assert playable_install_report["status"] == "installed", playable_install_report
+calls = playable_install_report["calls"]
+assert calls["assignActions"] > 0, calls
+assert calls["newEntity"] >= 2, calls
+assert calls["setSprite"] == 0, calls
+
+lobby = playable_install_report["lobbyPlacement"]
+assert lobby.get("chestCreated", lobby.get("chestPlaced")) is True, lobby
+assert lobby.get("lidCreated", lobby.get("lidPlaced")) is True, lobby
+assert lobby.get("lobbyPlaced", lobby.get("succeeded", 0) == 1) is True, lobby
+assert lobby.get("failedCount", lobby.get("failed")) == 0, lobby
+assert lobby.get("succeeded", 1) == 1, lobby
+assert lobby.get("chestSprite", 1791) == 1791, lobby
+assert lobby.get("lidSprite", 1790) == 1790, lobby
+assert lobby.get("chestVoidState", -1) == -1, lobby
+if "chestBehavior" in lobby:
+    assert "actChest" in str(lobby["chestBehavior"]), lobby
+if "lidBehavior" in lobby:
+    assert "actChestLid" in str(lobby["lidBehavior"]), lobby
+print(f"experimental playable stash fake-provider lobby placement ok: {playable_install_report_path}")
+PY
+
 BML_PROFILE_DIR="$NO_STASH_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$NO_STASH_RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -661,7 +728,6 @@ assert runtime_report["loadedMods"] == []
 assert runtime_report["profileId"] == "steam-default"
 runtime_errors = runtime_report["errors"]
 assert any(error["code"] == "BML_HOOK_MANIFEST_UNREADABLE" and error["severity"] == "fatal" for error in runtime_errors), runtime_errors
-assert any(error["code"] == "BML_STASH_HOOKS_NOT_INSTALLED" and error["severity"] == "fatal" for error in runtime_errors), runtime_errors
 assert not any(error["code"] == "BML_HOOK_SYMBOL_MISSING" for error in runtime_errors), runtime_errors
 
 assert symbol_report["status"] == "loaded"

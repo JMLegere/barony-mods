@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
-
+#include <string.h>
 int bml_fake_detour_counter __asm__("bml_fake_detour_counter") __attribute__((visibility("protected"))) = 0;
 
 typedef struct BmlFakeNode {
@@ -56,7 +56,55 @@ typedef struct BmlFakeMapPrefix {
     unsigned int skybox;
     int32_t flags[16];
     int32_t *tiles;
+    unsigned char entities_map_padding[56];
+    BmlFakeList *entities;
+    BmlFakeList *creatures;
 } BmlFakeMapPrefix;
+
+#define BML_FAKE_ENTITY_SIZE 5024U
+#define BML_FAKE_ENTITY_UID_OFFSET 104U
+#define BML_FAKE_ENTITY_X_OFFSET 208U
+#define BML_FAKE_ENTITY_Y_OFFSET 216U
+#define BML_FAKE_ENTITY_Z_OFFSET 224U
+#define BML_FAKE_ENTITY_SPRITE_OFFSET 312U
+#define BML_FAKE_ENTITY_SKILL_OFFSET 640U
+#define BML_FAKE_ENTITY_CHILDREN_OFFSET 920U
+#define BML_FAKE_ENTITY_PARENT_OFFSET 936U
+#define BML_FAKE_ENTITY_MYNODE_OFFSET 4880U
+#define BML_FAKE_ENTITY_BEHAVIOR_OFFSET 4936U
+#define BML_FAKE_ENTITY_RANBEHAVIOR_OFFSET 4944U
+#define BML_FAKE_CHEST_VOID_STATE_SKILL_INDEX 17U
+#define BML_FAKE_CHEST_SPRITE 1791
+#define BML_FAKE_CHEST_LID_SPRITE 1790
+
+static void bml_fake_write_u32(void *base, size_t offset, uint32_t value) {
+    memcpy((unsigned char *)base + offset, &value, sizeof(value));
+}
+
+static void bml_fake_write_i32(void *base, size_t offset, int32_t value) {
+    memcpy((unsigned char *)base + offset, &value, sizeof(value));
+}
+
+static int32_t bml_fake_read_i32(const void *base, size_t offset) {
+    int32_t value = 0;
+    memcpy(&value, (const unsigned char *)base + offset, sizeof(value));
+    return value;
+}
+
+static void bml_fake_write_double(void *base, size_t offset, double value) {
+    memcpy((unsigned char *)base + offset, &value, sizeof(value));
+}
+
+static void bml_fake_write_ptr(void *base, size_t offset, void *value) {
+    memcpy((unsigned char *)base + offset, &value, sizeof(value));
+}
+
+static void *bml_fake_function_address(void (*function)(void)) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
 
 static BmlFakeStat bml_fake_stat_zero;
 void *bml_fake_stats[1] __asm__("stats") = { &bml_fake_stat_zero };
@@ -278,6 +326,69 @@ __asm__(
     "  ret\n"
     ".size _ZN6Entity24addItemToVoidChestServerEiP4ItembS1_, .-_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_\n");
 
+void bml_fake_actChest(void) __asm__("_Z8actChestP6Entity");
+void bml_fake_actChestLid(void) __asm__("_Z11actChestLidP6Entity");
+
+int bml_fake_new_entity_calls __asm__("bml_fake_new_entity_calls") = 0;
+int bml_fake_new_entity_sprite_188_calls __asm__("bml_fake_new_entity_sprite_188_calls") = 0;
+int bml_fake_new_entity_sprite_1484_calls __asm__("bml_fake_new_entity_sprite_1484_calls") = 0;
+int bml_fake_new_entity_sprite_1790_calls __asm__("bml_fake_new_entity_sprite_1790_calls") = 0;
+int bml_fake_new_entity_sprite_1791_calls __asm__("bml_fake_new_entity_sprite_1791_calls") = 0;
+int bml_fake_new_entity_last_sprite __asm__("bml_fake_new_entity_last_sprite") = 0;
+uint32_t bml_fake_new_entity_last_pos __asm__("bml_fake_new_entity_last_pos") = 0U;
+void *bml_fake_new_entity_last_entity __asm__("bml_fake_new_entity_last_entity") = NULL;
+void *bml_fake_new_entity_last_entity_list __asm__("bml_fake_new_entity_last_entity_list") = NULL;
+int bml_fake_entity_list_count __asm__("bml_fake_entity_list_count") = 0;
+uint32_t bml_fake_next_entity_uid __asm__("bml_fake_next_entity_uid") = 1000U;
+
+static void bml_fake_entity_deconstructor(void *data) {
+    free(data);
+}
+
+void *bml_fake_new_entity_impl(int sprite, uint32_t pos, BmlFakeList *entity_list, BmlFakeList *creature_list) {
+    unsigned char *entity = (unsigned char *)calloc(1, BML_FAKE_ENTITY_SIZE);
+    BmlFakeNode *node;
+    (void)creature_list;
+    if (entity == NULL) {
+        return NULL;
+    }
+
+    bml_fake_new_entity_calls += 1;
+    bml_fake_new_entity_last_sprite = sprite;
+    bml_fake_new_entity_last_pos = pos;
+    bml_fake_new_entity_last_entity = entity;
+    bml_fake_new_entity_last_entity_list = entity_list;
+    if (sprite == 188) {
+        bml_fake_new_entity_sprite_188_calls += 1;
+    } else if (sprite == 1484) {
+        bml_fake_new_entity_sprite_1484_calls += 1;
+    } else if (sprite == BML_FAKE_CHEST_LID_SPRITE) {
+        bml_fake_new_entity_sprite_1790_calls += 1;
+    } else if (sprite == BML_FAKE_CHEST_SPRITE) {
+        bml_fake_new_entity_sprite_1791_calls += 1;
+    }
+
+    bml_fake_write_u32(entity, BML_FAKE_ENTITY_UID_OFFSET, bml_fake_next_entity_uid++);
+    bml_fake_write_double(entity, BML_FAKE_ENTITY_X_OFFSET, (double)(pos % 256U));
+    bml_fake_write_double(entity, BML_FAKE_ENTITY_Y_OFFSET, (double)((pos / 256U) % 256U));
+    bml_fake_write_double(entity, BML_FAKE_ENTITY_Z_OFFSET, 0.0);
+    bml_fake_write_i32(entity, BML_FAKE_ENTITY_SPRITE_OFFSET, sprite);
+
+    if (entity_list != NULL) {
+        node = bml_fake_list_AddNodeLast(entity_list);
+        if (node == NULL) {
+            free(entity);
+            return NULL;
+        }
+        node->element = entity;
+        node->deconstructor = bml_fake_entity_deconstructor;
+        bml_fake_write_ptr(entity, BML_FAKE_ENTITY_MYNODE_OFFSET, node);
+        bml_fake_entity_list_count += 1;
+    }
+
+    return entity;
+}
+
 void bml_fake_newEntity(void) __asm__("_Z9newEntityijP6list_tS0_");
 
 __asm__(
@@ -285,18 +396,20 @@ __asm__(
     ".globl _Z9newEntityijP6list_tS0_\n"
     ".type _Z9newEntityijP6list_tS0_, @function\n"
     "_Z9newEntityijP6list_tS0_:\n"
-    "  push %r14\n"
-    "  mov %rdx, %r14\n"
-    "  push %r13\n"
-    "  mov %esi, %r13d\n"
-    "  push %r12\n"
     "  push %rbp\n"
-    "  mov %edi, %ebp\n"
-    "  mov $56, %edi\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_new_entity_impl@PLT\n"
     "  pop %rbp\n"
-    "  pop %r12\n"
-    "  pop %r13\n"
-    "  pop %r14\n"
     "  ret\n"
     ".size _Z9newEntityijP6list_tS0_, .-_Z9newEntityijP6list_tS0_\n");
 
@@ -485,6 +598,15 @@ __asm__(
     "  ret\n"
     ".size _Z15generateDungeonPcjSt5tupleIJiiiiEE, .-_Z15generateDungeonPcjSt5tupleIJiiiiEE\n");
 
+static BmlFakeList bml_fake_tile_entity_list_storage = { NULL, NULL };
+static BmlFakeList bml_fake_map_entity_list_storage = { NULL, NULL };
+void *bml_fake_TileEntityList __asm__("TileEntityList") = &bml_fake_tile_entity_list_storage;
+
+void bml_fake_assign_actions_impl(void *map_argument) {
+    (void)map_argument;
+    (void)bml_fake_new_entity_impl(188, 3U, &bml_fake_tile_entity_list_storage, NULL);
+}
+
 void bml_fake_assignActions(void) __asm__("_Z13assignActionsP5map_t");
 
 __asm__(
@@ -504,9 +626,35 @@ __asm__(
     "  nop\n"
     "  nop\n"
     "  nop\n"
+    "  call bml_fake_assign_actions_impl@PLT\n"
     "  pop %rbp\n"
     "  ret\n"
     ".size _Z13assignActionsP5map_t, .-_Z13assignActionsP5map_t\n");
+
+int bml_fake_set_sprite_attributes_calls __asm__("bml_fake_set_sprite_attributes_calls") = 0;
+void *bml_fake_set_sprite_attributes_last_entity __asm__("bml_fake_set_sprite_attributes_last_entity") = NULL;
+void *bml_fake_set_sprite_attributes_last_parent __asm__("bml_fake_set_sprite_attributes_last_parent") = NULL;
+
+void bml_fake_set_sprite_attributes_impl(void *entity, void *source, void *parent) {
+    int32_t sprite;
+    (void)source;
+    bml_fake_set_sprite_attributes_calls += 1;
+    bml_fake_set_sprite_attributes_last_entity = entity;
+    bml_fake_set_sprite_attributes_last_parent = parent;
+    if (entity == NULL) {
+        return;
+    }
+    if (parent != NULL) {
+        bml_fake_write_ptr(entity, BML_FAKE_ENTITY_PARENT_OFFSET, parent);
+    }
+    sprite = bml_fake_read_i32(entity, BML_FAKE_ENTITY_SPRITE_OFFSET);
+    if (sprite == BML_FAKE_CHEST_SPRITE) {
+        bml_fake_write_ptr(entity, BML_FAKE_ENTITY_BEHAVIOR_OFFSET, bml_fake_function_address(bml_fake_actChest));
+        bml_fake_write_i32(entity, BML_FAKE_ENTITY_SKILL_OFFSET + (BML_FAKE_CHEST_VOID_STATE_SKILL_INDEX * sizeof(int32_t)), -1);
+    } else if (sprite == BML_FAKE_CHEST_LID_SPRITE) {
+        bml_fake_write_ptr(entity, BML_FAKE_ENTITY_BEHAVIOR_OFFSET, bml_fake_function_address(bml_fake_actChestLid));
+    }
+}
 
 void bml_fake_setSpriteAttributes(void) __asm__("_Z19setSpriteAttributesP6EntityS0_S0_");
 
@@ -527,6 +675,7 @@ __asm__(
     "  nop\n"
     "  nop\n"
     "  nop\n"
+    "  call bml_fake_set_sprite_attributes_impl@PLT\n"
     "  pop %rbp\n"
     "  ret\n"
     ".size _Z19setSpriteAttributesP6EntityS0_S0_, .-_Z19setSpriteAttributesP6EntityS0_S0_\n");
@@ -539,6 +688,9 @@ BmlFakeMapPrefix bml_fake_map __asm__("map") = {
     0U,
     {0},
     NULL,
+    {0},
+    &bml_fake_map_entity_list_storage,
+    NULL,
 };
 void *bml_fake_assign_actions_map __asm__("bml_fake_assign_actions_map") = &bml_fake_map;
 int bml_fake_map_rng __asm__("map_rng") = 1;
@@ -547,4 +699,3 @@ int bml_fake_multiplayer __asm__("multiplayer") = 1;
 int bml_fake_clientnum __asm__("clientnum") = 1;
 int bml_fake_openedChest __asm__("openedChest") = 1;
 int bml_fake_shoparea __asm__("shoparea") = 1;
-int bml_fake_TileEntityList __asm__("TileEntityList") = 1;
