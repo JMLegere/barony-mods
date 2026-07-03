@@ -20,7 +20,7 @@ make -C native/barony-modloader-hook clean all
 make -C native/barony-modloader-hook test
 ```
 
-The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates a temporary profile/runtime manifest, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, Stash hook, and detour self-test reports with Python. It does not launch Barony or prove gameplay behavior.
+The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates a temporary profile/runtime manifest, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, Stash hook, generic detour self-test, and opt-in Stash target detour self-test reports with Python. It does not launch Barony or prove gameplay behavior.
 
 Manual smoke shape:
 
@@ -33,10 +33,10 @@ LD_PRELOAD=/path/to/native/barony-modloader-hook/build/libbarony_bml.so \
 /usr/bin/true
 ```
 
-Set `BML_DETOUR_SELF_TEST=1` with the fake symbol provider preloaded to write `BaronyModLoader/reports/detour-self-test-report.json`. That report proves the fixture replacement ran and called through the executable trampoline to the original fake function; it is not a Stash gameplay hook.
+Set `BML_DETOUR_SELF_TEST=1` with the fake symbol provider preloaded to write `BaronyModLoader/reports/detour-self-test-report.json`. That report proves the fixture replacement ran and called through the executable trampoline to the original fake function. Set `BML_STASH_DETOUR_SELF_TEST=1` with the same fake provider to write `BaronyModLoader/reports/stash-detour-self-test-report.json`, proving the exact `Entity::addItemToVoidChestServer` symbol can be patched, routed through BML replacement code, and called through to its original fixture implementation. Neither report is a Stash gameplay claim.
 
 Current non-goals:
 
-- Do not claim playable Stash behavior: the verified native detour coverage is still limited to the fake-symbol self-test substrate plus analyze-only target readiness reporting; no real Stash gameplay detour is installed or in-game verified yet.
+- Do not claim playable Stash behavior: the verified native detour coverage is still limited to fake-symbol self-tests plus analyze-only target readiness reporting; no real Stash gameplay detour is installed in Barony or in-game verified yet.
 - Do not treat `native/barony-modloader-runtime/patches/` as the runtime path. Those source-fork patches are semantic reference only.
 - Do not claim Windows or macOS native injection support yet.

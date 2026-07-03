@@ -98,19 +98,19 @@ Interpretation:
 
 Option A is now the implemented guardrail: the app/runtime registry and hook manifest pin Steam app `371970`, build `22630456`, game `v5.0.2`, executable SHA-256 `da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade`, ELF build id `58089d84bce3afb48d5b19df032f7aa89d81b69a`, and required symbol targets. The native hook currently checks that `BML_HOOK_MANIFEST` is readable, then resolves its compiled-in probe table (mirrored by the manifest) in-process and writes `<profile>/BaronyModLoader/reports/symbol-probe-report.json`.
 
-Option C is the current Stash safety boundary: required gameplay hooks are represented as `hookTargets` tied to Stash capabilities, and the native hook now analyzes those direct Stash targets through the abstract `linux-x86_64-direct-stash-detour` backend. The backend is still `analyze-only`: it reports data targets as `ready`, keeps function targets `blocked` until instruction decoder/relocator support exists, and requires unresolved symbols, blocked detour targets, or uninstalled required hook groups to prevent `runtime-load-report.json` from claiming Stash loaded.
+Option C is the current Stash safety boundary: required gameplay hooks are represented as `hookTargets` tied to Stash capabilities, and the native hook analyzes those direct Stash targets through the abstract `linux-x86_64-direct-stash-detour` backend. The backend is still `analyze-only`: it reports data targets as `ready`, uses the conservative detour decoder to mark a small subset of function prologues as patch-window-ready, records `patchWindowBytes`, and requires unresolved symbols, blocked detour targets, or uninstalled required hook groups to prevent `runtime-load-report.json` from claiming Stash loaded.
 
-Current Steam/Linux conservative direct-target scan for build `22630456`:
+Current Steam/Linux conservative direct-target scan for build `22630456`, using the decoder support implemented through the REX push/pop slice:
 
 | Hook group | Ready targets | Blocked targets | Interpretation |
 | --- | ---: | ---: | --- |
-| `stash_void_chest_binding` | 0 | 5 | All targets are function prologues; decoder/relocator support is required before any can be patch-safe. |
-| `stash_inventory_persistence` | 1 | 10 | The `stats` data symbol is ready; inventory/list/chest function prologues remain blocked. |
-| `stash_lobby_placement` | 4 | 3 | Data symbols are ready; placement functions remain blocked until prologue relocation exists. |
+| `stash_void_chest_binding` | 2 | 3 | `Entity::addItemToVoidChestServer` and `Entity::removeItemFromVoidChestServer` have decoder-safe REX-push patch windows; wrapper/getter/lid targets still need more instruction decoding or relocation. |
+| `stash_inventory_persistence` | 2 | 9 | The `stats` data symbol and `Entity::getItemFromChest` are ready; the remaining inventory/list/chest function prologues remain blocked. |
+| `stash_lobby_placement` | 4 | 3 | Data symbols are ready; placement functions remain blocked until broader prologue decoding/relocation exists. |
 | `stash_shop_placement` | 5 | 4 | Data symbols are ready; shared dungeon/action/entity/sprite functions remain blocked. |
 | `stash_multiplayer_metadata_gate` | 2 | 0 | Metadata data symbols are ready, but this hook group alone is not enough to load Stash. |
 
-The scan is intentionally conservative and byte-level. Data symbols can be ready because no prologue detour is required. A function target marked `blocked` is not a dead end; it means the direct backend must learn instruction-aware decoding/relocation/trampolines before it can patch that prologue without corrupting the installed Steam executable.
+The scan is intentionally conservative and byte-level. Data symbols can be ready because no prologue detour is required. A function target marked `ready` only means the current backend can reserve an absolute-jump patch window for that prologue; it is not a claim that Stash gameplay detours are installed. A function target marked `blocked` means the direct backend must learn more instruction-aware decoding/relocation before it can patch that prologue without corrupting the installed Steam executable.
 
 ## Mod-loader parallels
 

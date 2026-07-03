@@ -781,6 +781,7 @@
             "runtime-load",
             "symbol-probe",
             "detour-self-test",
+            "stash-detour-self-test",
             "stash-hook",
             "release-provenance"
           ]

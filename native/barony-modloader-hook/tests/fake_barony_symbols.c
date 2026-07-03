@@ -71,6 +71,7 @@ __asm__(
     "  pop %r13\n"
     "  pop %r14\n"
     "  pop %r15\n"
+    "  mov $42, %eax\n"
     "  ret\n"
     ".size _ZN6Entity24addItemToVoidChestServerEiP4ItembS1_, .-_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_\n");
 
