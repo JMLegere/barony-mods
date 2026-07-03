@@ -672,6 +672,13 @@ last = playable_install_report["lastPlaced"]
 for key in ("lobbyChest", "lobbyLid", "shopChest", "shopLid"):
     assert isinstance(last[key], str) and last[key].startswith("0x"), last
 assert playable_install_report["error"] is None, playable_install_report
+
+diagnostics_path = playable_install_report_path.parents[1] / "state" / "stash-diagnostics.jsonl"
+assert diagnostics_path.is_file(), diagnostics_path
+diagnostics = [json.loads(line) for line in diagnostics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby" and event["map"] == "fake-lobby" for event in diagnostics), diagnostics
+assert any(event["event"] == "stash_access_point_created" and event["kind"] == "shop" and event["map"] == "fake-shop" for event in diagnostics), diagnostics
+assert any(event["event"] == "stash_inventory_loaded" and event["rows"] >= 0 for event in diagnostics), diagnostics
 print(f"experimental playable stash fake-provider lobby/shop/spell/metadata ok: {playable_install_report_path}")
 PY
 

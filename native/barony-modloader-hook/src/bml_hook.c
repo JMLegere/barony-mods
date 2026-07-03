@@ -36,6 +36,7 @@
 #define BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-behavior-report.json"
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
+#define BML_STASH_DIAGNOSTICS_RELATIVE_PATH "BaronyModLoader/state/stash-diagnostics.jsonl"
 #define BML_STASH_STAT_VOID_CHEST_INVENTORY_OFFSET ((uintptr_t)0x9e8U)
 #define BML_MAX_ERRORS 12
 #define BML_MAX_TEXT 256
@@ -2175,6 +2176,41 @@ static BmlStashNewItemFunction g_bml_stash_new_item = NULL;
 static BmlStashListFreeAllFunction g_bml_stash_list_free_all = NULL;
 static char g_bml_stash_state_dir_path[PATH_MAX];
 static char g_bml_stash_inventory_path[PATH_MAX];
+static char g_bml_stash_diagnostics_path[PATH_MAX];
+
+static void bml_append_stash_diagnostic_event(const char *event, const char *kind, const char *map_name, bool has_position, double x, double y, int rows) {
+    FILE *file;
+    if (!bml_has_value(g_bml_stash_diagnostics_path) || !bml_has_value(event)) {
+        return;
+    }
+    if (bml_mkdir_p(g_bml_stash_state_dir_path) != 0) {
+        return;
+    }
+    file = fopen(g_bml_stash_diagnostics_path, "ab");
+    if (file == NULL) {
+        return;
+    }
+    fputs("{\"event\": ", file);
+    bml_json_write_escaped(file, event);
+    if (bml_has_value(kind)) {
+        fputs(", \"kind\": ", file);
+        bml_json_write_escaped(file, kind);
+    }
+    if (bml_has_value(map_name)) {
+        fputs(", \"map\": ", file);
+        bml_json_write_escaped(file, map_name);
+    }
+    if (has_position) {
+        fprintf(file, ", \"x\": %.3f, \"y\": %.3f", x, y);
+    }
+    if (rows >= 0) {
+        fprintf(file, ", \"rows\": %d", rows);
+    }
+    fputs(", \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("}\n", file);
+    (void)fclose(file);
+}
 
 static void bml_reset_stash_placement_discovery_state(void) {
     g_bml_stash_placement_global_map_symbol = NULL;
@@ -2548,8 +2584,10 @@ static int bml_stash_resolve_inventory_functions(char *error_code, size_t error_
 static int bml_configure_stash_core_behavior(const char *profile_dir, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     memset(g_bml_stash_state_dir_path, 0, sizeof(g_bml_stash_state_dir_path));
     memset(g_bml_stash_inventory_path, 0, sizeof(g_bml_stash_inventory_path));
+    memset(g_bml_stash_diagnostics_path, 0, sizeof(g_bml_stash_diagnostics_path));
     if (bml_join_path(g_bml_stash_state_dir_path, sizeof(g_bml_stash_state_dir_path), profile_dir, BML_STASH_STATE_DIR_RELATIVE_PATH) != 0 ||
-        bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0) {
+        bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0 ||
+        bml_join_path(g_bml_stash_diagnostics_path, sizeof(g_bml_stash_diagnostics_path), profile_dir, BML_STASH_DIAGNOSTICS_RELATIVE_PATH) != 0) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_PATH_TOO_LONG");
         bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior state path exceeded PATH_MAX.");
         return -1;
@@ -2610,6 +2648,7 @@ static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *er
     g_bml_stash_core_behavior_loaded = true;
     g_bml_stash_core_behavior_dirty = false;
     g_bml_stash_core_behavior_loads += 1;
+    bml_append_stash_diagnostic_event("stash_inventory_loaded", NULL, NULL, false, 0.0, 0.0, (int)bml_stash_inventory_count(inventory));
     return 0;
 }
 
@@ -2656,6 +2695,7 @@ static int bml_save_stash_inventory_if_dirty(char *error_code, size_t error_code
     }
     g_bml_stash_core_behavior_dirty = false;
     g_bml_stash_core_behavior_saves += 1;
+    bml_append_stash_diagnostic_event("stash_inventory_saved", NULL, NULL, false, 0.0, 0.0, (int)bml_stash_inventory_count(g_bml_stash_core_behavior_inventory));
     return 0;
 }
 
@@ -3000,6 +3040,10 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     if (bml_stash_playable_place_chest_and_lid_at(map_argument, BML_STASH_PLACEMENT_ANCHOR_OFFSET_X, 0.0, 0.0, &chest, &lid)) {
         g_bml_stash_playable_last_placed_chest = chest;
         g_bml_stash_playable_last_placed_lid = lid;
+        {
+            BmlStashPlacementMapPrefix *map_prefix = (BmlStashPlacementMapPrefix *)map_argument;
+            bml_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix != NULL ? map_prefix->name : NULL, true, BML_STASH_PLACEMENT_ANCHOR_OFFSET_X, 0.0, -1);
+        }
         g_bml_stash_playable_lobby_placements_succeeded += 1;
         return true;
     }
@@ -3040,6 +3084,7 @@ static bool bml_stash_playable_try_place_shop_chest_and_lid(void *map_argument) 
                     g_bml_stash_playable_last_placed_shop_chest = chest;
                     g_bml_stash_playable_last_placed_shop_lid = lid;
                     g_bml_stash_playable_last_shop_map = map_argument;
+                    bml_append_stash_diagnostic_event("stash_access_point_created", "shop", map_prefix->name, true, (double)x * 16.0 + 8.0, (double)y * 16.0 + 8.0, -1);
                     g_bml_stash_playable_shop_placements_succeeded += 1;
                     return true;
                 }
@@ -3936,7 +3981,8 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
     memset(error_message, 0, sizeof(error_message));
 
     if (bml_join_path(g_bml_stash_state_dir_path, sizeof(g_bml_stash_state_dir_path), profile_dir, BML_STASH_STATE_DIR_RELATIVE_PATH) != 0 ||
-        bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0) {
+        bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0 ||
+        bml_join_path(g_bml_stash_diagnostics_path, sizeof(g_bml_stash_diagnostics_path), profile_dir, BML_STASH_DIAGNOSTICS_RELATIVE_PATH) != 0) {
         bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_PATH_TOO_LONG");
         bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable state path exceeded PATH_MAX.");
         (void)bml_write_stash_playable_install_report(report_path, "failed", error_code, error_message);
