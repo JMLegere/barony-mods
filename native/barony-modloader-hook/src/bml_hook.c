@@ -3920,7 +3920,7 @@ static int bml_write_stash_playable_install_report(const char *report_path, cons
     }
     fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-playable-install\",\n  \"status\": ", file);
     bml_json_write_escaped(file, status);
-    fputs(",\n  \"experimental\": true,\n  \"claimBoundary\": \"playable-lobby-shop-spell-metadata-lifecycle-only\",\n  \"lobbyPlacement\": {\n    \"attempted\": ", file);
+    fputs(",\n  \"mode\": \"production\",\n  \"claimBoundary\": \"playable-lobby-shop-spell-metadata-lifecycle-only\",\n  \"lobbyPlacement\": {\n    \"attempted\": ", file);
     fprintf(file, "%d", g_bml_stash_playable_lobby_placements_attempted);
     fprintf(file, ",\n    \"succeeded\": %d,\n    \"failed\": %d,\n    \"alreadyPlaced\": %d,\n    \"chestPlaced\": %s,\n    \"lidPlaced\": %s\n  },\n  \"shopPlacement\": {\n    \"attempted\": %d,\n    \"succeeded\": %d,\n    \"failed\": %d,\n    \"alreadyPlaced\": %d,\n    \"chestPlaced\": %s,\n    \"lidPlaced\": %s\n  },\n  \"spellBinding\": {\n    \"voidChestInventoryHookInstalled\": %s,\n    \"sharedStatsInventoryBound\": %s,\n    \"claimBoundary\": \"spell-created Void Chests use Entity::getChestInventoryList and chestVoidState; fake-provider tests verify the shared inventory binding, not a player-cast spell UI flow\"\n  },\n  \"multiplayerMetadata\": {\n    \"guardInstalled\": true,\n    \"multiplayer\": %d,\n    \"clientnum\": %d,\n    \"clientBlocked\": %s,\n    \"runtimeMetadata\": \"runtime=barony-bml-runtime-stash;runtime_version=0.1.0;inventory_schema=stash-inventory-v1;capabilities=persistent_storage,persistent_inventory,void_chest_binding,placement_lobby,placement_shop,multiplayer_version_metadata\"\n  },\n  \"calls\": {\n    \"assignActions\": %d,\n    \"generateDungeon\": %d,\n    \"newEntity\": %d,\n    \"setSprite\": %d\n  },\n  \"lastPlaced\": {\n    \"lobbyChest\": ",
             g_bml_stash_playable_lobby_placements_succeeded,
@@ -3955,7 +3955,7 @@ static int bml_write_stash_playable_install_report(const char *report_path, cons
         fputs("{\"code\": ", file);
         bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_STASH_PLAYABLE_FAILED");
         fputs(", \"message\": ", file);
-        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Experimental Stash playable install failed.");
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Stash playable install failed.");
         fputc('}', file);
     } else {
         fputs("null", file);
@@ -4160,7 +4160,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *stash_placement_discovery;
     const char *stash_enable_core_behavior;
     const char *stash_core_behavior_self_test;
-    const char *stash_enable_experimental_playable;
+    const char *stash_disable_playable;
     const char *stash_playable_install_self_test;
     BmlError errors[BML_MAX_ERRORS];
     size_t error_count = 0U;
@@ -4176,7 +4176,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     bool stash_core_behavior_self_test_requested;
     bool stash_access_placement_self_test_requested;
     bool stash_placement_discovery_requested;
-    bool stash_enable_experimental_playable_requested;
+    bool stash_disable_playable_requested;
+    bool stash_playable_requested;
     bool stash_playable_install_self_test_requested;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
@@ -4226,7 +4227,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_placement_discovery_requested = strcmp(stash_placement_discovery != NULL ? stash_placement_discovery : "", "1") == 0;
     stash_enable_core_behavior_requested = strcmp(stash_enable_core_behavior != NULL ? stash_enable_core_behavior : "", "1") == 0;
     stash_core_behavior_self_test_requested = strcmp(stash_core_behavior_self_test != NULL ? stash_core_behavior_self_test : "", "1") == 0;
-    stash_enable_experimental_playable = getenv("BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE");
+    stash_disable_playable = getenv("BML_STASH_DISABLE_PLAYABLE");
     stash_playable_install_self_test = getenv("BML_STASH_PLAYABLE_INSTALL_SELF_TEST");
     bml_report_info_init(&info, hook_library);
 
@@ -4238,7 +4239,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
             bml_populate_report_from_runtime_manifest(&info, runtime_json);
         }
     }
-    stash_enable_experimental_playable_requested = strcmp(stash_enable_experimental_playable != NULL ? stash_enable_experimental_playable : "", "1") == 0 && info.has_stash;
+    stash_disable_playable_requested = strcmp(stash_disable_playable != NULL ? stash_disable_playable : "", "1") == 0;
+    stash_playable_requested = info.has_stash && !stash_disable_playable_requested;
     stash_playable_install_self_test_requested = strcmp(stash_playable_install_self_test != NULL ? stash_playable_install_self_test : "", "1") == 0;
 
     if (!bml_has_value(profile_dir)) {
@@ -4293,20 +4295,20 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_WITHOUT_INSTALL", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 requires BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1.", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST", stash_access_placement_self_test_report_path);
     } else if (stash_core_behavior_self_test_requested && !stash_enable_core_behavior_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_WITHOUT_BEHAVIOR", "BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 requires BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1.", "BML_STASH_CORE_BEHAVIOR_SELF_TEST", stash_core_behavior_report_path);
-    } else if (stash_playable_install_self_test_requested && !stash_enable_experimental_playable_requested) {
-        bml_add_error(errors, &error_count, "BML_STASH_PLAYABLE_SELF_TEST_WITHOUT_PLAYABLE", "BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 requires BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 and a Stash runtime manifest.", "BML_STASH_PLAYABLE_INSTALL_SELF_TEST", stash_playable_install_report_path);
+    } else if (stash_playable_install_self_test_requested && !stash_playable_requested) {
+        bml_add_error(errors, &error_count, "BML_STASH_PLAYABLE_SELF_TEST_WITHOUT_PLAYABLE", "BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 requires a Stash runtime manifest and must not be combined with BML_STASH_DISABLE_PLAYABLE=1.", "BML_STASH_PLAYABLE_INSTALL_SELF_TEST", stash_playable_install_report_path);
     } else if (stash_enable_core_behavior_requested && (stash_install_core_passthrough_requested || stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 installs the same core Stash targets as the pass-through/self-test modes; enable only one Stash detour install/self-test mode.", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR", stash_core_behavior_report_path);
     } else if (stash_install_core_passthrough_requested && (stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 targets Entity::addItemToVoidChestServer alongside other Stash detour modes in the same process; enable only one Stash detour install/self-test mode.", "BML_STASH_INSTALL_CORE_PASSTHROUGH", stash_core_detour_install_report_path);
     } else if (stash_install_add_item_passthrough_requested && stash_detour_self_test_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 and BML_STASH_DETOUR_SELF_TEST=1 both target Entity::addItemToVoidChestServer in the same process; enable only one.", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH", stash_detour_install_report_path);
-    } else if (stash_enable_experimental_playable_requested && (stash_enable_core_behavior_requested || stash_install_core_passthrough_requested || stash_install_access_placement_passthrough_requested || stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
-        bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 installs the same Stash targets as other modes; enable only one Stash detour install mode.", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE", stash_playable_install_report_path);
+    } else if (stash_playable_requested && (stash_enable_core_behavior_requested || stash_install_core_passthrough_requested || stash_install_access_placement_passthrough_requested || stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
+        bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "Production Stash installs the same targets as other Stash detour modes; enable only one Stash detour install mode.", "BML_RUNTIME_MANIFEST", stash_playable_install_report_path);
     } else {
-        if (stash_enable_experimental_playable_requested &&
+        if (stash_playable_requested &&
             bml_run_stash_playable_install(stash_playable_install_report_path, profile_dir, stash_playable_install_self_test_requested) != 0) {
-            bml_add_error(errors, &error_count, "BML_STASH_PLAYABLE_INSTALL_FAILED", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 was requested, but the playable Stash install failed.", "BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE", stash_playable_install_report_path);
+            bml_add_error(errors, &error_count, "BML_STASH_PLAYABLE_INSTALL_FAILED", "Production Stash install failed.", "BML_RUNTIME_MANIFEST", stash_playable_install_report_path);
         }
 
         if (stash_enable_core_behavior_requested &&

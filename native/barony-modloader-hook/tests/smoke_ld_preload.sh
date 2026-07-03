@@ -131,6 +131,7 @@ export BML_HOOK_ALLOW_NON_BARONY=1
 
 BML_DETOUR_SELF_TEST=1 \
 BML_STASH_DETOUR_SELF_TEST=1 \
+BML_STASH_DISABLE_PLAYABLE=1 \
 BML_PROFILE_DIR="$PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -284,6 +285,7 @@ print(f"smoke symbol resolved and stash fail-closed ok: {report_path}")
 PY
 
 BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 \
+BML_STASH_DISABLE_PLAYABLE=1 \
 BML_PROFILE_DIR="$INSTALL_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -339,6 +341,7 @@ print(f"opt-in stash add-item pass-through install remains fail-closed ok: {inst
 PY
 
 BML_STASH_INSTALL_CORE_PASSTHROUGH=1 \
+BML_STASH_DISABLE_PLAYABLE=1 \
 BML_PROFILE_DIR="$CORE_INSTALL_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -415,6 +418,7 @@ PY
 BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 \
 BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 \
 BML_STASH_PLACEMENT_DISCOVERY=1 \
+BML_STASH_DISABLE_PLAYABLE=1 \
 BML_PROFILE_DIR="$ACCESS_INSTALL_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -520,6 +524,7 @@ PY
 
 BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 \
 BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 \
+BML_STASH_DISABLE_PLAYABLE=1 \
 BML_PROFILE_DIR="$BEHAVIOR_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -592,7 +597,6 @@ for target in behavior_report["targets"]:
 print(f"experimental stash core behavior self-test remains fail-closed ok: {behavior_report_path}")
 PY
 
-BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE=1 \
 BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 \
 BML_PROFILE_DIR="$PLAYABLE_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
@@ -612,7 +616,7 @@ stash_report_path = pathlib.Path(sys.argv[3])
 playable_install_report_path = pathlib.Path(sys.argv[4])
 for path in (report_path, symbol_report_path, stash_report_path, playable_install_report_path):
     if not path.is_file():
-        raise SystemExit(f"missing experimental playable report: {path}")
+        raise SystemExit(f"missing production playable report: {path}")
 
 report = json.loads(report_path.read_text(encoding="utf-8"))
 symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
@@ -630,6 +634,7 @@ assert stash_report["summary"]["failClosed"] is False, stash_report
 assert playable_install_report["schemaVersion"] == "0.1.0", playable_install_report
 assert playable_install_report["test"] == "stash-playable-install", playable_install_report
 assert playable_install_report["status"] == "installed", playable_install_report
+assert playable_install_report["mode"] == "production", playable_install_report
 calls = playable_install_report["calls"]
 assert calls["assignActions"] > 0, calls
 assert calls["newEntity"] >= 4, calls
@@ -679,7 +684,7 @@ diagnostics = [json.loads(line) for line in diagnostics_path.read_text(encoding=
 assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby" and event["map"] == "fake-lobby" for event in diagnostics), diagnostics
 assert any(event["event"] == "stash_access_point_created" and event["kind"] == "shop" and event["map"] == "fake-shop" for event in diagnostics), diagnostics
 assert any(event["event"] == "stash_inventory_loaded" and event["rows"] >= 0 for event in diagnostics), diagnostics
-print(f"experimental playable stash fake-provider lobby/shop/spell/metadata ok: {playable_install_report_path}")
+print(f"production playable stash fake-provider lobby/shop/spell/metadata ok: {playable_install_report_path}")
 PY
 
 BML_PROFILE_DIR="$NO_STASH_PROFILE_DIR" \
@@ -731,6 +736,7 @@ assert stash_report["errors"] == []
 print(f"smoke no-stash not-applicable ok: {runtime_report_path}")
 PY
 
+BML_STASH_DISABLE_PLAYABLE=1 \
 BML_PROFILE_DIR="$FAIL_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$MISSING_HOOK_MANIFEST" \
