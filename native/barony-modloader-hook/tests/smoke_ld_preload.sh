@@ -238,6 +238,7 @@ assert blocked_function_targets, function_targets
 ready_function_names = {target["name"] for target in ready_function_targets}
 assert "Entity::addItemToVoidChestServer" in ready_function_names, ready_function_targets
 assert "newEntity" in ready_function_names, ready_function_targets
+assert "actChestLid" in ready_function_names, ready_function_targets
 assert all(target["patchWindowBytes"] >= 14 for target in ready_function_targets), ready_function_targets
 assert all("blockerCode" not in target for target in ready_function_targets), ready_function_targets
 assert all("blockerCode" in target for target in blocked_function_targets), blocked_function_targets

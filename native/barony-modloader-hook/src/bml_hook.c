@@ -705,6 +705,65 @@ static bool bml_modrm_uses_rip_relative(unsigned char modrm) {
     return (modrm & 0xc7U) == 0x05U;
 }
 
+static int bml_decode_modrm_copyable_length(const unsigned char *code, size_t offset, size_t limit, size_t opcode_length, size_t *out_length, const char **out_code, const char **out_message, const char *truncated_message) {
+    const size_t modrm_offset = offset + opcode_length;
+    unsigned char modrm;
+    unsigned char mod;
+    unsigned char rm;
+    size_t length = opcode_length + 1U;
+
+    if (offset + opcode_length + 1U > limit) {
+        *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+        *out_message = truncated_message;
+        return -1;
+    }
+
+    modrm = code[modrm_offset];
+    if (bml_modrm_is_register_only(modrm)) {
+        *out_length = length;
+        return 0;
+    }
+
+    mod = (unsigned char)(modrm & 0xc0U);
+    rm = (unsigned char)(modrm & 0x07U);
+    if (bml_modrm_uses_rip_relative(modrm)) {
+        *out_code = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED";
+        *out_message = "Detour target prologue uses RIP-relative memory addressing that this substrate does not relocate.";
+        return -1;
+    }
+
+    if (rm == 0x04U) {
+        unsigned char sib;
+        if (offset + length + 1U > limit) {
+            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+            *out_message = truncated_message;
+            return -1;
+        }
+        sib = code[offset + length];
+        length += 1U;
+        if (mod == 0x00U && (sib & 0x07U) == 0x05U) {
+            *out_code = "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
+            *out_message = "Detour target prologue uses displacement-only SIB memory addressing outside this conservative decoder subset.";
+            return -1;
+        }
+    }
+
+    if (mod == 0x40U) {
+        length += 1U;
+    } else if (mod == 0x80U) {
+        length += 4U;
+    }
+
+    if (offset + length > limit) {
+        *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+        *out_message = truncated_message;
+        return -1;
+    }
+
+    *out_length = length;
+    return 0;
+}
+
 static int bml_decode_supported_x86_64_instruction(const unsigned char *code, size_t offset, size_t limit, size_t *out_length, const char **out_code, const char **out_message) {
     const unsigned char op = (offset < limit) ? code[offset] : 0U;
 
@@ -757,19 +816,7 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
             return 0;
         }
         if (next == 0x31U || next == 0x39U || next == 0x3bU || next == 0x85U || next == 0x89U || next == 0x8bU) {
-            if (offset + 3U > limit) {
-                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-                *out_message = "Detour target prologue ended in the middle of a supported REX register instruction.";
-                return -1;
-            }
-            modrm = code[offset + 2U];
-            if (!bml_modrm_is_register_only(modrm)) {
-                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
-                *out_message = "Detour target prologue uses REX-prefixed memory addressing that this substrate does not relocate.";
-                return -1;
-            }
-            *out_length = 3U;
-            return 0;
+            return bml_decode_modrm_copyable_length(code, offset, limit, 2U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported REX ModRM instruction.");
         }
         if (next == 0x83U) {
             if (offset + 4U > limit) {
@@ -820,34 +867,8 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return 0;
     }
 
-    if (op == 0x31U || op == 0x39U || op == 0x3bU || op == 0x85U) {
-        if (offset + 2U > limit) {
-            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-            *out_message = "Detour target prologue ended in the middle of a supported register ALU instruction.";
-            return -1;
-        }
-        if (!bml_modrm_is_register_only(code[offset + 1U])) {
-            *out_code = bml_modrm_uses_rip_relative(code[offset + 1U]) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
-            *out_message = "Detour target prologue uses memory addressing that this substrate does not relocate.";
-            return -1;
-        }
-        *out_length = 2U;
-        return 0;
-    }
-
-    if (op == 0x89U || op == 0x8bU) {
-        if (offset + 2U > limit) {
-            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-            *out_message = "Detour target prologue ended in the middle of a supported register mov instruction.";
-            return -1;
-        }
-        if (!bml_modrm_is_register_only(code[offset + 1U])) {
-            *out_code = bml_modrm_uses_rip_relative(code[offset + 1U]) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
-            *out_message = "Detour target prologue uses memory addressing that this substrate does not relocate.";
-            return -1;
-        }
-        *out_length = 2U;
-        return 0;
+    if (op == 0x31U || op == 0x39U || op == 0x3bU || op == 0x85U || op == 0x89U || op == 0x8bU) {
+        return bml_decode_modrm_copyable_length(code, offset, limit, 1U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported ModRM instruction.");
     }
 
     if (op == 0x83U) {

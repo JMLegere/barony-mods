@@ -152,6 +152,51 @@ def modrm_is_register_only(modrm: int) -> bool:
 def modrm_uses_rip_relative(modrm: int) -> bool:
     return (modrm & 0xC7) == 0x05
 
+def decode_modrm_copyable_length(
+    code: bytes,
+    offset: int,
+    limit: int,
+    opcode_length: int,
+    truncated_message: str,
+) -> tuple[int | None, str | None, str | None]:
+    if offset + opcode_length + 1 > limit:
+        return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
+
+    modrm = code[offset + opcode_length]
+    length = opcode_length + 1
+    if modrm_is_register_only(modrm):
+        return length, None, None
+
+    mod = modrm & 0xC0
+    rm = modrm & 0x07
+    if modrm_uses_rip_relative(modrm):
+        return (
+            None,
+            "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED",
+            "Detour target prologue uses RIP-relative memory addressing that this substrate does not relocate.",
+        )
+
+    if rm == 0x04:
+        if offset + length + 1 > limit:
+            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
+        sib = code[offset + length]
+        length += 1
+        if mod == 0x00 and (sib & 0x07) == 0x05:
+            return (
+                None,
+                "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED",
+                "Detour target prologue uses displacement-only SIB memory addressing outside this conservative decoder subset.",
+            )
+
+    if mod == 0x40:
+        length += 1
+    elif mod == 0x80:
+        length += 4
+
+    if offset + length > limit:
+        return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
+    return length, None, None
+
 
 def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[int | None, str | None, str | None]:
     if offset >= limit:
@@ -186,13 +231,13 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
                 return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", message
             return length, None, None
         if next_op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B}:
-            if offset + 3 > limit:
-                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX register instruction."
-            modrm = code[offset + 2]
-            if not modrm_is_register_only(modrm):
-                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED"
-                return None, code_id, "Detour target prologue uses REX-prefixed memory addressing that this substrate does not relocate."
-            return 3, None, None
+            return decode_modrm_copyable_length(
+                code,
+                offset,
+                limit,
+                2,
+                "Detour target prologue ended in the middle of a supported REX ModRM instruction.",
+            )
         if next_op == 0x83:
             if offset + 4 > limit:
                 return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX add/sub immediate instruction."
@@ -220,23 +265,14 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
             return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported mov immediate instruction."
         return 5, None, None
 
-    if op in {0x31, 0x39, 0x3B, 0x85}:
-        if offset + 2 > limit:
-            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported register ALU instruction."
-        modrm = code[offset + 1]
-        if not modrm_is_register_only(modrm):
-            code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED"
-            return None, code_id, "Detour target prologue uses memory addressing that this substrate does not relocate."
-        return 2, None, None
-
-    if op in {0x89, 0x8B}:
-        if offset + 2 > limit:
-            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported register mov instruction."
-        modrm = code[offset + 1]
-        if not modrm_is_register_only(modrm):
-            code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED"
-            return None, code_id, "Detour target prologue uses memory addressing that this substrate does not relocate."
-        return 2, None, None
+    if op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B}:
+        return decode_modrm_copyable_length(
+            code,
+            offset,
+            limit,
+            1,
+            "Detour target prologue ended in the middle of a supported ModRM instruction.",
+        )
 
     if op == 0x83:
         if offset + 3 > limit:

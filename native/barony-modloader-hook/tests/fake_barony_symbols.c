@@ -97,11 +97,28 @@ __asm__(
     "  ret\n"
     ".size _Z9newEntityijP6list_tS0_, .-_Z9newEntityijP6list_tS0_\n");
 
+void bml_fake_actChestLid(void) __asm__("_Z11actChestLidP6Entity");
+
+__asm__(
+    ".text\n"
+    ".globl _Z11actChestLidP6Entity\n"
+    ".type _Z11actChestLidP6Entity, @function\n"
+    "_Z11actChestLidP6Entity:\n"
+    "  push %rbp\n"
+    "  push %rbx\n"
+    "  mov %rdi, %rbx\n"
+    "  sub $0x8, %rsp\n"
+    "  mov 0x3a8(%rdi), %edi\n"
+    "  add $0x8, %rsp\n"
+    "  pop %rbx\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z11actChestLidP6Entity, .-_Z11actChestLidP6Entity\n");
+
 #define BML_FAKE_FUNCTION(c_name, elf_name) \
     void c_name(void) __asm__(elf_name); \
     void c_name(void) {}
 
-BML_FAKE_FUNCTION(bml_fake_actChestLid, "_Z11actChestLidP6Entity")
 BML_FAKE_FUNCTION(bml_fake_getChestInventoryList, "_ZN6Entity21getChestInventoryListEv")
 BML_FAKE_FUNCTION(bml_fake_addItemToChest, "_ZN6Entity14addItemToChestEP4ItembS1_")
 BML_FAKE_FUNCTION(bml_fake_getItemFromChest, "_ZN6Entity16getItemFromChestEP4Itemib")
