@@ -30,6 +30,10 @@
 #define BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-detour-self-test-report.json"
 #define BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-detour-install-report.json"
 #define BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-detour-install-report.json"
+#define BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-behavior-report.json"
+#define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
+#define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
+#define BML_STASH_STAT_VOID_CHEST_INVENTORY_OFFSET ((uintptr_t)0x9e8U)
 #define BML_MAX_ERRORS 12
 #define BML_MAX_TEXT 256
 #define BML_MAX_MANIFEST_BYTES (1024U * 1024U)
@@ -148,6 +152,29 @@ typedef struct BmlStashCoreDetourInstall {
     char error_code[BML_MAX_TEXT];
     char error_message[BML_MAX_TEXT];
 } BmlStashCoreDetourInstall;
+
+typedef struct BmlBaronyNode {
+    struct BmlBaronyNode *next;
+    struct BmlBaronyNode *prev;
+    struct BmlBaronyList *list;
+    void *element;
+    void (*deconstructor)(void *data);
+    uint32_t size;
+} BmlBaronyNode;
+
+typedef struct BmlBaronyList {
+    BmlBaronyNode *first;
+    BmlBaronyNode *last;
+} BmlBaronyList;
+
+typedef struct BmlBaronyItem {
+    int type;
+    int status;
+    int16_t beatitude;
+    int16_t count;
+    uint32_t appearance;
+    bool identified;
+} BmlBaronyItem;
 
 typedef struct BmlPatchInstruction {
     size_t source_offset;
@@ -1802,9 +1829,13 @@ _Static_assert(sizeof(BmlStashAddItemToVoidChestServerFunction) == sizeof(void *
 typedef void *(*BmlStashGetChestInventoryListFunction)(void *);
 typedef bool (*BmlStashRemoveItemFromVoidChestServerFunction)(void *, int, void *, int);
 typedef void (*BmlStashCloseChestFunction)(void *);
+typedef void *(*BmlStashNewItemFunction)(int, int, int16_t, int16_t, uint32_t, bool, BmlBaronyList *);
+typedef void (*BmlStashListFreeAllFunction)(BmlBaronyList *);
 _Static_assert(sizeof(BmlStashGetChestInventoryListFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect getChestInventoryList pointers to fit in void pointers");
 _Static_assert(sizeof(BmlStashRemoveItemFromVoidChestServerFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect removeItemFromVoidChestServer pointers to fit in void pointers");
 _Static_assert(sizeof(BmlStashCloseChestFunction) == sizeof(void *), "BML Linux x86_64 Stash detours expect closeChest pointers to fit in void pointers");
+_Static_assert(sizeof(BmlStashNewItemFunction) == sizeof(void *), "BML Linux x86_64 Stash behavior expects newItem pointers to fit in void pointers");
+_Static_assert(sizeof(BmlStashListFreeAllFunction) == sizeof(void *), "BML Linux x86_64 Stash behavior expects list_FreeAll pointers to fit in void pointers");
 
 static BmlStashAddItemToVoidChestServerFunction bml_stash_add_item_function_from_address(void *address) {
     BmlStashAddItemToVoidChestServerFunction function;
@@ -1859,16 +1890,6 @@ static int g_bml_stash_add_item_replacement_calls = 0;
 static void *g_bml_stash_add_item_original_result = NULL;
 static void *g_bml_stash_add_item_replacement_result = NULL;
 
-static void *bml_stash_add_item_to_void_chest_server_replacement(void *entity, int player, void *item, bool force_new_stack, void *picked_up_stack) {
-    ++g_bml_stash_add_item_replacement_calls;
-    if (g_bml_stash_add_item_original != NULL) {
-        g_bml_stash_add_item_original_result = g_bml_stash_add_item_original(entity, player, item, force_new_stack, picked_up_stack);
-    }
-    g_bml_stash_add_item_replacement_result = g_bml_stash_add_item_original_result;
-    return g_bml_stash_add_item_replacement_result;
-}
-
-
 static BmlStashGetChestInventoryListFunction g_bml_stash_get_inventory_original = NULL;
 static BmlStashRemoveItemFromVoidChestServerFunction g_bml_stash_remove_item_original = NULL;
 static BmlStashCloseChestFunction g_bml_stash_close_chest_original = NULL;
@@ -1878,34 +1899,274 @@ static int g_bml_stash_remove_item_replacement_calls = 0;
 static int g_bml_stash_close_chest_replacement_calls = 0;
 static int g_bml_stash_close_chest_server_replacement_calls = 0;
 
+static bool g_bml_stash_core_behavior_active = false;
+static bool g_bml_stash_core_behavior_loaded = false;
+static bool g_bml_stash_core_behavior_dirty = false;
+static int g_bml_stash_core_behavior_loads = 0;
+static int g_bml_stash_core_behavior_saves = 0;
+static int g_bml_stash_core_behavior_dirty_marks = 0;
+static BmlBaronyList *g_bml_stash_core_behavior_inventory = NULL;
+static BmlStashNewItemFunction g_bml_stash_new_item = NULL;
+static BmlStashListFreeAllFunction g_bml_stash_list_free_all = NULL;
+static char g_bml_stash_state_dir_path[PATH_MAX];
+static char g_bml_stash_inventory_path[PATH_MAX];
+
+static BmlBaronyList *bml_stash_stats_void_chest_inventory(void) {
+    void *stats_symbol = dlsym(RTLD_DEFAULT, "stats");
+    void *stats_zero = NULL;
+    if (stats_symbol == NULL) {
+        return NULL;
+    }
+    memcpy(&stats_zero, stats_symbol, sizeof(stats_zero));
+    if (stats_zero == NULL) {
+        return NULL;
+    }
+    return (BmlBaronyList *)((unsigned char *)stats_zero + BML_STASH_STAT_VOID_CHEST_INVENTORY_OFFSET);
+}
+
+static bool bml_stash_is_stats_void_chest_inventory(void *inventory) {
+    BmlBaronyList *stats_inventory = bml_stash_stats_void_chest_inventory();
+    return inventory != NULL && stats_inventory != NULL && inventory == (void *)stats_inventory;
+}
+
+static size_t bml_stash_inventory_count(const BmlBaronyList *inventory) {
+    size_t count = 0U;
+    if (inventory == NULL) {
+        return 0U;
+    }
+    for (const BmlBaronyNode *node = inventory->first; node != NULL; node = node->next) {
+        if (node->element != NULL) {
+            count += 1U;
+        }
+    }
+    return count;
+}
+
+static size_t bml_count_stash_inventory_file_rows(void) {
+    FILE *file;
+    char line[256];
+    size_t rows = 0U;
+    if (!bml_has_value(g_bml_stash_inventory_path)) {
+        return 0U;
+    }
+    file = fopen(g_bml_stash_inventory_path, "rb");
+    if (file == NULL) {
+        return 0U;
+    }
+    while (fgets(line, sizeof(line), file) != NULL) {
+        if (line[0] != '\0' && line[0] != '\n' && line[0] != '#') {
+            rows += 1U;
+        }
+    }
+    (void)fclose(file);
+    return rows;
+}
+
+static int bml_stash_resolve_inventory_functions(char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    void *new_item_address = dlsym(RTLD_DEFAULT, "_Z7newItem8ItemType6StatusssjbP6list_t");
+    void *list_free_all_address = dlsym(RTLD_DEFAULT, "_Z12list_FreeAllP6list_t");
+    if (new_item_address == NULL || list_free_all_address == NULL) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SYMBOL_MISSING");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior requires newItem and list_FreeAll to be resolvable.");
+        return -1;
+    }
+    memcpy(&g_bml_stash_new_item, &new_item_address, sizeof(g_bml_stash_new_item));
+    memcpy(&g_bml_stash_list_free_all, &list_free_all_address, sizeof(g_bml_stash_list_free_all));
+    return 0;
+}
+
+static int bml_configure_stash_core_behavior(const char *profile_dir, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    memset(g_bml_stash_state_dir_path, 0, sizeof(g_bml_stash_state_dir_path));
+    memset(g_bml_stash_inventory_path, 0, sizeof(g_bml_stash_inventory_path));
+    if (bml_join_path(g_bml_stash_state_dir_path, sizeof(g_bml_stash_state_dir_path), profile_dir, BML_STASH_STATE_DIR_RELATIVE_PATH) != 0 ||
+        bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_PATH_TOO_LONG");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior state path exceeded PATH_MAX.");
+        return -1;
+    }
+    if (bml_stash_resolve_inventory_functions(error_code, error_code_size, error_message, error_message_size) != 0) {
+        return -1;
+    }
+    g_bml_stash_core_behavior_active = true;
+    g_bml_stash_core_behavior_loaded = false;
+    g_bml_stash_core_behavior_dirty = false;
+    g_bml_stash_core_behavior_loads = 0;
+    g_bml_stash_core_behavior_saves = 0;
+    g_bml_stash_core_behavior_dirty_marks = 0;
+    g_bml_stash_core_behavior_inventory = NULL;
+    return 0;
+}
+
+static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    FILE *file;
+    char line[256];
+    if (!g_bml_stash_core_behavior_active || inventory == NULL) {
+        return 0;
+    }
+    if (g_bml_stash_core_behavior_loaded) {
+        return 0;
+    }
+    if (g_bml_stash_list_free_all == NULL || g_bml_stash_new_item == NULL) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SYMBOL_MISSING");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior cannot load inventory before list/newItem helpers resolve.");
+        return -1;
+    }
+
+    g_bml_stash_list_free_all(inventory);
+    inventory->first = NULL;
+    inventory->last = NULL;
+    file = fopen(g_bml_stash_inventory_path, "rb");
+    if (file != NULL) {
+        while (fgets(line, sizeof(line), file) != NULL) {
+            int type = 0;
+            int status = 0;
+            int beatitude = 0;
+            int count = 0;
+            uint32_t appearance = 0U;
+            int identified = 0;
+            if (line[0] == '\0' || line[0] == '\n' || line[0] == '#') {
+                continue;
+            }
+            if (sscanf(line, "%d %d %d %d %" SCNu32 " %d", &type, &status, &beatitude, &count, &appearance, &identified) == 6) {
+                if (count < 1) {
+                    count = 1;
+                }
+                (void)g_bml_stash_new_item(type, status, (int16_t)beatitude, (int16_t)count, appearance, identified != 0, inventory);
+            }
+        }
+        (void)fclose(file);
+    }
+    g_bml_stash_core_behavior_inventory = inventory;
+    g_bml_stash_core_behavior_loaded = true;
+    g_bml_stash_core_behavior_dirty = false;
+    g_bml_stash_core_behavior_loads += 1;
+    return 0;
+}
+
+static void bml_mark_stash_inventory_dirty(void) {
+    if (g_bml_stash_core_behavior_active) {
+        g_bml_stash_core_behavior_dirty = true;
+        g_bml_stash_core_behavior_dirty_marks += 1;
+    }
+}
+
+static int bml_save_stash_inventory_if_dirty(char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    FILE *file;
+    if (!g_bml_stash_core_behavior_active || !g_bml_stash_core_behavior_dirty) {
+        return 0;
+    }
+    if (g_bml_stash_core_behavior_inventory == NULL) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_INVENTORY_MISSING");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior had dirty state but no bound inventory list.");
+        return -1;
+    }
+    if (bml_mkdir_p(g_bml_stash_state_dir_path) != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_DIR_FAILED");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior could not create the Stash state directory.");
+        return -1;
+    }
+    file = fopen(g_bml_stash_inventory_path, "wb");
+    if (file == NULL) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_WRITE_FAILED");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior could not open the Stash inventory state file for writing.");
+        return -1;
+    }
+    fputs("# bml-stash-inventory-v1\n", file);
+    for (const BmlBaronyNode *node = g_bml_stash_core_behavior_inventory->first; node != NULL; node = node->next) {
+        const BmlBaronyItem *item = (const BmlBaronyItem *)node->element;
+        if (item == NULL) {
+            continue;
+        }
+        fprintf(file, "%d %d %d %d %" PRIu32 " %d\n", item->type, item->status, (int)item->beatitude, (int)item->count, item->appearance, item->identified ? 1 : 0);
+    }
+    if (fclose(file) != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_CLOSE_FAILED");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior failed while closing the Stash inventory state file.");
+        return -1;
+    }
+    g_bml_stash_core_behavior_dirty = false;
+    g_bml_stash_core_behavior_saves += 1;
+    return 0;
+}
+
+static void *bml_stash_add_item_to_void_chest_server_replacement(void *entity, int player, void *item, bool force_new_stack, void *picked_up_stack) {
+    BmlBaronyList *inventory = bml_stash_stats_void_chest_inventory();
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
+    ++g_bml_stash_add_item_replacement_calls;
+    if (inventory != NULL) {
+        (void)bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
+    }
+    if (g_bml_stash_add_item_original != NULL) {
+        g_bml_stash_add_item_original_result = g_bml_stash_add_item_original(entity, player, item, force_new_stack, picked_up_stack);
+    }
+    g_bml_stash_add_item_replacement_result = g_bml_stash_add_item_original_result;
+    if (g_bml_stash_core_behavior_active && g_bml_stash_add_item_replacement_result != NULL) {
+        bml_mark_stash_inventory_dirty();
+    }
+    return g_bml_stash_add_item_replacement_result;
+}
+
 static void *bml_stash_get_chest_inventory_list_replacement(void *entity) {
+    void *inventory = NULL;
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_get_inventory_replacement_calls;
     if (g_bml_stash_get_inventory_original != NULL) {
-        return g_bml_stash_get_inventory_original(entity);
+        inventory = g_bml_stash_get_inventory_original(entity);
     }
-    return NULL;
+    if (g_bml_stash_core_behavior_active && bml_stash_is_stats_void_chest_inventory(inventory)) {
+        (void)bml_load_stash_inventory_if_needed((BmlBaronyList *)inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
+    }
+    return inventory;
 }
 
 static bool bml_stash_remove_item_from_void_chest_server_replacement(void *entity, int player, void *item, int count) {
+    BmlBaronyList *inventory = bml_stash_stats_void_chest_inventory();
+    bool removed = false;
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_remove_item_replacement_calls;
-    if (g_bml_stash_remove_item_original != NULL) {
-        return g_bml_stash_remove_item_original(entity, player, item, count);
+    if (inventory != NULL) {
+        (void)bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
     }
-    return false;
+    if (g_bml_stash_remove_item_original != NULL) {
+        removed = g_bml_stash_remove_item_original(entity, player, item, count);
+    }
+    if (g_bml_stash_core_behavior_active && removed) {
+        bml_mark_stash_inventory_dirty();
+    }
+    return removed;
 }
 
 static void bml_stash_close_chest_replacement(void *entity) {
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_close_chest_replacement_calls;
     if (g_bml_stash_close_chest_original != NULL) {
         g_bml_stash_close_chest_original(entity);
     }
+    (void)bml_save_stash_inventory_if_dirty(error_code, sizeof(error_code), error_message, sizeof(error_message));
 }
 
 static void bml_stash_close_chest_server_replacement(void *entity) {
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_close_chest_server_replacement_calls;
     if (g_bml_stash_close_chest_server_original != NULL) {
         g_bml_stash_close_chest_server_original(entity);
     }
+    (void)bml_save_stash_inventory_if_dirty(error_code, sizeof(error_code), error_message, sizeof(error_message));
 }
 static int bml_write_stash_add_item_detour_report(const char *report_path, const char *test_name, const char *status, const char *error_code, const char *error_message, const BmlDetourInstall *install, void *direct_result, void *original_result, int replacement_calls) {
     FILE *file = fopen(report_path, "wb");
@@ -2255,6 +2516,194 @@ static int bml_run_stash_core_passthrough_install(const char *report_path) {
     return result;
 }
 
+
+static int bml_write_stash_core_behavior_report(const char *report_path, const char *status, const char *error_code, const char *error_message, const BmlStashCoreDetourInstall *targets, size_t target_count, bool self_test_requested, size_t self_test_loaded_count, size_t self_test_saved_rows) {
+    FILE *file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-core-experimental-behavior\",\n  \"status\": ", file);
+    bml_json_write_escaped(file, status);
+    fputs(",\n  \"experimental\": true,\n  \"claimBoundary\": \"fake-provider-state-backed-core-lifecycle-only\",\n  \"state\": {\n    \"path\": ", file);
+    bml_json_write_escaped(file, g_bml_stash_inventory_path);
+    fprintf(file, ",\n    \"loaded\": %s,\n    \"dirty\": %s,\n    \"loadCount\": %d,\n    \"saveCount\": %d,\n    \"dirtyMarks\": %d,\n    \"boundInventoryCount\": %zu,\n    \"savedRows\": %zu\n  },\n  \"selfTest\": {\n    \"requested\": %s,\n    \"loadedCount\": %zu,\n    \"savedRows\": %zu\n  },\n  \"targets\": [",
+            g_bml_stash_core_behavior_loaded ? "true" : "false",
+            g_bml_stash_core_behavior_dirty ? "true" : "false",
+            g_bml_stash_core_behavior_loads,
+            g_bml_stash_core_behavior_saves,
+            g_bml_stash_core_behavior_dirty_marks,
+            bml_stash_inventory_count(g_bml_stash_core_behavior_inventory),
+            bml_count_stash_inventory_file_rows(),
+            self_test_requested ? "true" : "false",
+            self_test_loaded_count,
+            self_test_saved_rows);
+    for (size_t index = 0U; index < target_count; ++index) {
+        const BmlStashCoreDetourInstall *target = &targets[index];
+        fputs(index == 0U ? "\n    " : ",\n    ", file);
+        fputs("{\"targetName\": ", file);
+        bml_json_write_escaped(file, target->target_name);
+        fputs(", \"targetSymbol\": ", file);
+        bml_json_write_escaped(file, target->target_symbol);
+        fputs(", \"status\": ", file);
+        bml_json_write_escaped(file, target->status);
+        fputs(", \"replacementCalls\": ", file);
+        fprintf(file, "%d", bml_stash_core_replacement_calls_for_symbol(target->target_symbol));
+        fputs(", \"error\": ", file);
+        if (bml_has_value(target->error_code) || bml_has_value(target->error_message)) {
+            fputs("{\"code\": ", file);
+            bml_json_write_escaped(file, bml_has_value(target->error_code) ? target->error_code : "BML_STASH_CORE_BEHAVIOR_TARGET_FAILED");
+            fputs(", \"message\": ", file);
+            bml_json_write_escaped(file, bml_has_value(target->error_message) ? target->error_message : "Experimental Stash core behavior target failed.");
+            fputc('}', file);
+        } else {
+            fputs("null", file);
+        }
+        fputc('}', file);
+    }
+    if (target_count > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"error\": ", file);
+    if (bml_has_value(error_code) || bml_has_value(error_message)) {
+        fputs("{\"code\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_STASH_CORE_BEHAVIOR_FAILED");
+        fputs(", \"message\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Experimental Stash core behavior failed.");
+        fputc('}', file);
+    } else {
+        fputs("null", file);
+    }
+    fputs(",\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *saved_rows, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    BmlStashGetChestInventoryListFunction target_get;
+    BmlStashAddItemToVoidChestServerFunction target_add;
+    BmlStashCloseChestFunction target_close;
+    void *get_address = dlsym(RTLD_DEFAULT, "_ZN6Entity21getChestInventoryListEv");
+    void *add_address = dlsym(RTLD_DEFAULT, "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_");
+    void *close_address = dlsym(RTLD_DEFAULT, "_ZN6Entity10closeChestEv");
+    void *fake_provider_marker = dlsym(RTLD_DEFAULT, "bml_fake_detour_counter");
+    BmlBaronyList *inventory;
+    void *item;
+    void *added;
+
+    if (loaded_count != NULL) {
+        *loaded_count = 0U;
+    }
+    if (saved_rows != NULL) {
+        *saved_rows = 0U;
+    }
+    if (fake_provider_marker == NULL || get_address == NULL || add_address == NULL || close_address == NULL || g_bml_stash_new_item == NULL) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SYMBOL_MISSING");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test requires the fake provider plus get/add/close/newItem symbols.");
+        return -1;
+    }
+    if (bml_mkdir_p(g_bml_stash_state_dir_path) != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_STATE_DIR_FAILED");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test could not create the state directory.");
+        return -1;
+    }
+    {
+        FILE *seed = fopen(g_bml_stash_inventory_path, "wb");
+        if (seed == NULL) {
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SEED_FAILED");
+            bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test could not seed the inventory state file.");
+            return -1;
+        }
+        fputs("# bml-stash-inventory-v1\n1 2 -1 3 12345 1\n", seed);
+        if (fclose(seed) != 0) {
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SEED_CLOSE_FAILED");
+            bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test could not close the seeded inventory state file.");
+            return -1;
+        }
+    }
+
+    target_get = bml_stash_get_inventory_function_from_address(get_address);
+    target_add = bml_stash_add_item_function_from_address(add_address);
+    target_close = bml_stash_close_chest_function_from_address(close_address);
+    inventory = (BmlBaronyList *)target_get(NULL);
+    if (inventory == NULL || bml_stash_inventory_count(inventory) != 1U) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_LOAD_FAILED");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not load exactly one seeded item through getChestInventoryList.");
+        return -1;
+    }
+    if (loaded_count != NULL) {
+        *loaded_count = bml_stash_inventory_count(inventory);
+    }
+    item = g_bml_stash_new_item(2, 3, 0, 4, 67890U, true, NULL);
+    added = target_add(NULL, 0, item, false, NULL);
+    if (added == NULL || bml_stash_inventory_count(inventory) != 2U) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_ADD_FAILED");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not route addItemToVoidChestServer into the bound inventory.");
+        return -1;
+    }
+    target_close(NULL);
+    if (saved_rows != NULL) {
+        *saved_rows = bml_count_stash_inventory_file_rows();
+    }
+    if (g_bml_stash_core_behavior_saves < 1 || bml_count_stash_inventory_file_rows() != 2U) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SAVE_FAILED");
+        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not persist exactly two inventory rows after closeChest.");
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_run_stash_core_behavior_install(const char *report_path, const char *profile_dir, bool self_test_requested) {
+    BmlStashCoreDetourInstall targets[5];
+    const size_t target_count = sizeof(targets) / sizeof(targets[0]);
+    int result = 0;
+    size_t self_test_loaded_count = 0U;
+    size_t self_test_saved_rows = 0U;
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
+    bml_reset_stash_core_passthrough_state();
+    g_bml_stash_core_behavior_active = false;
+    if (bml_configure_stash_core_behavior(profile_dir, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        result = -1;
+    }
+
+    bml_init_stash_core_detour_target(&targets[0], "Entity::getChestInventoryList", "_ZN6Entity21getChestInventoryListEv", bml_stash_get_inventory_function_address(bml_stash_get_chest_inventory_list_replacement));
+    bml_init_stash_core_detour_target(&targets[1], "Entity::addItemToVoidChestServer", "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_", bml_stash_add_item_function_address(bml_stash_add_item_to_void_chest_server_replacement));
+    bml_init_stash_core_detour_target(&targets[2], "Entity::removeItemFromVoidChestServer", "_ZN6Entity29removeItemFromVoidChestServerEiP4Itemi", bml_stash_remove_item_function_address(bml_stash_remove_item_from_void_chest_server_replacement));
+    bml_init_stash_core_detour_target(&targets[3], "Entity::closeChest", "_ZN6Entity10closeChestEv", bml_stash_close_chest_function_address(bml_stash_close_chest_replacement));
+    bml_init_stash_core_detour_target(&targets[4], "Entity::closeChestServer", "_ZN6Entity16closeChestServerEv", bml_stash_close_chest_function_address(bml_stash_close_chest_server_replacement));
+
+    if (result == 0) {
+        for (size_t index = 0U; index < target_count; ++index) {
+            if (bml_prepare_stash_core_detour_target(&targets[index]) != 0) {
+                result = -1;
+            }
+        }
+    }
+    if (result == 0) {
+        for (size_t index = 0U; index < target_count; ++index) {
+            if (bml_install_stash_core_detour_target(&targets[index]) != 0) {
+                result = -1;
+                break;
+            }
+        }
+    }
+    if (result == 0 && self_test_requested && bml_run_stash_core_behavior_self_test(&self_test_loaded_count, &self_test_saved_rows, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        result = -1;
+    }
+
+    if (bml_write_stash_core_behavior_report(report_path, result == 0 ? "installed" : "failed", error_code, error_message, targets, target_count, self_test_requested, self_test_loaded_count, self_test_saved_rows) != 0) {
+        return -1;
+    }
+    return result;
+}
+
 __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *profile_dir;
     const char *runtime_manifest;
@@ -2264,6 +2713,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *stash_detour_self_test;
     const char *stash_install_add_item_passthrough;
     const char *stash_install_core_passthrough;
+    const char *stash_enable_core_behavior;
+    const char *stash_core_behavior_self_test;
     BmlError errors[BML_MAX_ERRORS];
     size_t error_count = 0U;
     BmlReportInfo info;
@@ -2273,6 +2724,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     bool stash_detour_self_test_requested;
     bool stash_install_add_item_passthrough_requested;
     bool stash_install_core_passthrough_requested;
+    bool stash_enable_core_behavior_requested;
+    bool stash_core_behavior_self_test_requested;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
     char symbol_report_path[PATH_MAX];
@@ -2281,6 +2734,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char stash_detour_self_test_report_path[PATH_MAX];
     char stash_detour_install_report_path[PATH_MAX];
     char stash_core_detour_install_report_path[PATH_MAX];
+    char stash_core_behavior_report_path[PATH_MAX];
     char *runtime_json = NULL;
 
     if (g_bml_initialized != 0) {
@@ -2298,9 +2752,13 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_detour_self_test = getenv("BML_STASH_DETOUR_SELF_TEST");
     stash_install_add_item_passthrough = getenv("BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH");
     stash_install_core_passthrough = getenv("BML_STASH_INSTALL_CORE_PASSTHROUGH");
+    stash_enable_core_behavior = getenv("BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR");
+    stash_core_behavior_self_test = getenv("BML_STASH_CORE_BEHAVIOR_SELF_TEST");
     stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
     stash_install_add_item_passthrough_requested = strcmp(stash_install_add_item_passthrough != NULL ? stash_install_add_item_passthrough : "", "1") == 0;
     stash_install_core_passthrough_requested = strcmp(stash_install_core_passthrough != NULL ? stash_install_core_passthrough : "", "1") == 0;
+    stash_enable_core_behavior_requested = strcmp(stash_enable_core_behavior != NULL ? stash_enable_core_behavior : "", "1") == 0;
+    stash_core_behavior_self_test_requested = strcmp(stash_core_behavior_self_test != NULL ? stash_core_behavior_self_test : "", "1") == 0;
 
     bml_report_info_init(&info, hook_library);
 
@@ -2330,7 +2788,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(detour_self_test_report_path, sizeof(detour_self_test_report_path), profile_dir, BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_self_test_report_path, sizeof(stash_detour_self_test_report_path), profile_dir, BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
-        bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0) {
+        bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(stash_core_behavior_report_path, sizeof(stash_core_behavior_report_path), profile_dir, BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
         return g_bml_init_result;
@@ -2358,11 +2817,20 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_DETOUR_SELF_TEST_FAILED", "BML_DETOUR_SELF_TEST=1 was requested, but the native absolute-jump detour substrate self-test failed.", "BML_DETOUR_SELF_TEST", detour_self_test_report_path);
     }
 
-    if (stash_install_core_passthrough_requested && (stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
+    if (stash_core_behavior_self_test_requested && !stash_enable_core_behavior_requested) {
+        bml_add_error(errors, &error_count, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_WITHOUT_BEHAVIOR", "BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 requires BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1.", "BML_STASH_CORE_BEHAVIOR_SELF_TEST", stash_core_behavior_report_path);
+    } else if (stash_enable_core_behavior_requested && (stash_install_core_passthrough_requested || stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
+        bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 installs the same core Stash targets as the pass-through/self-test modes; enable only one Stash detour install/self-test mode.", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR", stash_core_behavior_report_path);
+    } else if (stash_install_core_passthrough_requested && (stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 targets Entity::addItemToVoidChestServer alongside other Stash detour modes in the same process; enable only one Stash detour install/self-test mode.", "BML_STASH_INSTALL_CORE_PASSTHROUGH", stash_core_detour_install_report_path);
     } else if (stash_install_add_item_passthrough_requested && stash_detour_self_test_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 and BML_STASH_DETOUR_SELF_TEST=1 both target Entity::addItemToVoidChestServer in the same process; enable only one.", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH", stash_detour_install_report_path);
     } else {
+        if (stash_enable_core_behavior_requested &&
+            bml_run_stash_core_behavior_install(stash_core_behavior_report_path, profile_dir, stash_core_behavior_self_test_requested) != 0) {
+            bml_add_error(errors, &error_count, "BML_STASH_CORE_BEHAVIOR_FAILED", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 was requested, but the experimental core Stash behavior install/self-test failed.", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR", stash_core_behavior_report_path);
+        }
+
         if (stash_install_core_passthrough_requested &&
             bml_run_stash_core_passthrough_install(stash_core_detour_install_report_path) != 0) {
             bml_add_error(errors, &error_count, "BML_STASH_CORE_INSTALL_FAILED", "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 was requested, but the core Stash pass-through detour set could not be fully installed.", "BML_STASH_INSTALL_CORE_PASSTHROUGH", stash_core_detour_install_report_path);

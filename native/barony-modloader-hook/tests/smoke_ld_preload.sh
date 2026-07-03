@@ -37,6 +37,12 @@ CORE_INSTALL_REPORT="$CORE_INSTALL_REPORT_DIR/runtime-load-report.json"
 CORE_INSTALL_SYMBOL_REPORT="$CORE_INSTALL_REPORT_DIR/symbol-probe-report.json"
 CORE_INSTALL_STASH_REPORT="$CORE_INSTALL_REPORT_DIR/stash-hook-report.json"
 STASH_CORE_DETOUR_INSTALL_REPORT="$CORE_INSTALL_REPORT_DIR/stash-core-detour-install-report.json"
+BEHAVIOR_PROFILE_DIR="$PROFILE_DIR/behavior-profile"
+BEHAVIOR_REPORT_DIR="$BEHAVIOR_PROFILE_DIR/BaronyModLoader/reports"
+BEHAVIOR_REPORT="$BEHAVIOR_REPORT_DIR/runtime-load-report.json"
+BEHAVIOR_SYMBOL_REPORT="$BEHAVIOR_REPORT_DIR/symbol-probe-report.json"
+BEHAVIOR_STASH_REPORT="$BEHAVIOR_REPORT_DIR/stash-hook-report.json"
+STASH_CORE_BEHAVIOR_REPORT="$BEHAVIOR_REPORT_DIR/stash-core-behavior-report.json"
 
 
 cleanup() {
@@ -44,7 +50,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
+mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
 cat > "$RUNTIME_MANIFEST" <<'JSON'
 {
   "contract": {
@@ -385,6 +391,78 @@ for target in targets:
     assert target["replacementCalls"] == 0, target
     assert target["error"] is None, target
 print(f"opt-in stash core pass-through install remains fail-closed ok: {core_install_report_path}")
+PY
+
+BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 \
+BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 \
+BML_PROFILE_DIR="$BEHAVIOR_PROFILE_DIR" \
+BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
+BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
+BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
+LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
+/usr/bin/true
+
+python - "$BEHAVIOR_REPORT" "$BEHAVIOR_SYMBOL_REPORT" "$BEHAVIOR_STASH_REPORT" "$STASH_CORE_BEHAVIOR_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1])
+symbol_report_path = pathlib.Path(sys.argv[2])
+stash_report_path = pathlib.Path(sys.argv[3])
+behavior_report_path = pathlib.Path(sys.argv[4])
+for path in (report_path, symbol_report_path, stash_report_path, behavior_report_path):
+    if not path.is_file():
+        raise SystemExit(f"missing experimental behavior report: {path}")
+
+report = json.loads(report_path.read_text(encoding="utf-8"))
+symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
+stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+behavior_report = json.loads(behavior_report_path.read_text(encoding="utf-8"))
+
+assert report["status"] == "failed", report
+runtime_codes = {error["code"] for error in report["errors"]}
+assert "BML_STASH_HOOKS_NOT_INSTALLED" in runtime_codes, report["errors"]
+assert "BML_STASH_CORE_BEHAVIOR_FAILED" not in runtime_codes, report["errors"]
+assert symbol_report["summary"]["missing"] == 0, symbol_report
+assert stash_report["backend"]["mode"] == "analyze-only", stash_report
+assert stash_report["summary"]["failClosed"] is True, stash_report
+
+assert behavior_report["schemaVersion"] == "0.1.0", behavior_report
+assert behavior_report["test"] == "stash-core-experimental-behavior", behavior_report
+assert behavior_report["status"] == "installed", behavior_report
+assert behavior_report["experimental"] is True, behavior_report
+assert behavior_report["claimBoundary"] == "fake-provider-state-backed-core-lifecycle-only", behavior_report
+assert behavior_report["selfTest"] == {
+    "requested": True,
+    "loadedCount": 1,
+    "savedRows": 2,
+}, behavior_report
+state = behavior_report["state"]
+assert state["loaded"] is True, state
+assert state["dirty"] is False, state
+assert state["loadCount"] == 1, state
+assert state["saveCount"] == 1, state
+assert state["dirtyMarks"] >= 1, state
+assert state["boundInventoryCount"] == 2, state
+assert state["savedRows"] == 2, state
+state_path = pathlib.Path(state["path"])
+assert state_path.is_file(), state_path
+rows = [line for line in state_path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
+assert rows == ["1 2 -1 3 12345 1", "2 3 0 4 67890 1"], rows
+expected_targets = {
+    "Entity::getChestInventoryList": 1,
+    "Entity::addItemToVoidChestServer": 1,
+    "Entity::removeItemFromVoidChestServer": 0,
+    "Entity::closeChest": 1,
+    "Entity::closeChestServer": 0,
+}
+assert {target["targetName"] for target in behavior_report["targets"]} == set(expected_targets), behavior_report["targets"]
+for target in behavior_report["targets"]:
+    assert target["status"] == "installed", target
+    assert target["replacementCalls"] == expected_targets[target["targetName"]], target
+    assert target["error"] is None, target
+print(f"experimental stash core behavior self-test remains fail-closed ok: {behavior_report_path}")
 PY
 
 BML_PROFILE_DIR="$NO_STASH_PROFILE_DIR" \
