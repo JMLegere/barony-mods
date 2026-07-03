@@ -25,6 +25,12 @@ NO_STASH_REPORT_DIR="$NO_STASH_PROFILE_DIR/BaronyModLoader/reports"
 NO_STASH_REPORT="$NO_STASH_REPORT_DIR/runtime-load-report.json"
 NO_STASH_SYMBOL_REPORT="$NO_STASH_REPORT_DIR/symbol-probe-report.json"
 NO_STASH_STASH_REPORT="$NO_STASH_REPORT_DIR/stash-hook-report.json"
+INSTALL_PROFILE_DIR="$PROFILE_DIR/install-profile"
+INSTALL_REPORT_DIR="$INSTALL_PROFILE_DIR/BaronyModLoader/reports"
+INSTALL_REPORT="$INSTALL_REPORT_DIR/runtime-load-report.json"
+INSTALL_SYMBOL_REPORT="$INSTALL_REPORT_DIR/symbol-probe-report.json"
+INSTALL_STASH_REPORT="$INSTALL_REPORT_DIR/stash-hook-report.json"
+STASH_DETOUR_INSTALL_REPORT="$INSTALL_REPORT_DIR/stash-detour-install-report.json"
 
 
 cleanup() {
@@ -32,7 +38,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
+mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
 cat > "$RUNTIME_MANIFEST" <<'JSON'
 {
   "contract": {
@@ -246,6 +252,61 @@ assert all(target["status"] == "ready" for target in data_targets), data_targets
 assert all("blockerCode" not in target for target in data_targets), data_targets
 assert any(error["code"] == "BML_STASH_HOOKS_NOT_INSTALLED" and error["severity"] == "fatal" for error in stash_report["errors"]), stash_report["errors"]
 print(f"smoke symbol resolved and stash fail-closed ok: {report_path}")
+PY
+
+BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 \
+BML_PROFILE_DIR="$INSTALL_PROFILE_DIR" \
+BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
+BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
+BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
+LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
+/usr/bin/true
+
+python - "$INSTALL_REPORT" "$INSTALL_SYMBOL_REPORT" "$INSTALL_STASH_REPORT" "$STASH_DETOUR_INSTALL_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1])
+symbol_report_path = pathlib.Path(sys.argv[2])
+stash_report_path = pathlib.Path(sys.argv[3])
+install_report_path = pathlib.Path(sys.argv[4])
+for path in (report_path, symbol_report_path, stash_report_path, install_report_path):
+    if not path.is_file():
+        raise SystemExit(f"missing opt-in install report: {path}")
+
+report = json.loads(report_path.read_text(encoding="utf-8"))
+symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
+stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+install_report = json.loads(install_report_path.read_text(encoding="utf-8"))
+
+assert report["status"] == "failed", report
+runtime_codes = {error["code"] for error in report["errors"]}
+assert "BML_STASH_HOOKS_NOT_INSTALLED" in runtime_codes, report["errors"]
+assert "BML_STASH_ADD_ITEM_INSTALL_FAILED" not in runtime_codes, report["errors"]
+assert symbol_report["summary"]["missing"] == 0, symbol_report
+assert stash_report["backend"]["mode"] == "analyze-only", stash_report
+assert stash_report["status"] == "failed", stash_report
+assert stash_report["summary"]["failClosed"] is True, stash_report
+assert stash_report["summary"]["installed"] == 0, stash_report
+assert stash_report["summary"]["notInstalled"] == stash_report["summary"]["required"], stash_report
+
+assert install_report["schemaVersion"] == "0.1.0"
+assert install_report["test"] == "stash-add-item-passthrough-install"
+assert install_report["status"] == "installed", install_report
+assert install_report["targetSymbol"] == "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_"
+assert install_report["targetName"] == "Entity::addItemToVoidChestServer"
+assert isinstance(install_report["targetAddress"], str) and install_report["targetAddress"].startswith("0x"), install_report
+assert isinstance(install_report["replacementAddress"], str) and install_report["replacementAddress"].startswith("0x"), install_report
+assert isinstance(install_report["trampolineAddress"], str) and install_report["trampolineAddress"].startswith("0x"), install_report
+assert install_report["patchSize"] >= 14, install_report
+assert install_report["replacementInvoked"] is False, install_report
+assert install_report["originalCallThroughInvoked"] is False, install_report
+assert install_report["replacementCalls"] == 0, install_report
+assert install_report["originalResult"] is None, install_report
+assert install_report["directResult"] is None, install_report
+assert install_report["error"] is None, install_report
+print(f"opt-in stash add-item pass-through install remains fail-closed ok: {install_report_path}")
 PY
 
 BML_PROFILE_DIR="$NO_STASH_PROFILE_DIR" \

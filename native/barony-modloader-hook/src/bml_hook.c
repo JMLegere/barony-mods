@@ -28,6 +28,7 @@
 #define BML_REPORT_DIR_RELATIVE_PATH "BaronyModLoader/reports"
 #define BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/detour-self-test-report.json"
 #define BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-detour-self-test-report.json"
+#define BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-detour-install-report.json"
 #define BML_MAX_ERRORS 12
 #define BML_MAX_TEXT 256
 #define BML_MAX_MANIFEST_BYTES (1024U * 1024U)
@@ -1813,13 +1814,15 @@ static void *bml_stash_add_item_to_void_chest_server_replacement(void *entity, i
     return g_bml_stash_add_item_replacement_result;
 }
 
-static int bml_write_stash_detour_self_test_report(const char *report_path, const char *status, const char *error_code, const char *error_message, const BmlDetourInstall *install, void *direct_result, void *original_result, int replacement_calls) {
+static int bml_write_stash_add_item_detour_report(const char *report_path, const char *test_name, const char *status, const char *error_code, const char *error_message, const BmlDetourInstall *install, void *direct_result, void *original_result, int replacement_calls) {
     FILE *file = fopen(report_path, "wb");
     if (file == NULL) {
         return -1;
     }
 
-    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-add-item-detour-self-test\",\n  \"status\": ", file);
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": ", file);
+    bml_json_write_escaped(file, test_name);
+    fputs(",\n  \"status\": ", file);
     bml_json_write_escaped(file, status);
     fputs(",\n  \"backend\": {\n    \"patchStyle\": \"rip-relative-indirect-jmp-absolute-slot\",\n    \"patchBytes\": ", file);
     fprintf(file, "%u", (unsigned)BML_DETOUR_PATCH_BYTES);
@@ -1885,12 +1888,12 @@ static int bml_run_stash_detour_self_test(const char *report_path) {
     if (target_address == NULL || fake_provider_marker == NULL) {
         bml_copy_string(error_code, sizeof(error_code), "BML_STASH_DETOUR_SELF_TEST_SYMBOL_MISSING");
         bml_copy_string(error_message, sizeof(error_message), "BML_STASH_DETOUR_SELF_TEST requires libfake_barony_symbols.so to export both Entity::addItemToVoidChestServer and the fake-provider marker.");
-        (void)bml_write_stash_detour_self_test_report(report_path, "failed", error_code, error_message, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls);
+        (void)bml_write_stash_add_item_detour_report(report_path, "stash-add-item-detour-self-test", "failed", error_code, error_message, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls);
         return -1;
     }
 
     if (bml_install_absolute_jump_detour(target_address, bml_stash_add_item_function_address(replacement_function), &install, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
-        (void)bml_write_stash_detour_self_test_report(report_path, "failed", error_code, error_message, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls);
+        (void)bml_write_stash_add_item_detour_report(report_path, "stash-add-item-detour-self-test", "failed", error_code, error_message, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls);
         return -1;
     }
 
@@ -1900,15 +1903,54 @@ static int bml_run_stash_detour_self_test(const char *report_path) {
     if (g_bml_stash_add_item_replacement_calls != 1 || (uintptr_t)g_bml_stash_add_item_original_result != 42U || direct_result != g_bml_stash_add_item_original_result) {
         bml_copy_string(error_code, sizeof(error_code), "BML_STASH_DETOUR_SELF_TEST_ASSERTION_FAILED");
         bml_copy_string(error_message, sizeof(error_message), "Stash target detour self-test did not observe replacement invocation and original trampoline call-through with the expected fixture result.");
-        (void)bml_write_stash_detour_self_test_report(report_path, "failed", error_code, error_message, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls);
+        (void)bml_write_stash_add_item_detour_report(report_path, "stash-add-item-detour-self-test", "failed", error_code, error_message, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls);
         return -1;
     }
 
-    if (bml_write_stash_detour_self_test_report(report_path, "loaded", NULL, NULL, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls) != 0) {
+    if (bml_write_stash_add_item_detour_report(report_path, "stash-add-item-detour-self-test", "loaded", NULL, NULL, &install, direct_result, g_bml_stash_add_item_original_result, g_bml_stash_add_item_replacement_calls) != 0) {
         return -1;
     }
 
     return 0;
+}
+
+
+static int bml_run_stash_add_item_passthrough_install(const char *report_path) {
+    BmlDetourInstall install;
+    BmlStashAddItemToVoidChestServerFunction replacement_function = bml_stash_add_item_to_void_chest_server_replacement;
+    void *target_address;
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+
+    memset(&install, 0, sizeof(install));
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
+    g_bml_stash_add_item_original = NULL;
+    g_bml_stash_add_item_replacement_calls = 0;
+    g_bml_stash_add_item_original_result = NULL;
+    g_bml_stash_add_item_replacement_result = NULL;
+
+    target_address = dlsym(RTLD_DEFAULT, "_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_");
+    if (target_address == NULL) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_STASH_ADD_ITEM_INSTALL_SYMBOL_MISSING");
+        bml_copy_string(error_message, sizeof(error_message), "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH requires Entity::addItemToVoidChestServer to be resolvable before the pass-through detour can be installed.");
+        (void)bml_write_stash_add_item_detour_report(report_path, "stash-add-item-passthrough-install", "failed", error_code, error_message, &install, NULL, NULL, g_bml_stash_add_item_replacement_calls);
+        return -1;
+    }
+
+    if (bml_install_absolute_jump_detour(target_address, bml_stash_add_item_function_address(replacement_function), &install, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        if (!bml_has_value(error_code)) {
+            bml_copy_string(error_code, sizeof(error_code), "BML_STASH_ADD_ITEM_INSTALL_FAILED");
+        }
+        if (!bml_has_value(error_message)) {
+            bml_copy_string(error_message, sizeof(error_message), "Entity::addItemToVoidChestServer pass-through detour installation failed.");
+        }
+        (void)bml_write_stash_add_item_detour_report(report_path, "stash-add-item-passthrough-install", "failed", error_code, error_message, &install, NULL, NULL, g_bml_stash_add_item_replacement_calls);
+        return -1;
+    }
+
+    g_bml_stash_add_item_original = bml_stash_add_item_function_from_address(install.trampoline);
+    return bml_write_stash_add_item_detour_report(report_path, "stash-add-item-passthrough-install", "installed", NULL, NULL, &install, NULL, NULL, g_bml_stash_add_item_replacement_calls);
 }
 
 __attribute__((visibility("default"))) int bml_hook_init(void) {
@@ -1918,18 +1960,22 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *hook_library;
     const char *detour_self_test;
     const char *stash_detour_self_test;
+    const char *stash_install_add_item_passthrough;
     BmlError errors[BML_MAX_ERRORS];
     size_t error_count = 0U;
     BmlReportInfo info;
     BmlSymbolProbe symbol_probe;
     BmlStashHookPlan stash_hook_plan;
     bool stash_hooks_installed;
+    bool stash_detour_self_test_requested;
+    bool stash_install_add_item_passthrough_requested;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
     char symbol_report_path[PATH_MAX];
     char stash_hook_report_path[PATH_MAX];
     char detour_self_test_report_path[PATH_MAX];
     char stash_detour_self_test_report_path[PATH_MAX];
+    char stash_detour_install_report_path[PATH_MAX];
     char *runtime_json = NULL;
 
     if (g_bml_initialized != 0) {
@@ -1945,6 +1991,9 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     hook_library = getenv("BML_HOOK_LIBRARY");
     detour_self_test = getenv("BML_DETOUR_SELF_TEST");
     stash_detour_self_test = getenv("BML_STASH_DETOUR_SELF_TEST");
+    stash_install_add_item_passthrough = getenv("BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH");
+    stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
+    stash_install_add_item_passthrough_requested = strcmp(stash_install_add_item_passthrough != NULL ? stash_install_add_item_passthrough : "", "1") == 0;
 
     bml_report_info_init(&info, hook_library);
 
@@ -1972,7 +2021,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(symbol_report_path, sizeof(symbol_report_path), profile_dir, BML_SYMBOL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_hook_report_path, sizeof(stash_hook_report_path), profile_dir, BML_STASH_HOOK_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(detour_self_test_report_path, sizeof(detour_self_test_report_path), profile_dir, BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
-        bml_join_path(stash_detour_self_test_report_path, sizeof(stash_detour_self_test_report_path), profile_dir, BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0) {
+        bml_join_path(stash_detour_self_test_report_path, sizeof(stash_detour_self_test_report_path), profile_dir, BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
         return g_bml_init_result;
@@ -2000,9 +2050,18 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_DETOUR_SELF_TEST_FAILED", "BML_DETOUR_SELF_TEST=1 was requested, but the native absolute-jump detour substrate self-test failed.", "BML_DETOUR_SELF_TEST", detour_self_test_report_path);
     }
 
-    if (strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0 &&
-        bml_run_stash_detour_self_test(stash_detour_self_test_report_path) != 0) {
-        bml_add_error(errors, &error_count, "BML_STASH_DETOUR_SELF_TEST_FAILED", "BML_STASH_DETOUR_SELF_TEST=1 was requested, but the Entity::addItemToVoidChestServer detour self-test failed.", "BML_STASH_DETOUR_SELF_TEST", stash_detour_self_test_report_path);
+    if (stash_install_add_item_passthrough_requested && stash_detour_self_test_requested) {
+        bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 and BML_STASH_DETOUR_SELF_TEST=1 both target Entity::addItemToVoidChestServer in the same process; enable only one.", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH", stash_detour_install_report_path);
+    } else {
+        if (stash_install_add_item_passthrough_requested &&
+            bml_run_stash_add_item_passthrough_install(stash_detour_install_report_path) != 0) {
+            bml_add_error(errors, &error_count, "BML_STASH_ADD_ITEM_INSTALL_FAILED", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 was requested, but the Entity::addItemToVoidChestServer pass-through detour could not be installed.", "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH", stash_detour_install_report_path);
+        }
+
+        if (stash_detour_self_test_requested &&
+            bml_run_stash_detour_self_test(stash_detour_self_test_report_path) != 0) {
+            bml_add_error(errors, &error_count, "BML_STASH_DETOUR_SELF_TEST_FAILED", "BML_STASH_DETOUR_SELF_TEST=1 was requested, but the Entity::addItemToVoidChestServer detour self-test failed.", "BML_STASH_DETOUR_SELF_TEST", stash_detour_self_test_report_path);
+        }
     }
 
     if (bml_write_symbol_probe_report(symbol_report_path, &info, &symbol_probe) != 0 ||
