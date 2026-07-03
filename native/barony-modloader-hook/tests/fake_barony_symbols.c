@@ -451,13 +451,75 @@ __asm__(
     "  ret\n"
     ".size _ZN6Entity16getItemFromChestEP4Itemib, .-_ZN6Entity16getItemFromChestEP4Itemib\n");
 
-#define BML_FAKE_FUNCTION(c_name, elf_name) \
-    void c_name(void) __asm__(elf_name); \
-    void c_name(void) {}
+void bml_fake_generateDungeon(void) __asm__("_Z15generateDungeonPcjSt5tupleIJiiiiEE");
 
-BML_FAKE_FUNCTION(bml_fake_generateDungeon, "_Z15generateDungeonPcjSt5tupleIJiiiiEE")
-BML_FAKE_FUNCTION(bml_fake_assignActions, "_Z13assignActionsP5map_t")
-BML_FAKE_FUNCTION(bml_fake_setSpriteAttributes, "_Z19setSpriteAttributesP6EntityS0_S0_")
+__asm__(
+    ".text\n"
+    ".globl _Z15generateDungeonPcjSt5tupleIJiiiiEE\n"
+    ".type _Z15generateDungeonPcjSt5tupleIJiiiiEE, @function\n"
+    "_Z15generateDungeonPcjSt5tupleIJiiiiEE:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  mov $7, %eax\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z15generateDungeonPcjSt5tupleIJiiiiEE, .-_Z15generateDungeonPcjSt5tupleIJiiiiEE\n");
+
+void bml_fake_assignActions(void) __asm__("_Z13assignActionsP5map_t");
+
+__asm__(
+    ".text\n"
+    ".globl _Z13assignActionsP5map_t\n"
+    ".type _Z13assignActionsP5map_t, @function\n"
+    "_Z13assignActionsP5map_t:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z13assignActionsP5map_t, .-_Z13assignActionsP5map_t\n");
+
+void bml_fake_setSpriteAttributes(void) __asm__("_Z19setSpriteAttributesP6EntityS0_S0_");
+
+__asm__(
+    ".text\n"
+    ".globl _Z19setSpriteAttributesP6EntityS0_S0_\n"
+    ".type _Z19setSpriteAttributesP6EntityS0_S0_, @function\n"
+    "_Z19setSpriteAttributesP6EntityS0_S0_:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z19setSpriteAttributesP6EntityS0_S0_, .-_Z19setSpriteAttributesP6EntityS0_S0_\n");
 
 int bml_fake_map __asm__("map") = 1;
 int bml_fake_map_rng __asm__("map_rng") = 1;

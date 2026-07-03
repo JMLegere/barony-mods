@@ -37,6 +37,12 @@ CORE_INSTALL_REPORT="$CORE_INSTALL_REPORT_DIR/runtime-load-report.json"
 CORE_INSTALL_SYMBOL_REPORT="$CORE_INSTALL_REPORT_DIR/symbol-probe-report.json"
 CORE_INSTALL_STASH_REPORT="$CORE_INSTALL_REPORT_DIR/stash-hook-report.json"
 STASH_CORE_DETOUR_INSTALL_REPORT="$CORE_INSTALL_REPORT_DIR/stash-core-detour-install-report.json"
+ACCESS_INSTALL_PROFILE_DIR="$PROFILE_DIR/access-placement-install-profile"
+ACCESS_INSTALL_REPORT_DIR="$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader/reports"
+ACCESS_INSTALL_REPORT="$ACCESS_INSTALL_REPORT_DIR/runtime-load-report.json"
+ACCESS_INSTALL_SYMBOL_REPORT="$ACCESS_INSTALL_REPORT_DIR/symbol-probe-report.json"
+ACCESS_INSTALL_STASH_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-hook-report.json"
+STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-access-placement-detour-install-report.json"
 BEHAVIOR_PROFILE_DIR="$PROFILE_DIR/behavior-profile"
 BEHAVIOR_REPORT_DIR="$BEHAVIOR_PROFILE_DIR/BaronyModLoader/reports"
 BEHAVIOR_REPORT="$BEHAVIOR_REPORT_DIR/runtime-load-report.json"
@@ -50,7 +56,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
+mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
 cat > "$RUNTIME_MANIFEST" <<'JSON'
 {
   "contract": {
@@ -111,6 +117,7 @@ JSON
 
 
 cp "$ROOT_DIR/manifests/steam-371970-22630456-linux.json" "$HOOK_MANIFEST"
+export BML_HOOK_ALLOW_NON_BARONY=1
 
 BML_DETOUR_SELF_TEST=1 \
 BML_STASH_DETOUR_SELF_TEST=1 \
@@ -223,8 +230,8 @@ summary = stash_report["summary"]
 assert summary["failClosed"] is True
 assert summary["required"] == 5
 assert summary["installed"] == 0
-assert summary["ready"] == 2
-assert summary["blocked"] == 3
+assert summary["ready"] == 4
+assert summary["blocked"] == 1
 assert summary["notInstalled"] == 5
 expected_hook_ids = {
     "stash_void_chest_binding",
@@ -393,6 +400,79 @@ for target in targets:
     assert target["replacementCalls"] == 0, target
     assert target["error"] is None, target
 print(f"opt-in stash core pass-through install remains fail-closed ok: {core_install_report_path}")
+PY
+
+BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 \
+BML_PROFILE_DIR="$ACCESS_INSTALL_PROFILE_DIR" \
+BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
+BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
+BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
+LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
+/usr/bin/true
+
+python - "$ACCESS_INSTALL_REPORT" "$ACCESS_INSTALL_SYMBOL_REPORT" "$ACCESS_INSTALL_STASH_REPORT" "$STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1])
+symbol_report_path = pathlib.Path(sys.argv[2])
+stash_report_path = pathlib.Path(sys.argv[3])
+access_install_report_path = pathlib.Path(sys.argv[4])
+for path in (report_path, symbol_report_path, stash_report_path, access_install_report_path):
+    if not path.is_file():
+        raise SystemExit(f"missing opt-in access/placement install report: {path}")
+
+report = json.loads(report_path.read_text(encoding="utf-8"))
+symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
+stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+access_install_report = json.loads(access_install_report_path.read_text(encoding="utf-8"))
+
+assert report["status"] == "failed", report
+runtime_codes = {error["code"] for error in report["errors"]}
+assert "BML_STASH_HOOKS_NOT_INSTALLED" in runtime_codes, report["errors"]
+assert "BML_STASH_ACCESS_PLACEMENT_INSTALL_FAILED" not in runtime_codes, report["errors"]
+assert symbol_report["summary"]["missing"] == 0, symbol_report
+assert stash_report["backend"]["mode"] == "analyze-only", stash_report
+assert stash_report["status"] == "failed", stash_report
+assert stash_report["summary"]["failClosed"] is True, stash_report
+assert stash_report["summary"]["installed"] == 0, stash_report
+assert stash_report["summary"]["notInstalled"] == stash_report["summary"]["required"], stash_report
+
+assert access_install_report["schemaVersion"] == "0.1.0"
+assert access_install_report["test"] == "stash-access-placement-passthrough-install"
+assert access_install_report["status"] == "installed", access_install_report
+assert access_install_report["backend"] == {
+    "patchStyle": "rip-relative-indirect-jmp-absolute-slot",
+    "patchBytes": 14,
+    "decoder": "fixture-safe-subset",
+}
+assert access_install_report["summary"] == {
+    "requested": 6,
+    "installed": 6,
+    "failed": 0,
+    "failClosed": True,
+}, access_install_report
+expected_targets = {
+    "actChest",
+    "actChestLid",
+    "generateDungeon",
+    "assignActions",
+    "newEntity",
+    "setSpriteAttributes",
+}
+targets = access_install_report["targets"]
+assert {target["targetName"] for target in targets} == expected_targets, targets
+for target in targets:
+    assert target["status"] == "installed", target
+    assert isinstance(target["targetAddress"], str) and target["targetAddress"].startswith("0x"), target
+    assert isinstance(target["replacementAddress"], str) and target["replacementAddress"].startswith("0x"), target
+    assert isinstance(target["trampolineAddress"], str) and target["trampolineAddress"].startswith("0x"), target
+    assert target["patchSize"] >= 14, target
+    assert target["replacementInvoked"] is False, target
+    assert target["replacementCalls"] == 0, target
+    assert target["error"] is None, target
+print(f"opt-in stash access/placement pass-through install remains fail-closed ok: {access_install_report_path}")
 PY
 
 BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 \
