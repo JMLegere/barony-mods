@@ -730,6 +730,20 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return -1;
     }
 
+    if (op >= 0x40U && op <= 0x4fU) {
+        unsigned char next;
+        if (offset + 2U > limit) {
+            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+            *out_message = "Detour target prologue ended after a REX prefix.";
+            return -1;
+        }
+        next = code[offset + 1U];
+        if (next >= 0x50U && next <= 0x5fU) {
+            *out_length = 2U;
+            return 0;
+        }
+    }
+
     if (op == 0x90U || (op >= 0x50U && op <= 0x57U) || (op >= 0x58U && op <= 0x5fU)) {
         *out_length = 1U;
         return 0;
