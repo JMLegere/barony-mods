@@ -18,9 +18,10 @@ Build and test:
 ```sh
 make -C native/barony-modloader-hook clean all
 make -C native/barony-modloader-hook test
+make -C native/barony-modloader-hook static-readiness
 ```
 
-The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates a temporary profile/runtime manifest, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, Stash hook, generic detour self-test, and opt-in Stash target detour self-test reports with Python. It does not launch Barony or prove gameplay behavior.
+The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates a temporary profile/runtime manifest, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, Stash hook, generic detour self-test, and opt-in Stash target detour self-test reports with Python. It does not launch Barony or prove gameplay behavior. The `static-readiness` target runs `tools/analyze_stash_targets.py` against the installed Steam/Linux executable and emits a static prologue-readiness report; that report is target evidence only, not a gameplay claim.
 
 Manual smoke shape:
 

@@ -58,6 +58,7 @@ required_artifacts = [
   "framework/BaronyModLoader/schema/runtime-load-report.schema.json",
   "framework/BaronyModLoader/schema/symbol-probe-report.schema.json",
   "framework/BaronyModLoader/schema/stash-hook-report.schema.json",
+  "native/barony-modloader-hook/tools/analyze_stash_targets.py",
 ]
 evidence = [
   "BML launcher dry-run executes the installed Steam executable, not a source-built sidecar",
@@ -66,6 +67,7 @@ evidence = [
   "Linux hook writes BaronyModLoader/reports/symbol-probe-report.json after resolving required dlsym(RTLD_DEFAULT, mangledSymbol) targets for Steam app 371970 build 22630456",
   "Linux hook writes BaronyModLoader/reports/stash-hook-report.json with the abstract direct Stash hook backend, per-target ready/blocked/missing analysis, decoder-safe patchWindowBytes for ready function targets including the REX-push Entity::addItemToVoidChestServer fixture path, and failClosed=true until required gameplay hooks are actually installed",
   "BML_STASH_DETOUR_SELF_TEST=1 writes BaronyModLoader/reports/stash-detour-self-test-report.json proving the exact Entity::addItemToVoidChestServer symbol can be patched, routed through BML replacement code, and called through to the original fake-symbol implementation without claiming in-game Stash behavior",
+  "python native/barony-modloader-hook/tools/analyze_stash_targets.py --manifest native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json --executable /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 emits static-prologue readiness evidence with playableBehaviorClaimed=false",
   "mismatched executable provenance, missing required symbols, or uninstalled required Stash hook targets fail closed before runtime-load-report can claim Stash loaded",
 ]
 
