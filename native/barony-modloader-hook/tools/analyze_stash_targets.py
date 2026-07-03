@@ -152,6 +152,14 @@ def modrm_is_register_only(modrm: int) -> bool:
 def modrm_uses_rip_relative(modrm: int) -> bool:
     return (modrm & 0xC7) == 0x05
 
+def opcode_uses_supported_modrm(op: int) -> bool:
+    return op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B, 0x8D}
+
+
+def opcode_uses_supported_modrm_immediate(op: int) -> bool:
+    return op in {0x81, 0x83}
+
+
 def decode_modrm_copyable_length(
     code: bytes,
     offset: int,
@@ -170,29 +178,57 @@ def decode_modrm_copyable_length(
     mod = modrm & 0xC0
     rm = modrm & 0x07
     if modrm_uses_rip_relative(modrm):
-        return (
-            None,
-            "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED",
-            "Detour target prologue uses RIP-relative memory addressing that this substrate does not relocate.",
-        )
-
-    if rm == 0x04:
-        if offset + length + 1 > limit:
-            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
-        sib = code[offset + length]
-        length += 1
-        if mod == 0x00 and (sib & 0x07) == 0x05:
-            return (
-                None,
-                "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED",
-                "Detour target prologue uses displacement-only SIB memory addressing outside this conservative decoder subset.",
-            )
-
-    if mod == 0x40:
-        length += 1
-    elif mod == 0x80:
         length += 4
+    else:
+        if rm == 0x04:
+            if offset + length + 1 > limit:
+                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
+            sib = code[offset + length]
+            length += 1
+            if mod == 0x00 and (sib & 0x07) == 0x05:
+                return (
+                    None,
+                    "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED",
+                    "Detour target prologue uses displacement-only SIB memory addressing outside this conservative decoder subset.",
+                )
 
+        if mod == 0x40:
+            length += 1
+        elif mod == 0x80:
+            length += 4
+
+    if offset + length > limit:
+        return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
+    return length, None, None
+
+def decode_modrm_immediate_copyable_length(
+    code: bytes,
+    offset: int,
+    limit: int,
+    opcode_length: int,
+    immediate_length: int,
+    truncated_message: str,
+    unsupported_message: str,
+) -> tuple[int | None, str | None, str | None]:
+    if offset + opcode_length + 1 > limit:
+        return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
+
+    modrm = code[offset + opcode_length]
+    reg_opcode = (modrm >> 3) & 0x07
+    if reg_opcode not in {0, 5, 7}:
+        return None, "BML_DETOUR_UNSUPPORTED_INSTRUCTION", unsupported_message
+
+    base_length, code_id, message = decode_modrm_copyable_length(
+        code,
+        offset,
+        limit,
+        opcode_length,
+        truncated_message,
+    )
+    if base_length is None:
+        return None, code_id, message
+
+    length = base_length + immediate_length
     if offset + length > limit:
         return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", truncated_message
     return length, None, None
@@ -259,7 +295,7 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
                 )
                 return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", message
             return length, None, None
-        if next_op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B, 0x8D}:
+        if opcode_uses_supported_modrm(next_op):
             return decode_modrm_copyable_length(
                 code,
                 offset,
@@ -268,23 +304,25 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
                 "Detour target prologue ended in the middle of a supported REX ModRM instruction.",
             )
         if next_op == 0x83:
-            if offset + 4 > limit:
-                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX add/sub immediate instruction."
-            modrm = code[offset + 2]
-            reg_opcode = (modrm >> 3) & 0x07
-            if not modrm_is_register_only(modrm) or reg_opcode not in {0, 5}:
-                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
-                return None, code_id, "Detour target prologue uses an unsupported REX immediate arithmetic form."
-            return 4, None, None
+            return decode_modrm_immediate_copyable_length(
+                code,
+                offset,
+                limit,
+                2,
+                1,
+                "Detour target prologue ended in the middle of a supported REX imm8 arithmetic/comparison instruction.",
+                "Detour target prologue uses an unsupported REX imm8 arithmetic/comparison form.",
+            )
         if next_op == 0x81:
-            if offset + 7 > limit:
-                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX imm32 arithmetic form."
-            modrm = code[offset + 2]
-            reg_opcode = (modrm >> 3) & 0x07
-            if not modrm_is_register_only(modrm) or reg_opcode not in {0, 5}:
-                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
-                return None, code_id, "Detour target prologue uses an unsupported REX imm32 arithmetic form."
-            return 7, None, None
+            return decode_modrm_immediate_copyable_length(
+                code,
+                offset,
+                limit,
+                2,
+                4,
+                "Detour target prologue ended in the middle of a supported REX imm32 arithmetic/comparison instruction.",
+                "Detour target prologue uses an unsupported REX imm32 arithmetic/comparison form.",
+            )
 
     if op == 0x90 or 0x50 <= op <= 0x57 or 0x58 <= op <= 0x5F:
         return 1, None, None
@@ -294,7 +332,7 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
             return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported mov immediate instruction."
         return 5, None, None
 
-    if op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B, 0x8D}:
+    if opcode_uses_supported_modrm(op):
         return decode_modrm_copyable_length(
             code,
             offset,
@@ -304,14 +342,26 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
         )
 
     if op == 0x83:
-        if offset + 3 > limit:
-            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported add/sub immediate instruction."
-        modrm = code[offset + 1]
-        reg_opcode = (modrm >> 3) & 0x07
-        if not modrm_is_register_only(modrm) or reg_opcode not in {0, 5}:
-            code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
-            return None, code_id, "Detour target prologue uses an unsupported immediate arithmetic form."
-        return 3, None, None
+        return decode_modrm_immediate_copyable_length(
+            code,
+            offset,
+            limit,
+            1,
+            1,
+            "Detour target prologue ended in the middle of a supported imm8 arithmetic/comparison instruction.",
+            "Detour target prologue uses an unsupported imm8 arithmetic/comparison form.",
+        )
+
+    if op == 0x81:
+        return decode_modrm_immediate_copyable_length(
+            code,
+            offset,
+            limit,
+            1,
+            4,
+            "Detour target prologue ended in the middle of a supported imm32 arithmetic/comparison instruction.",
+            "Detour target prologue uses an unsupported imm32 arithmetic/comparison form.",
+        )
     return None, "BML_DETOUR_UNSUPPORTED_INSTRUCTION", "Detour target prologue contains an instruction outside the conservative fixture-safe decoder subset."
 
 

@@ -37,6 +37,14 @@
 #define BML_DETOUR_MAX_INSTRUCTIONS 32U
 #define BML_DETOUR_MAX_RELOCATED_BYTES ((BML_DETOUR_MAX_COPY_BYTES * 8U) + BML_DETOUR_PATCH_BYTES)
 
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+
+#define BML_DETOUR_NEAR_SEARCH_RANGE ((uintptr_t)0x70000000ULL)
+#define BML_DETOUR_NEAR_SEARCH_STEP ((uintptr_t)0x10000ULL)
+#define BML_DETOUR_MIN_MMAP_ADDRESS ((uintptr_t)0x10000ULL)
+
 typedef struct BmlError {
     const char *code;
     const char *severity;
@@ -714,6 +722,14 @@ static bool bml_modrm_uses_rip_relative(unsigned char modrm) {
     return (modrm & 0xc7U) == 0x05U;
 }
 
+static bool bml_opcode_uses_supported_modrm(unsigned char op) {
+    return op == 0x31U || op == 0x39U || op == 0x3bU || op == 0x85U || op == 0x89U || op == 0x8bU || op == 0x8dU;
+}
+
+static bool bml_opcode_uses_supported_modrm_immediate(unsigned char op) {
+    return op == 0x81U || op == 0x83U;
+}
+
 static int bml_decode_modrm_copyable_length(const unsigned char *code, size_t offset, size_t limit, size_t opcode_length, size_t *out_length, const char **out_code, const char **out_message, const char *truncated_message) {
     const size_t modrm_offset = offset + opcode_length;
     unsigned char modrm;
@@ -736,31 +752,29 @@ static int bml_decode_modrm_copyable_length(const unsigned char *code, size_t of
     mod = (unsigned char)(modrm & 0xc0U);
     rm = (unsigned char)(modrm & 0x07U);
     if (bml_modrm_uses_rip_relative(modrm)) {
-        *out_code = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED";
-        *out_message = "Detour target prologue uses RIP-relative memory addressing that this substrate does not relocate.";
-        return -1;
-    }
-
-    if (rm == 0x04U) {
-        unsigned char sib;
-        if (offset + length + 1U > limit) {
-            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-            *out_message = truncated_message;
-            return -1;
-        }
-        sib = code[offset + length];
-        length += 1U;
-        if (mod == 0x00U && (sib & 0x07U) == 0x05U) {
-            *out_code = "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
-            *out_message = "Detour target prologue uses displacement-only SIB memory addressing outside this conservative decoder subset.";
-            return -1;
-        }
-    }
-
-    if (mod == 0x40U) {
-        length += 1U;
-    } else if (mod == 0x80U) {
         length += 4U;
+    } else {
+        if (rm == 0x04U) {
+            unsigned char sib;
+            if (offset + length + 1U > limit) {
+                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+                *out_message = truncated_message;
+                return -1;
+            }
+            sib = code[offset + length];
+            length += 1U;
+            if (mod == 0x00U && (sib & 0x07U) == 0x05U) {
+                *out_code = "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
+                *out_message = "Detour target prologue uses displacement-only SIB memory addressing outside this conservative decoder subset.";
+                return -1;
+            }
+        }
+
+        if (mod == 0x40U) {
+            length += 1U;
+        } else if (mod == 0x80U) {
+            length += 4U;
+        }
     }
 
     if (offset + length > limit) {
@@ -770,6 +784,38 @@ static int bml_decode_modrm_copyable_length(const unsigned char *code, size_t of
     }
 
     *out_length = length;
+    return 0;
+}
+
+static int bml_decode_modrm_immediate_copyable_length(const unsigned char *code, size_t offset, size_t limit, size_t opcode_length, size_t immediate_length, size_t *out_length, const char **out_code, const char **out_message, const char *truncated_message, const char *unsupported_message) {
+    size_t base_length = 0U;
+    unsigned char modrm;
+    unsigned char reg_opcode;
+
+    if (offset + opcode_length + 1U > limit) {
+        *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+        *out_message = truncated_message;
+        return -1;
+    }
+
+    modrm = code[offset + opcode_length];
+    reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
+    if (reg_opcode != 0U && reg_opcode != 5U && reg_opcode != 7U) {
+        *out_code = "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
+        *out_message = unsupported_message;
+        return -1;
+    }
+
+    if (bml_decode_modrm_copyable_length(code, offset, limit, opcode_length, &base_length, out_code, out_message, truncated_message) != 0) {
+        return -1;
+    }
+    if (base_length > SIZE_MAX - immediate_length || offset + base_length + immediate_length > limit) {
+        *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+        *out_message = truncated_message;
+        return -1;
+    }
+
+    *out_length = base_length + immediate_length;
     return 0;
 }
 
@@ -839,8 +885,6 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
 
     if (op >= 0x40U && op <= 0x4fU) {
         unsigned char next;
-        unsigned char modrm;
-        unsigned char reg_opcode;
         const bool rex_w = (op & 0x08U) != 0U;
         if (offset + 2U > limit) {
             *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
@@ -862,40 +906,14 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
             *out_length = length;
             return 0;
         }
-        if (next == 0x31U || next == 0x39U || next == 0x3bU || next == 0x85U || next == 0x89U || next == 0x8bU || next == 0x8dU) {
+        if (bml_opcode_uses_supported_modrm(next)) {
             return bml_decode_modrm_copyable_length(code, offset, limit, 2U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported REX ModRM instruction.");
         }
         if (next == 0x83U) {
-            if (offset + 4U > limit) {
-                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-                *out_message = "Detour target prologue ended in the middle of a supported REX add/sub immediate instruction.";
-                return -1;
-            }
-            modrm = code[offset + 2U];
-            reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
-            if (!bml_modrm_is_register_only(modrm) || (reg_opcode != 0U && reg_opcode != 5U)) {
-                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
-                *out_message = "Detour target prologue uses an unsupported REX immediate arithmetic form.";
-                return -1;
-            }
-            *out_length = 4U;
-            return 0;
+            return bml_decode_modrm_immediate_copyable_length(code, offset, limit, 2U, 1U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported REX imm8 arithmetic/comparison instruction.", "Detour target prologue uses an unsupported REX imm8 arithmetic/comparison form.");
         }
         if (next == 0x81U) {
-            if (offset + 7U > limit) {
-                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-                *out_message = "Detour target prologue ended in the middle of a supported REX imm32 arithmetic form.";
-                return -1;
-            }
-            modrm = code[offset + 2U];
-            reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
-            if (!bml_modrm_is_register_only(modrm) || (reg_opcode != 0U && reg_opcode != 5U)) {
-                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
-                *out_message = "Detour target prologue uses an unsupported REX imm32 arithmetic form.";
-                return -1;
-            }
-            *out_length = 7U;
-            return 0;
+            return bml_decode_modrm_immediate_copyable_length(code, offset, limit, 2U, 4U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported REX imm32 arithmetic/comparison instruction.", "Detour target prologue uses an unsupported REX imm32 arithmetic/comparison form.");
         }
     }
 
@@ -914,27 +932,16 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return 0;
     }
 
-    if (op == 0x31U || op == 0x39U || op == 0x3bU || op == 0x85U || op == 0x89U || op == 0x8bU || op == 0x8dU) {
+    if (bml_opcode_uses_supported_modrm(op)) {
         return bml_decode_modrm_copyable_length(code, offset, limit, 1U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported ModRM instruction.");
     }
 
     if (op == 0x83U) {
-        unsigned char modrm;
-        unsigned char reg_opcode;
-        if (offset + 3U > limit) {
-            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-            *out_message = "Detour target prologue ended in the middle of a supported add/sub immediate instruction.";
-            return -1;
-        }
-        modrm = code[offset + 1U];
-        reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
-        if (!bml_modrm_is_register_only(modrm) || (reg_opcode != 0U && reg_opcode != 5U)) {
-            *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
-            *out_message = "Detour target prologue uses an unsupported immediate arithmetic form.";
-            return -1;
-        }
-        *out_length = 3U;
-        return 0;
+        return bml_decode_modrm_immediate_copyable_length(code, offset, limit, 1U, 1U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported imm8 arithmetic/comparison instruction.", "Detour target prologue uses an unsupported imm8 arithmetic/comparison form.");
+    }
+
+    if (op == 0x81U) {
+        return bml_decode_modrm_immediate_copyable_length(code, offset, limit, 1U, 4U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported imm32 arithmetic/comparison instruction.", "Detour target prologue uses an unsupported imm32 arithmetic/comparison form.");
     }
 
 
@@ -1030,6 +1037,74 @@ static int bml_resolve_relocated_destination(const unsigned char *target_bytes, 
     return 0;
 }
 
+static bool bml_find_rip_relative_displacement_offset(const unsigned char *code, size_t offset, size_t source_length, size_t *out_displacement_offset) {
+    const unsigned char op = code[offset];
+    size_t opcode_length = 0U;
+    size_t modrm_offset;
+    size_t displacement_offset;
+    unsigned char modrm;
+
+    if (op == 0x0fU && source_length >= 3U && (code[offset + 1U] == 0x1fU || code[offset + 1U] == 0xb6U || code[offset + 1U] == 0xb7U)) {
+        opcode_length = 2U;
+    } else if (op == 0x66U && source_length >= 4U && code[offset + 1U] == 0x0fU && (code[offset + 2U] == 0x1fU || code[offset + 2U] == 0xefU)) {
+        opcode_length = 3U;
+    } else if (op >= 0x40U && op <= 0x4fU && source_length >= 3U && (bml_opcode_uses_supported_modrm(code[offset + 1U]) || bml_opcode_uses_supported_modrm_immediate(code[offset + 1U]))) {
+        opcode_length = 2U;
+    } else if (source_length >= 2U && (bml_opcode_uses_supported_modrm(op) || bml_opcode_uses_supported_modrm_immediate(op))) {
+        opcode_length = 1U;
+    } else {
+        return false;
+    }
+
+    modrm_offset = offset + opcode_length;
+    if (modrm_offset >= offset + source_length) {
+        return false;
+    }
+    modrm = code[modrm_offset];
+    if (!bml_modrm_uses_rip_relative(modrm)) {
+        return false;
+    }
+
+    displacement_offset = modrm_offset + 1U;
+    if (displacement_offset > SIZE_MAX - 4U || displacement_offset + 4U > offset + source_length) {
+        return false;
+    }
+
+    *out_displacement_offset = displacement_offset;
+    return true;
+}
+
+static int bml_adjust_rip_relative_displacement(const unsigned char *target_bytes, size_t source, size_t source_length, unsigned char *destination, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    size_t displacement_offset = 0U;
+    size_t relocated_displacement_offset;
+    int32_t old_displacement = 0;
+    int64_t original_next;
+    int64_t absolute_target;
+    int64_t relocated_next;
+    int64_t new_displacement64;
+    int32_t new_displacement;
+
+    if (!bml_find_rip_relative_displacement_offset(target_bytes, source, source_length, &displacement_offset)) {
+        return 0;
+    }
+
+    relocated_displacement_offset = displacement_offset - source;
+    memcpy(&old_displacement, target_bytes + displacement_offset, sizeof(old_displacement));
+    original_next = (int64_t)(uintptr_t)(target_bytes + source + source_length);
+    absolute_target = original_next + (int64_t)old_displacement;
+    relocated_next = (int64_t)(uintptr_t)(destination + source_length);
+    new_displacement64 = absolute_target - relocated_next;
+    if (new_displacement64 < (int64_t)INT32_MIN || new_displacement64 > (int64_t)INT32_MAX) {
+        bml_copy_string(error_code, error_code_size, "BML_DETOUR_RIP_RELATIVE_RELOCATION_UNSUPPORTED");
+        bml_copy_string(error_message, error_message_size, "Relocated RIP-relative memory operand would exceed the signed 32-bit displacement range; executable trampoline allocation must be nearer the target.");
+        return -1;
+    }
+
+    new_displacement = (int32_t)new_displacement64;
+    memcpy(destination + relocated_displacement_offset, &new_displacement, sizeof(new_displacement));
+    return 0;
+}
+
 static int bml_relocate_patch_window(const unsigned char *target_bytes, size_t patch_size, unsigned char *trampoline, size_t trampoline_capacity, size_t *out_trampoline_length, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     BmlPatchInstruction instructions[BML_DETOUR_MAX_INSTRUCTIONS];
     size_t instruction_count = 0U;
@@ -1098,6 +1173,9 @@ static int bml_relocate_patch_window(const unsigned char *target_bytes, size_t p
             }
         } else {
             memcpy(destination, target_bytes + source, instruction->source_length);
+            if (bml_adjust_rip_relative_displacement(target_bytes, source, instruction->source_length, destination, error_code, error_code_size, error_message, error_message_size) != 0) {
+                return -1;
+            }
         }
     }
 
@@ -1126,6 +1204,61 @@ static int bml_page_span_for_patch(void *target, size_t patch_size, uintptr_t *o
     *out_page_start = start & ~page_mask;
     *out_page_span = ((end + page_mask) & ~page_mask) - *out_page_start;
     return 0;
+}
+
+static void *bml_try_mmap_trampoline_at(uintptr_t candidate, size_t size) {
+    void *requested;
+    void *mapping;
+
+    if (candidate < BML_DETOUR_MIN_MMAP_ADDRESS || size == 0U || (uintptr_t)size > UINTPTR_MAX - candidate) {
+        return MAP_FAILED;
+    }
+
+    requested = (void *)candidate;
+    mapping = mmap(requested, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    if (mapping != MAP_FAILED && mapping != requested) {
+        (void)munmap(mapping, size);
+        return MAP_FAILED;
+    }
+    return mapping;
+}
+
+static void *bml_mmap_trampoline_near_target(const void *target, size_t size) {
+    long page_size_long = sysconf(_SC_PAGESIZE);
+    void *mapping;
+
+    if (page_size_long > 0 && target != NULL) {
+        const uintptr_t page_size = (uintptr_t)page_size_long;
+        const uintptr_t page_mask = page_size - 1U;
+        const uintptr_t target_page = (uintptr_t)target & ~page_mask;
+        uintptr_t step = BML_DETOUR_NEAR_SEARCH_STEP;
+        uintptr_t distance;
+
+        if (step < page_size) {
+            step = page_size;
+        }
+        step = (step + page_mask) & ~page_mask;
+
+        for (distance = step; distance <= BML_DETOUR_NEAR_SEARCH_RANGE; distance += step) {
+            if (target_page >= distance) {
+                mapping = bml_try_mmap_trampoline_at(target_page - distance, size);
+                if (mapping != MAP_FAILED) {
+                    return mapping;
+                }
+            }
+            if (target_page <= UINTPTR_MAX - distance) {
+                mapping = bml_try_mmap_trampoline_at(target_page + distance, size);
+                if (mapping != MAP_FAILED) {
+                    return mapping;
+                }
+            }
+            if (BML_DETOUR_NEAR_SEARCH_RANGE - distance < step) {
+                break;
+            }
+        }
+    }
+
+    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 }
 
 static int bml_measure_supported_patch_window(const unsigned char *target_bytes, size_t *out_patch_size, const char **out_code, const char **out_message) {
@@ -1183,7 +1316,7 @@ static int bml_install_absolute_jump_detour(void *target, void *replacement, Bml
     }
 
     memcpy(original, target, patch_size);
-    trampoline = mmap(NULL, trampoline_capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    trampoline = bml_mmap_trampoline_near_target(target, trampoline_capacity);
     if (trampoline == MAP_FAILED) {
         bml_copy_string(error_code, error_code_size, "BML_DETOUR_TRAMPOLINE_ALLOC_FAILED");
         bml_copy_string(error_message, error_message_size, "Executable trampoline allocation failed.");
