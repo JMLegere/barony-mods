@@ -121,7 +121,7 @@ evidence = [
 
 [[deliverables]]
 id = "v1_closeout"
-status = "planned"
+status = "verified_committed_pushed"
 summary = "All v1 artifacts are verified, committed, and pushed. Remaining blockers are explicit if a playable runtime build cannot be completed in this environment."
 required_artifacts = [
   "README.md",
