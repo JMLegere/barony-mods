@@ -152,9 +152,13 @@ python framework/BaronyModLoader/app/barony_mod_loader.py launch \
 
 `package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, writes runtime-manifest/active-mods artifacts, and dry-runs the installed-executable hook launch.
 
+Steam preflight: dry-run launch and launch-plan commands do not require the Steam client to be running. Any non-dry-run Steam launch or live Steam/Linux quickstart must be run after the Steam client has started and finished initializing; otherwise the launcher should fail before starting the game process.
+
 ## Runnable verification scenarios
 
 The current Linux hook smoke is still Linux-only, but it now covers more than injection/reporting. With fake providers it verifies production Stash bundle installation, generated-shop placement logic, shared persistent-inventory binding, spell-binding hooks, multiplayer metadata/client guard reporting, scoped prompt replacement, and diagnostics. A live Steam/Linux quickstart plus Jeremy's in-game check verifies the production lobby access point, lid, and `Open stash` prompt on Start Map. Real generated-shop placement, persistence across death/new-run/relaunch, player-cast spell-created Void Chest interaction, save/resume behavior, disabled behavior, and actual multiplayer mismatch rejection remain unverified.
+
+Before running a live Steam/Linux quickstart, start Steam and wait for the client to finish initializing. Dry runs do not require Steam to be running.
 
 The intended staged verification sequence is:
 

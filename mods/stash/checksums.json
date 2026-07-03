@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "0.1.0",
+  "package": {
+    "id": "jml.stash",
+    "version": "0.1.0"
+  },
+  "algorithm": "sha256",
+  "entries": [
+    {
+      "path": "assets/preview.png",
+      "sha256": "924c4a453c21e61b9e0aeada0a74eb4fa71aa13085dc1a988ca4ee92e8fb5692",
+      "size": 11240
+    },
+    {
+      "path": "bml-package.json",
+      "sha256": "6ad84954039df01363971f211872eaa3696a4d20401b7ba85e179ba8a0902c89",
+      "size": 12135
+    },
+    {
+      "path": "content/books/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/data/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/images/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/items/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/lang/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/maps/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/models/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/music/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "content/sounds/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
+      "sha256": "70eee60c27d806d5d52ad9ffcf90997d62ed798389451b00abd44b383cd06626",
+      "size": 15154
+    },
+    {
+      "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
+      "sha256": "422c8eb4de4e12243f2d611f5521c56bc83792203f95b4305dcdf54b7787704b",
+      "size": 20280
+    },
+    {
+      "path": "preview.png",
+      "sha256": "924c4a453c21e61b9e0aeada0a74eb4fa71aa13085dc1a988ca4ee92e8fb5692",
+      "size": 11240
+    },
+    {
+      "path": "workshop.toml",
+      "sha256": "68bca8bea39a432ef5937602bbfa5b158d428e70141ce3402f49cc6b4e8e7ae6",
+      "size": 1317
+    }
+  ],
+  "omitted": [
+    {
+      "path": "checksums.json",
+      "reason": "self-referential checksum set file"
+    }
+  ]
+}

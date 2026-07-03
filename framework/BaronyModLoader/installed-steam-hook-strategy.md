@@ -79,9 +79,9 @@ Stash package
   activates only when hook/runtime capabilities are verified
 ```
 
-## Linux implementation shape
+## Linux implementation and current status
 
-For the current Linux smoke, the MVP path is dynamic loader injection with the built BML hook library:
+The first Linux proof was dynamic loader injection with a no-op process. That `/usr/bin/true` smoke is historical first-stage evidence only: it proved the hook library could load and write `BaronyModLoader/reports/runtime-load-report.json`, but it is no longer the current gameplay-status boundary.
 
 ```text
 LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so \
@@ -92,7 +92,9 @@ SteamGameId=371970 \
 /usr/bin/true
 ```
 
-`libbarony_bml.so` should be treated as a small bootstrap/hook runtime, not as arbitrary mod code execution. The current smoke proves injection and `BaronyModLoader/reports/runtime-load-report.json` writing only; it does not resolve Barony symbols, patch gameplay, or create the Stash chest in-game. Later installed-executable verification should use the same hook environment with `/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64`.
+Current Steam/Linux status for build `22630456` uses the installed executable at `/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64` with the same BML hook environment plus `BML_HOOK_MANIFEST` and `BML_HOOK_LIBRARY`. Current live evidence resolves 30/30 required symbols, loads a validated `jml.stash` runtime manifest, and installs the production Stash bundle by default without `BML_STASH_ENABLE_EXPERIMENTAL_PLAYABLE`.
+
+The verified player-facing live boundary is the Start Map lobby access point: the live quickstart evidence records the placed chest/lid and Jeremy confirmed the in-game `Open stash` prompt. Fake-provider evidence covers generated-shop placement logic, shared inventory/spell binding, multiplayer metadata/client guard reporting, scoped prompt replacement, and production hook install reports. Live gameplay still needs separate verification for real generated-shop placement, cross-run persistence, player-cast spell-created Void Chests, save/resume, disabled behavior, and multiplayer mismatch rejection.
 
 ## Hook-loader architecture
 

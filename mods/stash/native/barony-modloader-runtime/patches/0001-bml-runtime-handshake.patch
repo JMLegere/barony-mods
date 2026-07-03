@@ -1,0 +1,520 @@
+diff --git a/src/barony_mod_loader.hpp b/src/barony_mod_loader.hpp
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/src/barony_mod_loader.hpp
+@@ -0,0 +1,24 @@
++#ifndef BARONY_MOD_LOADER_HPP
++#define BARONY_MOD_LOADER_HPP
++
++#include <string>
++
++namespace BaronyModLoader
++{
++
++struct RuntimeManifestLoadResult
++{
++	bool loaded;
++	std::string status;
++	std::string errorCode;
++	std::string errorMessage;
++	std::string manifestPath;
++	std::string reportPath;
++};
++
++int writeRuntimeInfo(const std::string& outputPath);
++RuntimeManifestLoadResult loadRuntimeManifest(const std::string& manifestPath, const std::string& outputDir);
++
++} // namespace BaronyModLoader
++
++#endif // BARONY_MOD_LOADER_HPP
+diff --git a/src/barony_mod_loader.cpp b/src/barony_mod_loader.cpp
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/src/barony_mod_loader.cpp
+@@ -0,0 +1,368 @@
++#include "barony_mod_loader.hpp"
++
++#include <cerrno>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++#include <string>
++
++#ifdef WINDOWS
++#include <direct.h>
++#define BML_MKDIR(path) _mkdir(path)
++#else
++#include <sys/stat.h>
++#include <sys/types.h>
++#define BML_MKDIR(path) mkdir(path, 0777)
++#endif
++
++namespace BaronyModLoader
++{
++namespace
++{
++
++const char* kContractId = "bml-runtime-contract";
++const char* kContractVersion = "0.1.0";
++const char* kRuntimeId = "barony-bml-runtime-stash";
++const char* kRuntimeVersion = "0.1.0";
++
++const char* kCapabilities[] = {
++	"persistent_storage",
++	"persistent_inventory",
++	"void_chest_binding",
++	"placement_lobby",
++	"placement_shop",
++	"multiplayer_version_metadata"
++};
++
++const char* kRuntimeInfoJson = R"json({
++  "runtimeId": "barony-bml-runtime-stash",
++  "runtimeVersion": "0.1.0",
++  "runtimeName": "BaronyModLoader Stash-capable runtime",
++  "contract": {
++    "id": "bml-runtime-contract",
++    "versions": ["0.1.0"]
++  },
++  "game": {
++    "id": "barony",
++    "name": "Barony",
++    "supportedVersions": ["5.x"]
++  },
++  "capabilities": [
++    {
++      "id": "persistent_storage",
++      "version": "0.1.0",
++      "requiredForStash": true,
++      "description": "Profile-scoped engine-managed storage for mod state."
++    },
++    {
++      "id": "persistent_inventory",
++      "version": "0.1.0",
++      "requiredForStash": true,
++      "description": "Named inventory state that survives run, save, and process boundaries."
++    },
++    {
++      "id": "void_chest_binding",
++      "version": "0.1.0",
++      "requiredForStash": true,
++      "description": "Authoritative binding from Barony Void Chest access paths to a persistent inventory."
++    },
++    {
++      "id": "placement_lobby",
++      "version": "0.1.0",
++      "requiredForStash": true,
++      "description": "Safe deterministic placement of a Void Chest access point in the lobby."
++    },
++    {
++      "id": "placement_shop",
++      "version": "0.1.0",
++      "requiredForStash": true,
++      "description": "Safe deterministic placement of a Void Chest access point in generated shops."
++    },
++    {
++      "id": "multiplayer_version_metadata",
++      "version": "0.1.0",
++      "requiredForStash": true,
++      "description": "Host/client compatibility metadata for package, runtime, and persistent inventory schema versions."
++    }
++  ],
++  "runtimeReportPaths": {
++    "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
++    "runtimeLoadReport": "BaronyModLoader/runtime-load-report.json",
++    "runtimeLog": "BaronyModLoader/logs/runtime.log",
++    "stateRoot": "BaronyModLoader/state/"
++  },
++  "policy": {
++    "requiresValidatedManifest": true,
++    "rejectsUnknownRequiredCapabilities": true,
++    "partialStashLoadAllowed": false,
++    "gameplayHooksImplemented": false
++  }
++})json";
++
++std::string jsonEscape(const std::string& value)
++{
++	std::string escaped;
++	escaped.reserve(value.size());
++	for (const char ch : value)
++	{
++		if (ch == '"')
++		{
++			escaped += "\\\"";
++		}
++		else if (ch == '\n')
++		{
++			escaped += "\\n";
++		}
++		else if (ch == '\r')
++		{
++			escaped += "\\r";
++		}
++		else if (ch == '\t')
++		{
++			escaped += "\\t";
++		}
++		else
++		{
++			escaped += ch;
++		}
++	}
++	return escaped;
++}
++
++std::string directoryName(const std::string& path)
++{
++	const std::string::size_type slash = path.find_last_of('/');
++	if (slash == std::string::npos)
++	{
++		return ".";
++	}
++	if (slash == 0)
++	{
++		return path.substr(0, 1);
++	}
++	return path.substr(0, slash);
++}
++
++std::string joinPath(const std::string& base, const std::string& child)
++{
++	if (child.empty() || child[0] == '/' || (child.size() > 2 && child[1] == ':'))
++	{
++		return child;
++	}
++	if (base.empty())
++	{
++		return child;
++	}
++	return base[base.size() - 1] == '/' ? base + child : base + "/" + child;
++}
++
++bool ensureDirectory(const std::string& path)
++{
++	if (path.empty() || path == ".")
++	{
++		return true;
++	}
++
++	std::string partial;
++	std::string::size_type index = path[0] == '/' ? 1 : 0;
++	if (path[0] == '/')
++	{
++		partial = "/";
++	}
++	while (index < path.size())
++	{
++		const std::string::size_type next = path.find('/', index);
++		const std::string part = path.substr(index, next == std::string::npos ? std::string::npos : next - index);
++		if (!part.empty())
++		{
++			if (!partial.empty() && partial[partial.size() - 1] != '/')
++			{
++				partial += '/';
++			}
++			partial += part;
++			if (BML_MKDIR(partial.c_str()) != 0 && errno != EEXIST)
++			{
++				return false;
++			}
++		}
++		if (next == std::string::npos)
++		{
++			break;
++		}
++		index = next + 1;
++	}
++	return true;
++}
++
++bool writeFile(const std::string& path, const std::string& content)
++{
++	if (!ensureDirectory(directoryName(path)))
++	{
++		return false;
++	}
++	std::ofstream out(path.c_str(), std::ios::out | std::ios::trunc | std::ios::binary);
++	if (!out)
++	{
++		return false;
++	}
++	out << content;
++	return static_cast<bool>(out);
++}
++
++bool readFile(const std::string& path, std::string& content)
++{
++	std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
++	if (!in)
++	{
++		return false;
++	}
++	std::ostringstream buffer;
++	buffer << in.rdbuf();
++	content = buffer.str();
++	return static_cast<bool>(in) || in.eof();
++}
++
++bool containsJsonString(const std::string& text, const std::string& value)
++{
++	return text.find("\"" + value + "\"") != std::string::npos;
++}
++
++bool extractStringField(const std::string& text, const std::string& field, std::string& value)
++{
++	const std::string fieldNeedle = "\"" + field + "\"";
++	const std::string::size_type fieldPos = text.find(fieldNeedle);
++	if (fieldPos == std::string::npos)
++	{
++		return false;
++	}
++	const std::string::size_type colon = text.find(':', fieldPos + fieldNeedle.size());
++	if (colon == std::string::npos)
++	{
++		return false;
++	}
++	const std::string::size_type open = text.find('"', colon + 1);
++	if (open == std::string::npos)
++	{
++		return false;
++	}
++	const std::string::size_type close = text.find('"', open + 1);
++	if (close == std::string::npos)
++	{
++		return false;
++	}
++	value = text.substr(open + 1, close - open - 1);
++	return true;
++}
++
++std::string defaultReportPath(const std::string& manifestPath)
++{
++	return joinPath(directoryName(manifestPath), "runtime-load-report.json");
++}
++
++std::string reportPathForManifest(const std::string& manifestText, const std::string& manifestPath, const std::string& outputDir)
++{
++	std::string runtimeLoadReport;
++	if (extractStringField(manifestText, "runtimeLoadReport", runtimeLoadReport) && !runtimeLoadReport.empty())
++	{
++		return joinPath(outputDir, runtimeLoadReport);
++	}
++	return defaultReportPath(manifestPath);
++}
++
++std::string runtimeReportJson(const std::string& manifestPath, const std::string& status, const std::string& errorCode, const std::string& errorMessage)
++{
++	std::ostringstream out;
++	out << "{\n";
++	out << "  \"contract\": {\"id\": \"" << kContractId << "\", \"version\": \"" << kContractVersion << "\"},\n";
++	out << "  \"runtime\": {\"id\": \"" << kRuntimeId << "\", \"version\": \"" << kRuntimeVersion << "\"},\n";
++	out << "  \"manifestPath\": \"" << jsonEscape(manifestPath) << "\",\n";
++	out << "  \"status\": \"" << status << "\",\n";
++	out << "  \"loaded\": " << (status == "loaded" ? "true" : "false") << ",\n";
++	out << "  \"errorCode\": \"" << errorCode << "\",\n";
++	out << "  \"errorMessage\": \"" << jsonEscape(errorMessage) << "\",\n";
++	out << "  \"capabilities\": [\n";
++	for (size_t index = 0; index < sizeof(kCapabilities) / sizeof(kCapabilities[0]); ++index)
++	{
++		out << "    {\"id\": \"" << kCapabilities[index] << "\", \"version\": \"0.1.0\", \"status\": \"" << status << "\"}";
++		if (index + 1 < sizeof(kCapabilities) / sizeof(kCapabilities[0]))
++		{
++			out << ",";
++		}
++		out << "\n";
++	}
++	out << "  ]\n";
++	out << "}\n";
++	return out.str();
++}
++
++RuntimeManifestLoadResult resultFor(const std::string& manifestPath, const std::string& reportPath, const std::string& status, const std::string& errorCode, const std::string& errorMessage)
++{
++	RuntimeManifestLoadResult result;
++	result.loaded = status == "loaded";
++	result.status = status;
++	result.errorCode = errorCode;
++	result.errorMessage = errorMessage;
++	result.manifestPath = manifestPath;
++	result.reportPath = reportPath;
++	return result;
++}
++
++RuntimeManifestLoadResult writeReportResult(const std::string& manifestPath, const std::string& reportPath, const std::string& status, const std::string& errorCode, const std::string& errorMessage)
++{
++	if (!writeFile(reportPath, runtimeReportJson(manifestPath, status, errorCode, errorMessage)))
++	{
++		return resultFor(manifestPath, reportPath, "failed", "BML_REPORT_WRITE_FAILED", "Could not write runtime-load-report.json");
++	}
++	return resultFor(manifestPath, reportPath, status, errorCode, errorMessage);
++}
++
++} // namespace
++
++int writeRuntimeInfo(const std::string& outputPath)
++{
++	if (outputPath.empty())
++	{
++		std::printf("%s\n", kRuntimeInfoJson);
++		return 0;
++	}
++	if (!writeFile(outputPath, std::string(kRuntimeInfoJson) + "\n"))
++	{
++		std::fprintf(stderr, "BaronyModLoader: failed to write runtime info to %s\n", outputPath.c_str());
++		return 1;
++	}
++	return 0;
++}
++
++RuntimeManifestLoadResult loadRuntimeManifest(const std::string& manifestPath, const std::string& outputDir)
++{
++	const std::string fallbackReportPath = defaultReportPath(manifestPath);
++	std::string manifestText;
++	if (!readFile(manifestPath, manifestText))
++	{
++		return writeReportResult(manifestPath, fallbackReportPath, "failed", "BML_MANIFEST_READ_FAILED", "Could not read runtime manifest");
++	}
++
++	const std::string reportPath = reportPathForManifest(manifestText, manifestPath, outputDir);
++	if (!containsJsonString(manifestText, "contract"))
++	{
++		return writeReportResult(manifestPath, reportPath, "failed", "BML_CONTRACT_MISSING", "Manifest is missing contract object");
++	}
++	if (!containsJsonString(manifestText, kContractId) || !containsJsonString(manifestText, kContractVersion))
++	{
++		return writeReportResult(manifestPath, reportPath, "failed", "BML_CONTRACT_UNSUPPORTED", "Manifest contract id/version is not supported by this runtime");
++	}
++
++	for (size_t index = 0; index < sizeof(kCapabilities) / sizeof(kCapabilities[0]); ++index)
++	{
++		if (!containsJsonString(manifestText, kCapabilities[index]))
++		{
++			return writeReportResult(manifestPath, reportPath, "failed", "BML_CAPABILITY_MISSING", std::string("Manifest is missing required capability: ") + kCapabilities[index]);
++		}
++	}
++
++	return writeReportResult(manifestPath, reportPath, "loaded", "BML_OK", "");
++}
++
++} // namespace BaronyModLoader
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -15,6 +15,7 @@
+ 	"${CMAKE_CURRENT_SOURCE_DIR}/charclass.cpp"
+ 	"${CMAKE_CURRENT_SOURCE_DIR}/net.cpp"
+ 	"${CMAKE_CURRENT_SOURCE_DIR}/game.cpp"
++	"${CMAKE_CURRENT_SOURCE_DIR}/barony_mod_loader.cpp"
+ 	"${CMAKE_CURRENT_SOURCE_DIR}/stat.cpp"
+ 	"${CMAKE_CURRENT_SOURCE_DIR}/acttorch.cpp"
+ 	"${CMAKE_CURRENT_SOURCE_DIR}/actplayer.cpp"
+diff --git a/src/game.cpp b/src/game.cpp
+--- a/src/game.cpp
++++ b/src/game.cpp
+@@ -41,11 +41,13 @@
+ #include "paths.hpp"
+ #include "player.hpp"
+ #include "mod_tools.hpp"
++#include "barony_mod_loader.hpp"
+ #include "lobbies.hpp"
+ #include "interface/ui.hpp"
+ #include "ui/GameUI.hpp"
+ #include "ui/MainMenu.hpp"
+ #include <limits>
++#include <string>
+ #include "ui/Frame.hpp"
+ #include "ui/Field.hpp"
+ #include "input.hpp"
+@@ -7182,6 +7184,10 @@
+ 		//Mix_Music **music, *intromusic, *splashmusic, *creditsmusic;
+ 		node_t* node;
+ 		Entity* entity;
++		bool bmlRuntimeInfoRequested = false;
++		std::string bmlRuntimeInfoPath;
++		std::string bmlRuntimeManifestPath;
++		std::string bmlProfileRootPath;
+ 		//SDL_Surface *sky_bmp;
+ 		light_t* light;
+ 
+@@ -7266,6 +7271,41 @@
+ 						strncpy(datadir, argv[c] + 9, datadirsz);
+ 						datadir[datadirsz] = '\0';
+ 					}
++					else if (!strcmp(argv[c], "--bml-runtime-info"))
++					{
++						bmlRuntimeInfoRequested = true;
++					}
++					else if (!strncmp(argv[c], "--bml-runtime-info=", 19))
++					{
++						bmlRuntimeInfoRequested = true;
++						bmlRuntimeInfoPath = argv[c] + 19;
++					}
++					else if (!strcmp(argv[c], "--bml-runtime-manifest"))
++					{
++						if (c + 1 >= argc || argv[c + 1] == nullptr || argv[c + 1][0] == '\0')
++						{
++							fprintf(stderr, "BaronyModLoader: --bml-runtime-manifest requires a path.\n");
++							return 1;
++						}
++						bmlRuntimeManifestPath = argv[++c];
++					}
++					else if (!strncmp(argv[c], "--bml-runtime-manifest=", 23))
++					{
++						bmlRuntimeManifestPath = argv[c] + 23;
++					}
++					else if (!strcmp(argv[c], "--bml-profile-root"))
++					{
++						if (c + 1 >= argc || argv[c + 1] == nullptr || argv[c + 1][0] == '\0')
++						{
++							fprintf(stderr, "BaronyModLoader: --bml-profile-root requires a path.\n");
++							return 1;
++						}
++						bmlProfileRootPath = argv[++c];
++					}
++					else if (!strncmp(argv[c], "--bml-profile-root=", 19))
++					{
++						bmlProfileRootPath = argv[c] + 19;
++					}
+ 					else if ( !strcmp(argv[c], "-nosound") )
+ 					{
+ 						no_sound = true;
+@@ -7279,6 +7306,34 @@
+ 				}
+ 			}
+ 		}
++
++		if (bmlRuntimeInfoRequested)
++		{
++			return BaronyModLoader::writeRuntimeInfo(bmlRuntimeInfoPath);
++		}
++
++		if (bmlRuntimeManifestPath.empty())
++		{
++			const char* bmlRuntimeManifestEnv = getenv("BML_RUNTIME_MANIFEST");
++			if (bmlRuntimeManifestEnv != nullptr && bmlRuntimeManifestEnv[0] != '\0')
++			{
++				bmlRuntimeManifestPath = bmlRuntimeManifestEnv;
++			}
++		}
++
++		if (!bmlRuntimeManifestPath.empty())
++		{
++			const BaronyModLoader::RuntimeManifestLoadResult bmlRuntimeManifestResult = BaronyModLoader::loadRuntimeManifest(bmlRuntimeManifestPath, bmlProfileRootPath.empty() ? outputdir : bmlProfileRootPath);
++			if (!bmlRuntimeManifestResult.loaded)
++			{
++				fprintf(stderr, "BaronyModLoader: runtime manifest failed: %s (%s). Report: %s\n",
++					bmlRuntimeManifestResult.errorMessage.c_str(),
++					bmlRuntimeManifestResult.errorCode.c_str(),
++					bmlRuntimeManifestResult.reportPath.c_str());
++				return 1;
++			}
++		}
++
+ 		printlog("Data path is %s", datadir);
+ 		printlog("Output path is %s", outputdir);
+         

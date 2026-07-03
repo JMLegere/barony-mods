@@ -26,7 +26,7 @@
       "platform": "linux-x86_64",
       "executable": "/home/jerry/Workspace/barony-mods/native/barony-modloader-hook/build/libbarony_bml.so",
       "artifact": "native/barony-modloader-hook/build/libbarony_bml.so",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "sha256": "b55e92227c3e8d869c8e4fffdc606f2c985e9d7e70dbb0d9b3107d240dc065db"
     }
   ],
   "capabilities": [

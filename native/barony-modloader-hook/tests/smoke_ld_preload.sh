@@ -575,6 +575,7 @@ assert behavior_report["selfTest"] == {
     "requested": True,
     "loadedCount": 1,
     "savedRows": 2,
+    "loadFailureReturnedNull": True,
 }, behavior_report
 state = behavior_report["state"]
 assert state["loaded"] is True, state
@@ -586,11 +587,84 @@ assert state["boundInventoryCount"] == 2, state
 assert state["savedRows"] == 2, state
 state_path = pathlib.Path(state["path"])
 assert state_path.is_file(), state_path
-rows = [line for line in state_path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
-assert rows == ["1 2 -1 3 12345 1", "2 3 0 4 67890 1"], rows
+state_lines = state_path.read_text(encoding="utf-8").splitlines()
+expected_columns = [
+    "type",
+    "status",
+    "beatitude",
+    "count",
+    "appearance",
+    "identified",
+    "uid",
+    "x",
+    "y",
+    "ownerUid",
+    "interactNPCUid",
+    "forcedPickupByPlayer",
+    "isDroppable",
+    "playerSoldItemToShop",
+    "itemHiddenFromShop",
+    "notifyIcon",
+    "spellNotifyIcon",
+    "itemRequireTradingSkillInShop",
+    "itemSpecialShopConsumable",
+]
+assert state_lines[:2] == [
+    "# bml-stash-inventory-v2",
+    "# columns: " + " ".join(expected_columns),
+], state_lines[:2]
+rows = [line for line in state_lines if line and not line.startswith("#")]
+assert len(rows) == 2, rows
+fields_by_row = [row.split("\t") for row in rows]
+assert all(len(fields) == 19 for fields in fields_by_row), fields_by_row
+assert all(" " not in row for row in rows), rows
+seed_row = dict(zip(expected_columns, fields_by_row[0]))
+void_row = dict(zip(expected_columns, fields_by_row[1]))
+assert seed_row == {
+    "type": "1",
+    "status": "2",
+    "beatitude": "-1",
+    "count": "3",
+    "appearance": "12345",
+    "identified": "1",
+    "uid": "77",
+    "x": "8",
+    "y": "9",
+    "ownerUid": "101",
+    "interactNPCUid": "202",
+    "forcedPickupByPlayer": "1",
+    "isDroppable": "0",
+    "playerSoldItemToShop": "1",
+    "itemHiddenFromShop": "1",
+    "notifyIcon": "1",
+    "spellNotifyIcon": "0",
+    "itemRequireTradingSkillInShop": "7",
+    "itemSpecialShopConsumable": "1",
+}, seed_row
+assert void_row == {
+    "type": "2",
+    "status": "3",
+    "beatitude": "0",
+    "count": "4",
+    "appearance": "67890",
+    "identified": "1",
+    "uid": "0",
+    "x": "0",
+    "y": "0",
+    "ownerUid": "0",
+    "interactNPCUid": "0",
+    "forcedPickupByPlayer": "0",
+    "isDroppable": "1",
+    "playerSoldItemToShop": "0",
+    "itemHiddenFromShop": "0",
+    "notifyIcon": "0",
+    "spellNotifyIcon": "0",
+    "itemRequireTradingSkillInShop": "0",
+    "itemSpecialShopConsumable": "0",
+}, void_row
 assert not list(state_path.parent.glob("stash-inventory-v1.tsv.tmp.*")), sorted(p.name for p in state_path.parent.glob("stash-inventory-v1.tsv.tmp.*"))
 expected_targets = {
-    "Entity::getChestInventoryList": 1,
+    "Entity::getChestInventoryList": 2,
     "Entity::addItemToChest": 1,
     "Entity::getItemFromChest": 1,
     "Entity::addItemToVoidChestServer": 1,

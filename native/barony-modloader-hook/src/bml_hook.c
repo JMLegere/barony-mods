@@ -37,6 +37,8 @@
 #define BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-behavior-report.json"
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
+#define BML_STASH_INVENTORY_FORMAT_HEADER "# bml-stash-inventory-v2"
+#define BML_STASH_INVENTORY_COLUMN_COUNT 19
 #define BML_STASH_DIAGNOSTICS_RELATIVE_PATH "BaronyModLoader/state/stash-diagnostics.jsonl"
 #define BML_STASH_STAT_VOID_CHEST_INVENTORY_OFFSET ((uintptr_t)0x9e8U)
 #define BML_MAX_ERRORS 12
@@ -274,6 +276,19 @@ typedef struct BmlBaronyItem {
     int16_t count;
     uint32_t appearance;
     bool identified;
+    uint32_t uid;
+    int32_t x;
+    int32_t y;
+    uint32_t ownerUid;
+    uint32_t interactNPCUid;
+    bool forcedPickupByPlayer;
+    bool isDroppable;
+    bool playerSoldItemToShop;
+    bool itemHiddenFromShop;
+    bool notifyIcon;
+    bool spellNotifyIcon;
+    uint8_t itemRequireTradingSkillInShop;
+    bool itemSpecialShopConsumable;
 } BmlBaronyItem;
 
 typedef struct BmlPatchInstruction {
@@ -2289,10 +2304,15 @@ static size_t g_bml_stash_placement_set_sprite_sample_count = 0U;
 static bool g_bml_stash_core_behavior_active = false;
 static bool g_bml_stash_core_behavior_loaded = false;
 static bool g_bml_stash_core_behavior_dirty = false;
+static bool g_bml_stash_core_behavior_failed = false;
 static int g_bml_stash_core_behavior_loads = 0;
 static int g_bml_stash_core_behavior_saves = 0;
 static int g_bml_stash_core_behavior_dirty_marks = 0;
 static BmlBaronyList *g_bml_stash_core_behavior_inventory = NULL;
+static BmlBaronyNode *g_bml_stash_core_behavior_loaded_first = NULL;
+static BmlBaronyNode *g_bml_stash_core_behavior_loaded_last = NULL;
+static char g_bml_stash_core_behavior_failure_code[BML_MAX_TEXT];
+static char g_bml_stash_core_behavior_failure_message[BML_MAX_TEXT];
 static BmlStashNewItemFunction g_bml_stash_new_item = NULL;
 static BmlStashListFreeAllFunction g_bml_stash_list_free_all = NULL;
 static char g_bml_stash_state_dir_path[PATH_MAX];
@@ -2331,6 +2351,74 @@ static void bml_append_stash_diagnostic_event(const char *event, const char *kin
     bml_write_reported_at(file);
     fputs("}\n", file);
     (void)fclose(file);
+}
+
+static void bml_append_stash_error_diagnostic_event(const char *event, const char *error_code, const char *error_message) {
+    FILE *file;
+    if (!bml_has_value(g_bml_stash_diagnostics_path) || !bml_has_value(event)) {
+        return;
+    }
+    if (bml_mkdir_p(g_bml_stash_state_dir_path) != 0) {
+        return;
+    }
+    file = fopen(g_bml_stash_diagnostics_path, "ab");
+    if (file == NULL) {
+        return;
+    }
+    fputs("{\"event\": ", file);
+    bml_json_write_escaped(file, event);
+    fputs(", \"severity\": \"fatal\", \"error\": {\"code\": ", file);
+    bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_STASH_CORE_BEHAVIOR_FAILED");
+    fputs(", \"message\": ", file);
+    bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Stash core behavior failed closed.");
+    fputs("}, \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("}\n", file);
+    (void)fclose(file);
+}
+
+static void bml_stash_record_inventory_generation(BmlBaronyList *inventory) {
+    g_bml_stash_core_behavior_inventory = inventory;
+    g_bml_stash_core_behavior_loaded_first = inventory != NULL ? inventory->first : NULL;
+    g_bml_stash_core_behavior_loaded_last = inventory != NULL ? inventory->last : NULL;
+}
+
+static bool bml_stash_loaded_inventory_generation_matches(const BmlBaronyList *inventory) {
+    return g_bml_stash_core_behavior_loaded &&
+           g_bml_stash_core_behavior_inventory == inventory &&
+           inventory != NULL &&
+           g_bml_stash_core_behavior_loaded_first == inventory->first &&
+           g_bml_stash_core_behavior_loaded_last == inventory->last;
+}
+
+static void bml_stash_fail_closed(const char *event, const char *error_code, const char *error_message) {
+    if (!g_bml_stash_core_behavior_failed) {
+        bml_copy_string(g_bml_stash_core_behavior_failure_code, sizeof(g_bml_stash_core_behavior_failure_code), bml_has_value(error_code) ? error_code : "BML_STASH_CORE_BEHAVIOR_FAILED");
+        bml_copy_string(g_bml_stash_core_behavior_failure_message, sizeof(g_bml_stash_core_behavior_failure_message), bml_has_value(error_message) ? error_message : "Stash core behavior failed closed.");
+        g_bml_stash_core_behavior_failed = true;
+        bml_append_stash_error_diagnostic_event(bml_has_value(event) ? event : "stash_core_behavior_failed_closed", g_bml_stash_core_behavior_failure_code, g_bml_stash_core_behavior_failure_message);
+        fprintf(stderr, "BML Stash persistence failed closed: %s: %s\n", g_bml_stash_core_behavior_failure_code, g_bml_stash_core_behavior_failure_message);
+    }
+}
+
+static int bml_stash_copy_failure(char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    if (!g_bml_stash_core_behavior_failed) {
+        return 0;
+    }
+    bml_copy_string(error_code, error_code_size, bml_has_value(g_bml_stash_core_behavior_failure_code) ? g_bml_stash_core_behavior_failure_code : "BML_STASH_CORE_BEHAVIOR_FAILED");
+    bml_copy_string(error_message, error_message_size, bml_has_value(g_bml_stash_core_behavior_failure_message) ? g_bml_stash_core_behavior_failure_message : "Stash core behavior has failed closed.");
+    return -1;
+}
+
+static bool bml_stash_bool_field_valid(int value) {
+    return value == 0 || value == 1;
+}
+
+static bool bml_stash_line_has_only_trailing_space(const char *cursor) {
+    while (cursor != NULL && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')) {
+        ++cursor;
+    }
+    return cursor == NULL || *cursor == '\0';
 }
 
 static void bml_reset_stash_placement_discovery_state(void) {
@@ -2763,21 +2851,39 @@ static int bml_configure_stash_core_behavior(const char *profile_dir, char *erro
     g_bml_stash_core_behavior_active = true;
     g_bml_stash_core_behavior_loaded = false;
     g_bml_stash_core_behavior_dirty = false;
+    g_bml_stash_core_behavior_failed = false;
     g_bml_stash_core_behavior_loads = 0;
     g_bml_stash_core_behavior_saves = 0;
     g_bml_stash_core_behavior_dirty_marks = 0;
-    g_bml_stash_core_behavior_inventory = NULL;
+    bml_stash_record_inventory_generation(NULL);
+    memset(g_bml_stash_core_behavior_failure_code, 0, sizeof(g_bml_stash_core_behavior_failure_code));
+    memset(g_bml_stash_core_behavior_failure_message, 0, sizeof(g_bml_stash_core_behavior_failure_message));
     return 0;
 }
 
 static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     FILE *file;
-    char line[256];
+    char line[1024];
+    BmlBaronyList loaded_inventory = { 0 };
+    bool saw_header = false;
+    size_t row = 0U;
+
     if (!g_bml_stash_core_behavior_active || inventory == NULL) {
         return 0;
     }
+    if (bml_stash_copy_failure(error_code, error_code_size, error_message, error_message_size) != 0) {
+        return -1;
+    }
     if (g_bml_stash_core_behavior_loaded) {
-        return 0;
+        if (g_bml_stash_core_behavior_inventory == inventory) {
+            if (g_bml_stash_core_behavior_dirty || bml_stash_loaded_inventory_generation_matches(inventory)) {
+                return 0;
+            }
+        } else if (g_bml_stash_core_behavior_dirty) {
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_DIRTY_INVENTORY_REPLACED");
+            bml_copy_string(error_message, error_message_size, "Barony replaced the bound Stash inventory list while unsaved Stash state was dirty; refusing to merge stale state.");
+            return -1;
+        }
     }
     if (g_bml_stash_list_free_all == NULL || g_bml_stash_new_item == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SYMBOL_MISSING");
@@ -2785,11 +2891,15 @@ static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *er
         return -1;
     }
 
-    g_bml_stash_list_free_all(inventory);
-    inventory->first = NULL;
-    inventory->last = NULL;
+    errno = 0;
     file = fopen(g_bml_stash_inventory_path, "rb");
-    if (file != NULL) {
+    if (file == NULL) {
+        if (errno != ENOENT) {
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_READ_FAILED");
+            bml_copy_string(error_message, error_message_size, "Stash core behavior could not open the Stash inventory state file for reading.");
+            return -1;
+        }
+    } else {
         while (fgets(line, sizeof(line), file) != NULL) {
             int type = 0;
             int status = 0;
@@ -2797,19 +2907,134 @@ static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *er
             int count = 0;
             uint32_t appearance = 0U;
             int identified = 0;
-            if (line[0] == '\0' || line[0] == '\n' || line[0] == '#') {
+            uint32_t uid = 0U;
+            int32_t x = 0;
+            int32_t y = 0;
+            uint32_t owner_uid = 0U;
+            uint32_t interact_npc_uid = 0U;
+            int forced_pickup_by_player = 0;
+            int is_droppable = 0;
+            int player_sold_item_to_shop = 0;
+            int item_hidden_from_shop = 0;
+            int notify_icon = 0;
+            int spell_notify_icon = 0;
+            unsigned int item_require_trading_skill_in_shop = 0U;
+            int item_special_shop_consumable = 0;
+            int consumed = 0;
+            int parsed;
+            BmlBaronyItem *item;
+
+            line[strcspn(line, "\r\n")] = '\0';
+            if (!saw_header) {
+                if (line[0] == '\0') {
+                    continue;
+                }
+                if (strcmp(line, BML_STASH_INVENTORY_FORMAT_HEADER) != 0) {
+                    (void)fclose(file);
+                    bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_UNSUPPORTED_STATE_FORMAT");
+                    bml_copy_string(error_message, error_message_size, "Stash inventory state file is missing the required bml-stash-inventory-v2 schema header; refusing to load truncated legacy state.");
+                    return -1;
+                }
+                saw_header = true;
                 continue;
             }
-            if (sscanf(line, "%d %d %d %d %" SCNu32 " %d", &type, &status, &beatitude, &count, &appearance, &identified) == 6) {
-                if (count < 1) {
-                    count = 1;
-                }
-                (void)g_bml_stash_new_item(type, status, (int16_t)beatitude, (int16_t)count, appearance, identified != 0, inventory);
+            if (line[0] == '\0' || line[0] == '#') {
+                continue;
             }
+            ++row;
+            parsed = sscanf(line,
+                            "%d %d %d %d %" SCNu32 " %d %" SCNu32 " %" SCNd32 " %" SCNd32 " %" SCNu32 " %" SCNu32 " %d %d %d %d %d %d %u %d %n",
+                            &type,
+                            &status,
+                            &beatitude,
+                            &count,
+                            &appearance,
+                            &identified,
+                            &uid,
+                            &x,
+                            &y,
+                            &owner_uid,
+                            &interact_npc_uid,
+                            &forced_pickup_by_player,
+                            &is_droppable,
+                            &player_sold_item_to_shop,
+                            &item_hidden_from_shop,
+                            &notify_icon,
+                            &spell_notify_icon,
+                            &item_require_trading_skill_in_shop,
+                            &item_special_shop_consumable,
+                            &consumed);
+            if (parsed != BML_STASH_INVENTORY_COLUMN_COUNT ||
+                !bml_stash_line_has_only_trailing_space(line + consumed) ||
+                beatitude < INT16_MIN || beatitude > INT16_MAX ||
+                count < 1 || count > INT16_MAX ||
+                !bml_stash_bool_field_valid(identified) ||
+                !bml_stash_bool_field_valid(forced_pickup_by_player) ||
+                !bml_stash_bool_field_valid(is_droppable) ||
+                !bml_stash_bool_field_valid(player_sold_item_to_shop) ||
+                !bml_stash_bool_field_valid(item_hidden_from_shop) ||
+                !bml_stash_bool_field_valid(notify_icon) ||
+                !bml_stash_bool_field_valid(spell_notify_icon) ||
+                item_require_trading_skill_in_shop > UINT8_MAX ||
+                !bml_stash_bool_field_valid(item_special_shop_consumable)) {
+                g_bml_stash_list_free_all(&loaded_inventory);
+                (void)fclose(file);
+                bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_ROW_UNSUPPORTED");
+                snprintf(error_message, error_message_size, "Stash inventory state row %zu cannot be represented by the supported v2 item schema.", row);
+                return -1;
+            }
+            item = (BmlBaronyItem *)g_bml_stash_new_item(type, status, (int16_t)beatitude, (int16_t)count, appearance, identified != 0, &loaded_inventory);
+            if (item == NULL) {
+                g_bml_stash_list_free_all(&loaded_inventory);
+                (void)fclose(file);
+                bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_ITEM_CREATE_FAILED");
+                bml_copy_string(error_message, error_message_size, "Stash core behavior could not recreate an item from persisted state.");
+                return -1;
+            }
+            item->uid = uid;
+            item->x = x;
+            item->y = y;
+            item->ownerUid = owner_uid;
+            item->interactNPCUid = interact_npc_uid;
+            item->forcedPickupByPlayer = forced_pickup_by_player != 0;
+            item->isDroppable = is_droppable != 0;
+            item->playerSoldItemToShop = player_sold_item_to_shop != 0;
+            item->itemHiddenFromShop = item_hidden_from_shop != 0;
+            item->notifyIcon = notify_icon != 0;
+            item->spellNotifyIcon = spell_notify_icon != 0;
+            item->itemRequireTradingSkillInShop = (uint8_t)item_require_trading_skill_in_shop;
+            item->itemSpecialShopConsumable = item_special_shop_consumable != 0;
         }
-        (void)fclose(file);
+        if (ferror(file) != 0) {
+            g_bml_stash_list_free_all(&loaded_inventory);
+            (void)fclose(file);
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_READ_FAILED");
+            bml_copy_string(error_message, error_message_size, "Stash core behavior failed while reading the Stash inventory state file.");
+            return -1;
+        }
+        if (fclose(file) != 0) {
+            g_bml_stash_list_free_all(&loaded_inventory);
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_READ_CLOSE_FAILED");
+            bml_copy_string(error_message, error_message_size, "Stash core behavior failed while closing the Stash inventory state file after reading.");
+            return -1;
+        }
+        if (!saw_header) {
+            g_bml_stash_list_free_all(&loaded_inventory);
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_UNSUPPORTED_STATE_FORMAT");
+            bml_copy_string(error_message, error_message_size, "Stash inventory state file is empty or missing the required bml-stash-inventory-v2 schema header.");
+            return -1;
+        }
     }
-    g_bml_stash_core_behavior_inventory = inventory;
+
+    g_bml_stash_list_free_all(inventory);
+    inventory->first = loaded_inventory.first;
+    inventory->last = loaded_inventory.last;
+    for (BmlBaronyNode *node = inventory->first; node != NULL; node = node->next) {
+        node->list = inventory;
+    }
+    loaded_inventory.first = NULL;
+    loaded_inventory.last = NULL;
+    bml_stash_record_inventory_generation(inventory);
     g_bml_stash_core_behavior_loaded = true;
     g_bml_stash_core_behavior_dirty = false;
     g_bml_stash_core_behavior_loads += 1;
@@ -2818,7 +3043,7 @@ static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *er
 }
 
 static void bml_mark_stash_inventory_dirty(void) {
-    if (g_bml_stash_core_behavior_active) {
+    if (g_bml_stash_core_behavior_active && !g_bml_stash_core_behavior_failed) {
         g_bml_stash_core_behavior_dirty = true;
         g_bml_stash_core_behavior_dirty_marks += 1;
     }
@@ -2828,8 +3053,18 @@ static int bml_save_stash_inventory_if_dirty(char *error_code, size_t error_code
     FILE *file;
     char tmp_path[PATH_MAX];
     bool close_failed = false;
+    BmlBaronyList *current_inventory;
     if (!g_bml_stash_core_behavior_active || !g_bml_stash_core_behavior_dirty) {
         return 0;
+    }
+    if (bml_stash_copy_failure(error_code, error_code_size, error_message, error_message_size) != 0) {
+        return -1;
+    }
+    current_inventory = bml_stash_stats_void_chest_inventory();
+    if (current_inventory != NULL && g_bml_stash_core_behavior_inventory != NULL && current_inventory != g_bml_stash_core_behavior_inventory) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SAVE_INVENTORY_REPLACED");
+        bml_copy_string(error_message, error_message_size, "Barony replaced the bound Stash inventory list before dirty state could be saved; refusing to persist stale state.");
+        return -1;
     }
     if (g_bml_stash_core_behavior_inventory == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_INVENTORY_MISSING");
@@ -2852,13 +3087,42 @@ static int bml_save_stash_inventory_if_dirty(char *error_code, size_t error_code
         bml_copy_string(error_message, error_message_size, "Stash core behavior could not open the temporary Stash inventory state file for writing.");
         return -1;
     }
-    fputs("# bml-stash-inventory-v1\n", file);
+    fprintf(file, "%s\n", BML_STASH_INVENTORY_FORMAT_HEADER);
+    fputs("# columns: type status beatitude count appearance identified uid x y ownerUid interactNPCUid forcedPickupByPlayer isDroppable playerSoldItemToShop itemHiddenFromShop notifyIcon spellNotifyIcon itemRequireTradingSkillInShop itemSpecialShopConsumable\n", file);
     for (const BmlBaronyNode *node = g_bml_stash_core_behavior_inventory->first; node != NULL; node = node->next) {
         const BmlBaronyItem *item = (const BmlBaronyItem *)node->element;
         if (item == NULL) {
             continue;
         }
-        fprintf(file, "%d %d %d %d %" PRIu32 " %d\n", item->type, item->status, (int)item->beatitude, (int)item->count, item->appearance, item->identified ? 1 : 0);
+        if (item->count < 1) {
+            close_failed = fclose(file) != 0;
+            (void)close_failed;
+            (void)unlink(tmp_path);
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_ITEM_UNSUPPORTED");
+            bml_copy_string(error_message, error_message_size, "Stash core behavior refused to persist an item with unsupported count state.");
+            return -1;
+        }
+        fprintf(file,
+                "%d\t%d\t%d\t%d\t%" PRIu32 "\t%d\t%" PRIu32 "\t%" PRId32 "\t%" PRId32 "\t%" PRIu32 "\t%" PRIu32 "\t%d\t%d\t%d\t%d\t%d\t%d\t%u\t%d\n",
+                item->type,
+                item->status,
+                (int)item->beatitude,
+                (int)item->count,
+                item->appearance,
+                item->identified ? 1 : 0,
+                item->uid,
+                item->x,
+                item->y,
+                item->ownerUid,
+                item->interactNPCUid,
+                item->forcedPickupByPlayer ? 1 : 0,
+                item->isDroppable ? 1 : 0,
+                item->playerSoldItemToShop ? 1 : 0,
+                item->itemHiddenFromShop ? 1 : 0,
+                item->notifyIcon ? 1 : 0,
+                item->spellNotifyIcon ? 1 : 0,
+                (unsigned int)item->itemRequireTradingSkillInShop,
+                item->itemSpecialShopConsumable ? 1 : 0);
     }
     if (ferror(file) != 0 || fflush(file) != 0 || fsync(fileno(file)) != 0) {
         close_failed = fclose(file) != 0;
@@ -2889,6 +3153,7 @@ static int bml_save_stash_inventory_if_dirty(char *error_code, size_t error_code
     }
     g_bml_stash_core_behavior_dirty = false;
     g_bml_stash_core_behavior_saves += 1;
+    bml_stash_record_inventory_generation(g_bml_stash_core_behavior_inventory);
     bml_append_stash_diagnostic_event("stash_inventory_saved", NULL, NULL, false, 0.0, 0.0, (int)bml_stash_inventory_count(g_bml_stash_core_behavior_inventory));
     return 0;
 }
@@ -2903,8 +3168,12 @@ static void *bml_stash_add_item_to_chest_replacement(void *entity, void *item, b
     memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_add_item_to_chest_replacement_calls;
     stash_inventory = bml_stash_entity_uses_stats_void_chest(entity, &inventory);
-    if (stash_inventory) {
-        (void)bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
+    if (stash_inventory && bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        bml_stash_fail_closed("stash_inventory_load_failed", error_code, error_message);
+        return NULL;
+    }
+    if (stash_inventory && g_bml_stash_core_behavior_failed) {
+        return NULL;
     }
     if (g_bml_stash_add_item_to_chest_original != NULL) {
         result = g_bml_stash_add_item_to_chest_original(entity, item, force_new_stack, specific_destination_stack);
@@ -2925,8 +3194,12 @@ static void *bml_stash_get_item_from_chest_replacement(void *entity, void *item,
     memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_get_item_from_chest_replacement_calls;
     stash_inventory = bml_stash_entity_uses_stats_void_chest(entity, &inventory);
-    if (stash_inventory) {
-        (void)bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
+    if (stash_inventory && bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        bml_stash_fail_closed("stash_inventory_load_failed", error_code, error_message);
+        return NULL;
+    }
+    if (stash_inventory && g_bml_stash_core_behavior_failed) {
+        return NULL;
     }
     if (g_bml_stash_get_item_from_chest_original != NULL) {
         result = g_bml_stash_get_item_from_chest_original(entity, item, amount, get_info_only);
@@ -2944,8 +3217,12 @@ static void *bml_stash_add_item_to_void_chest_server_replacement(void *entity, i
     memset(error_code, 0, sizeof(error_code));
     memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_add_item_replacement_calls;
-    if (inventory != NULL) {
-        (void)bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
+    if (inventory != NULL && bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        bml_stash_fail_closed("stash_inventory_load_failed", error_code, error_message);
+        return NULL;
+    }
+    if (inventory != NULL && g_bml_stash_core_behavior_failed) {
+        return NULL;
     }
     if (g_bml_stash_add_item_original != NULL) {
         g_bml_stash_add_item_original_result = g_bml_stash_add_item_original(entity, player, item, force_new_stack, picked_up_stack);
@@ -2967,8 +3244,10 @@ static void *bml_stash_get_chest_inventory_list_replacement(void *entity) {
     if (g_bml_stash_get_inventory_original != NULL) {
         inventory = g_bml_stash_get_inventory_original(entity);
     }
-    if (g_bml_stash_core_behavior_active && bml_stash_is_stats_void_chest_inventory(inventory)) {
-        (void)bml_load_stash_inventory_if_needed((BmlBaronyList *)inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
+    if (g_bml_stash_core_behavior_active && bml_stash_is_stats_void_chest_inventory(inventory) &&
+        bml_load_stash_inventory_if_needed((BmlBaronyList *)inventory, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        bml_stash_fail_closed("stash_inventory_load_failed", error_code, error_message);
+        return NULL;
     }
     return inventory;
 }
@@ -2981,8 +3260,12 @@ static bool bml_stash_remove_item_from_void_chest_server_replacement(void *entit
     memset(error_code, 0, sizeof(error_code));
     memset(error_message, 0, sizeof(error_message));
     ++g_bml_stash_remove_item_replacement_calls;
-    if (inventory != NULL) {
-        (void)bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message));
+    if (inventory != NULL && bml_load_stash_inventory_if_needed(inventory, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        bml_stash_fail_closed("stash_inventory_load_failed", error_code, error_message);
+        return false;
+    }
+    if (inventory != NULL && g_bml_stash_core_behavior_failed) {
+        return false;
     }
     if (g_bml_stash_remove_item_original != NULL) {
         removed = g_bml_stash_remove_item_original(entity, player, item, count);
@@ -3002,7 +3285,9 @@ static void bml_stash_close_chest_replacement(void *entity) {
     if (g_bml_stash_close_chest_original != NULL) {
         g_bml_stash_close_chest_original(entity);
     }
-    (void)bml_save_stash_inventory_if_dirty(error_code, sizeof(error_code), error_message, sizeof(error_message));
+    if (bml_save_stash_inventory_if_dirty(error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        bml_stash_fail_closed("stash_inventory_save_failed", error_code, error_message);
+    }
 }
 
 static void bml_stash_close_chest_server_replacement(void *entity) {
@@ -3014,7 +3299,9 @@ static void bml_stash_close_chest_server_replacement(void *entity) {
     if (g_bml_stash_close_chest_server_original != NULL) {
         g_bml_stash_close_chest_server_original(entity);
     }
-    (void)bml_save_stash_inventory_if_dirty(error_code, sizeof(error_code), error_message, sizeof(error_message));
+    if (bml_save_stash_inventory_if_dirty(error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+        bml_stash_fail_closed("stash_inventory_save_failed", error_code, error_message);
+    }
 }
 
 static void bml_stash_act_chest_replacement(void *entity) {
@@ -4184,7 +4471,7 @@ static int bml_run_stash_access_placement_passthrough_install(const char *report
 }
 
 
-static int bml_write_stash_core_behavior_report(const char *report_path, const char *status, const char *error_code, const char *error_message, const BmlStashCoreDetourInstall *targets, size_t target_count, bool self_test_requested, size_t self_test_loaded_count, size_t self_test_saved_rows) {
+static int bml_write_stash_core_behavior_report(const char *report_path, const char *status, const char *error_code, const char *error_message, const BmlStashCoreDetourInstall *targets, size_t target_count, bool self_test_requested, size_t self_test_loaded_count, size_t self_test_saved_rows, bool self_test_load_failure_returned_null) {
     FILE *file = fopen(report_path, "wb");
     if (file == NULL) {
         return -1;
@@ -4193,7 +4480,7 @@ static int bml_write_stash_core_behavior_report(const char *report_path, const c
     bml_json_write_escaped(file, status);
     fputs(",\n  \"experimental\": true,\n  \"claimBoundary\": \"fake-provider-state-backed-core-lifecycle-only\",\n  \"state\": {\n    \"path\": ", file);
     bml_json_write_escaped(file, g_bml_stash_inventory_path);
-    fprintf(file, ",\n    \"loaded\": %s,\n    \"dirty\": %s,\n    \"loadCount\": %d,\n    \"saveCount\": %d,\n    \"dirtyMarks\": %d,\n    \"boundInventoryCount\": %zu,\n    \"savedRows\": %zu\n  },\n  \"selfTest\": {\n    \"requested\": %s,\n    \"loadedCount\": %zu,\n    \"savedRows\": %zu\n  },\n  \"targets\": [",
+    fprintf(file, ",\n    \"loaded\": %s,\n    \"dirty\": %s,\n    \"loadCount\": %d,\n    \"saveCount\": %d,\n    \"dirtyMarks\": %d,\n    \"boundInventoryCount\": %zu,\n    \"savedRows\": %zu\n  },\n  \"selfTest\": {\n    \"requested\": %s,\n    \"loadedCount\": %zu,\n    \"savedRows\": %zu,\n    \"loadFailureReturnedNull\": %s\n  },\n  \"targets\": [",
             g_bml_stash_core_behavior_loaded ? "true" : "false",
             g_bml_stash_core_behavior_dirty ? "true" : "false",
             g_bml_stash_core_behavior_loads,
@@ -4203,7 +4490,8 @@ static int bml_write_stash_core_behavior_report(const char *report_path, const c
             bml_count_stash_inventory_file_rows(),
             self_test_requested ? "true" : "false",
             self_test_loaded_count,
-            self_test_saved_rows);
+            self_test_saved_rows,
+            self_test_load_failure_returned_null ? "true" : "false");
     for (size_t index = 0U; index < target_count; ++index) {
         const BmlStashCoreDetourInstall *target = &targets[index];
         fputs(index == 0U ? "\n    " : ",\n    ", file);
@@ -4249,7 +4537,7 @@ static int bml_write_stash_core_behavior_report(const char *report_path, const c
     return 0;
 }
 
-static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *saved_rows, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *saved_rows, bool *load_failure_returned_null, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     BmlStashGetChestInventoryListFunction target_get;
     BmlStashAddItemToVoidChestServerFunction target_add_void;
     BmlStashAddItemToChestFunction target_add_chest;
@@ -4267,12 +4555,16 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
     void *generic_item;
     void *generic_added;
     void *generic_removed;
+    const BmlBaronyItem *loaded_seed_item;
 
     if (loaded_count != NULL) {
         *loaded_count = 0U;
     }
     if (saved_rows != NULL) {
         *saved_rows = 0U;
+    }
+    if (load_failure_returned_null != NULL) {
+        *load_failure_returned_null = false;
     }
     if (fake_provider_marker == NULL || get_address == NULL || add_void_address == NULL || add_chest_address == NULL || get_item_address == NULL || close_address == NULL || g_bml_stash_new_item == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SYMBOL_MISSING");
@@ -4291,7 +4583,7 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
             bml_copy_string(error_message, error_message_size, "Stash core behavior self-test could not seed the inventory state file.");
             return -1;
         }
-        fputs("# bml-stash-inventory-v1\n1 2 -1 3 12345 1\n", seed);
+        fprintf(seed, "%s\n# columns: type status beatitude count appearance identified uid x y ownerUid interactNPCUid forcedPickupByPlayer isDroppable playerSoldItemToShop itemHiddenFromShop notifyIcon spellNotifyIcon itemRequireTradingSkillInShop itemSpecialShopConsumable\n1\t2\t-1\t3\t12345\t1\t77\t8\t9\t101\t202\t1\t0\t1\t1\t1\t0\t7\t1\n", BML_STASH_INVENTORY_FORMAT_HEADER);
         if (fclose(seed) != 0) {
             bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SEED_CLOSE_FAILED");
             bml_copy_string(error_message, error_message_size, "Stash core behavior self-test could not close the seeded inventory state file.");
@@ -4308,6 +4600,25 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
     if (inventory == NULL || bml_stash_inventory_count(inventory) != 1U) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_LOAD_FAILED");
         bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not load exactly one seeded item through getChestInventoryList.");
+        return -1;
+    }
+    loaded_seed_item = inventory->first != NULL ? (const BmlBaronyItem *)inventory->first->element : NULL;
+    if (loaded_seed_item == NULL ||
+        loaded_seed_item->uid != 77U ||
+        loaded_seed_item->x != 8 ||
+        loaded_seed_item->y != 9 ||
+        loaded_seed_item->ownerUid != 101U ||
+        loaded_seed_item->interactNPCUid != 202U ||
+        !loaded_seed_item->forcedPickupByPlayer ||
+        loaded_seed_item->isDroppable ||
+        !loaded_seed_item->playerSoldItemToShop ||
+        !loaded_seed_item->itemHiddenFromShop ||
+        !loaded_seed_item->notifyIcon ||
+        loaded_seed_item->spellNotifyIcon ||
+        loaded_seed_item->itemRequireTradingSkillInShop != 7U ||
+        !loaded_seed_item->itemSpecialShopConsumable) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_METADATA_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not preserve seeded owner/shop/metadata fields.");
         return -1;
     }
     if (loaded_count != NULL) {
@@ -4341,6 +4652,35 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SAVE_FAILED");
         bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not persist exactly two inventory rows after closeChest.");
         return -1;
+    }
+    {
+        BmlStashListFreeAllFunction saved_list_free_all = g_bml_stash_list_free_all;
+        bool saved_loaded = g_bml_stash_core_behavior_loaded;
+        bool saved_dirty = g_bml_stash_core_behavior_dirty;
+        bool saved_failed = g_bml_stash_core_behavior_failed;
+        char saved_failure_code[BML_MAX_TEXT];
+        char saved_failure_message[BML_MAX_TEXT];
+        void *load_failure_result;
+        bml_copy_string(saved_failure_code, sizeof(saved_failure_code), g_bml_stash_core_behavior_failure_code);
+        bml_copy_string(saved_failure_message, sizeof(saved_failure_message), g_bml_stash_core_behavior_failure_message);
+        g_bml_stash_core_behavior_loaded = false;
+        g_bml_stash_core_behavior_dirty = false;
+        g_bml_stash_list_free_all = NULL;
+        load_failure_result = target_get(NULL);
+        g_bml_stash_list_free_all = saved_list_free_all;
+        g_bml_stash_core_behavior_loaded = saved_loaded;
+        g_bml_stash_core_behavior_dirty = saved_dirty;
+        g_bml_stash_core_behavior_failed = saved_failed;
+        bml_copy_string(g_bml_stash_core_behavior_failure_code, sizeof(g_bml_stash_core_behavior_failure_code), saved_failure_code);
+        bml_copy_string(g_bml_stash_core_behavior_failure_message, sizeof(g_bml_stash_core_behavior_failure_message), saved_failure_message);
+        if (load_failure_result != NULL) {
+            bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_LOAD_FAIL_CLOSED_FAILED");
+            bml_copy_string(error_message, error_message_size, "Stash core behavior self-test observed getChestInventoryList returning the original inventory after a fail-closed load failure.");
+            return -1;
+        }
+        if (load_failure_returned_null != NULL) {
+            *load_failure_returned_null = true;
+        }
     }
     return 0;
 }
@@ -4428,10 +4768,13 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
     g_bml_stash_core_behavior_active = true;
     g_bml_stash_core_behavior_loaded = false;
     g_bml_stash_core_behavior_dirty = false;
+    g_bml_stash_core_behavior_failed = false;
     g_bml_stash_core_behavior_loads = 0;
     g_bml_stash_core_behavior_saves = 0;
     g_bml_stash_core_behavior_dirty_marks = 0;
-    g_bml_stash_core_behavior_inventory = NULL;
+    bml_stash_record_inventory_generation(NULL);
+    memset(g_bml_stash_core_behavior_failure_code, 0, sizeof(g_bml_stash_core_behavior_failure_code));
+    memset(g_bml_stash_core_behavior_failure_message, 0, sizeof(g_bml_stash_core_behavior_failure_message));
 
     g_bml_stash_playable_active = true;
     g_bml_stash_playable_hooks_installed = false;
@@ -4562,6 +4905,7 @@ static int bml_run_stash_core_behavior_install(const char *report_path, const ch
     int result = 0;
     size_t self_test_loaded_count = 0U;
     size_t self_test_saved_rows = 0U;
+    bool self_test_load_failure_returned_null = false;
     char error_code[BML_MAX_TEXT];
     char error_message[BML_MAX_TEXT];
 
@@ -4593,11 +4937,11 @@ static int bml_run_stash_core_behavior_install(const char *report_path, const ch
         g_bml_stash_core_behavior_active = false;
         result = -1;
     }
-    if (result == 0 && self_test_requested && bml_run_stash_core_behavior_self_test(&self_test_loaded_count, &self_test_saved_rows, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
+    if (result == 0 && self_test_requested && bml_run_stash_core_behavior_self_test(&self_test_loaded_count, &self_test_saved_rows, &self_test_load_failure_returned_null, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
         result = -1;
     }
 
-    if (bml_write_stash_core_behavior_report(report_path, result == 0 ? "installed" : "failed", error_code, error_message, targets, target_count, self_test_requested, self_test_loaded_count, self_test_saved_rows) != 0) {
+    if (bml_write_stash_core_behavior_report(report_path, result == 0 ? "installed" : "failed", error_code, error_message, targets, target_count, self_test_requested, self_test_loaded_count, self_test_saved_rows, self_test_load_failure_returned_null) != 0) {
         return -1;
     }
     return result;

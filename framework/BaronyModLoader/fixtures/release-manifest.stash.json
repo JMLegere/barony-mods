@@ -12,15 +12,15 @@
     "manifestPath": "mods/stash/bml-package.json",
     "checksum": {
       "algorithm": "sha256",
-      "sha256": "131ba718f1e8f1fa3bc7e963fe90450b564bb71142e90cf6d0da354b53fb6161",
-      "size": 12131
+      "sha256": "6ad84954039df01363971f211872eaa3696a4d20401b7ba85e179ba8a0902c89",
+      "size": 12135
     },
     "archive": {
       "path": "framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "5ecab954358b073adc15d04db2556cbef9c5640d15b174be637cbdc6a163c0ea",
-        "size": 6913
+        "sha256": "008a9c15ab87737d1c307550009a833771ed4eb3e672cfdc764872aa8ef83415",
+        "size": 19215
       },
       "status": "packed_fixture",
       "notes": "Deterministic archive produced by `python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg`."
@@ -64,8 +64,8 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "d46f47f84becdf32cfb4ec30bbea5789341d3922ff4b60c2bafc6829493ceb4b",
-        "size": 122896
+        "sha256": "b55e92227c3e8d869c8e4fffdc606f2c985e9d7e70dbb0d9b3107d240dc065db",
+        "size": 131320
       },
       "status": "built_available_production_stash",
       "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install the production playable Stash bundle for validated jml.stash manifests, place the lobby access point at x=232/y=456 on Start Map, bind framework and spell Void Chests to the persistent stash inventory, install generated-shop placement, and detour uidToEntity plus Language::get so framework Stash access points show the scoped hover prompt \"Open stash\" instead of the vanilla \"Open chest\". The opt-in access/placement pass-through proof now covers eight targets: actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get."
@@ -84,7 +84,7 @@
       "path": "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "57658f3972871fe42fce846ba81408c19399209795bb6457ac71691c4affc229",
+        "sha256": "c4afb6f89db1278b98d6028273aa5a21637302b36f5c8fff5609ddba5d30f4e3",
         "size": 2766
       },
       "status": "present",
@@ -236,7 +236,7 @@
           "kind": "stash-core-behavior",
           "path": "BaronyModLoader/reports/stash-core-behavior-report.json",
           "status": "historical_passed_fail_closed_diagnostic",
-          "notes": "Historical native hook smoke with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 under the fake provider validates state-backed load/add/remove/save over stats[0]->void_chest_inventory via BaronyModLoader/state/stash-inventory-v1.tsv and exercises generic Entity::addItemToChest and Entity::getItemFromChest mutation against the same bound list. Historical timed Steam/Linux probes also verified the seven-target core inventory lifecycle diagnostic path plus the eight-target access/placement/prompt diagnostic path; current production load evidence is represented by the playable bundle reports and live lobby verification."
+          "notes": "Historical native hook smoke with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 under the fake provider validates versioned v2 TSV state-backed load/add/remove/save over stats[0]->void_chest_inventory, preserves owner/shop/metadata fields, exercises generic Entity::addItemToChest and Entity::getItemFromChest mutation against the same bound list, and asserts a Stash load failure returns NULL instead of exposing stale inventory after fail-closed diagnostics. Historical timed Steam/Linux probes also verified the seven-target core inventory lifecycle diagnostic path in the installed executable without player-facing assertions."
         },
         {
           "kind": "stash-hook",

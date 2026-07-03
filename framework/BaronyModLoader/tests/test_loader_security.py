@@ -48,8 +48,8 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             check=False,
         )
 
-    def make_package(self, workspace: Path) -> Path:
-        package_dir = workspace / "package"
+    def make_package(self, workspace: Path, name: str = "package") -> Path:
+        package_dir = workspace / name
         (package_dir / "content").mkdir(parents=True)
         shutil.copy2(EXAMPLE_PACKAGE, package_dir / loader.PACKAGE_MANIFEST_NAME)
         (package_dir / "content" / "marker.txt").write_text("installed\n", encoding="utf-8")
@@ -119,6 +119,33 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         write_json(registry_path, registry)
         return profile_dir, registry_path, hook_library
 
+    def enable_package_for_profile(
+        self,
+        profile_dir: Path,
+        package_dir: Path,
+        *,
+        package_path: Path | None = None,
+        manifest_path: Path | None = None,
+    ) -> dict[str, str]:
+        manifest = json.loads((package_dir / loader.PACKAGE_MANIFEST_NAME).read_text(encoding="utf-8"))
+        entry = {
+            "id": manifest["id"],
+            "version": manifest["version"],
+            "packagePath": str((package_path or package_dir).resolve()),
+            "enabledAt": "2026-07-03T00:00:00Z",
+        }
+        if manifest_path is not None:
+            entry["manifestPath"] = str(manifest_path.resolve())
+        profile_path = profile_dir / loader.APP_ID / "profile.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        profile["activeMods"] = [entry]
+        write_json(profile_path, profile)
+        write_json(
+            profile_dir / loader.APP_ID / "active-mods.json",
+            {"schemaVersion": loader.SCHEMA_VERSION, "profileId": profile["profile"]["id"], "mods": [entry]},
+        )
+        return entry
+
     def test_package_validate_pack_and_install_happy_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -161,6 +188,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             workspace = Path(temp_dir)
             package_dir = self.make_package(workspace)
             profile_dir, registry_path, hook_library = self.make_profile_and_registry(workspace, package_dir)
+            self.enable_package_for_profile(profile_dir, package_dir)
 
             launch = self.run_cli(
                 "launch",
@@ -177,6 +205,9 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                     "LD_LIBRARY_PATH": "/tmp/evil-lib",
                     "SteamAppId": "999999",
                     "SteamGameId": "999999",
+                    "BML_STASH_PROFILE": "/tmp/evil-stash-profile",
+                    "BML_HOOK_LIBRARY": "/tmp/evil-hook.so",
+                    "BML_RUNTIME_MANIFEST": "/tmp/evil-runtime-manifest.json",
                 },
             )
             self.assertEqual(launch.returncode, 0, launch.stdout)
@@ -192,6 +223,12 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertNotIn("LD_LIBRARY_PATH", environment)
             self.assertNotIn("SteamAppId", environment)
             self.assertNotIn("SteamGameId", environment)
+            self.assertEqual(environment.get("BML_HOOK_LIBRARY"), str(hook_library))
+            self.assertEqual(environment.get("BML_RUNTIME_MANIFEST"), payload["runtimeManifest"])
+            self.assertNotIn("/tmp/evil-stash-profile", json.dumps(environment))
+            self.assertNotIn("/tmp/evil-hook.so", json.dumps(environment))
+            self.assertNotIn("/tmp/evil-runtime-manifest.json", json.dumps(environment))
+            self.assertNotIn("BML_STASH_PROFILE", environment)
 
     def test_launch_rejects_disabled_package_when_profile_has_active_mod_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -211,6 +248,97 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             )
             self.assertNotEqual(launch.returncode, 0, launch.stdout)
             self.assertIn("BML_PROFILE_PACKAGE_DISABLED", launch.stdout)
+
+
+    def test_launch_rejects_new_profile_empty_active_mods(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_package(workspace)
+            profile_dir, registry_path, _hook_library = self.make_profile_and_registry(workspace, package_dir)
+
+            launch = self.run_cli(
+                "launch",
+                str(profile_dir),
+                "--package",
+                str(package_dir),
+                "--registry",
+                str(registry_path),
+                "--dry-run",
+            )
+            self.assertNotEqual(launch.returncode, 0, launch.stdout)
+            self.assertIn("BML_PROFILE_PACKAGE_DISABLED", launch.stdout)
+
+    def test_profile_disable_empty_profile_active_mods_ignores_stale_active_mods_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_package(workspace)
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, package_dir)
+            manifest = json.loads((package_dir / loader.PACKAGE_MANIFEST_NAME).read_text(encoding="utf-8"))
+            stale_entry = {
+                "id": manifest["id"],
+                "version": manifest["version"],
+                "packagePath": str(package_dir.resolve()),
+                "enabledAt": "2026-07-03T00:00:00Z",
+            }
+            write_json(
+                profile_dir / loader.APP_ID / "active-mods.json",
+                {"schemaVersion": loader.SCHEMA_VERSION, "profileId": "security-test", "mods": [stale_entry]},
+            )
+
+            disable = self.run_cli("profile", "disable", str(profile_dir), "--mod-id", "unrelated")
+
+            self.assertEqual(disable.returncode, 0, disable.stdout)
+            payload = json.loads(disable.stdout)
+            self.assertEqual(payload["removed"], 0)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            active_mods = json.loads((profile_dir / loader.APP_ID / "active-mods.json").read_text(encoding="utf-8"))
+            self.assertEqual(profile["activeMods"], [])
+            self.assertEqual(active_mods["mods"], [])
+
+    def test_launch_rejects_enabled_package_path_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_package(workspace, "requested-package")
+            enabled_dir = self.make_package(workspace, "enabled-package")
+            profile_dir, registry_path, _hook_library = self.make_profile_and_registry(workspace, package_dir)
+            self.enable_package_for_profile(profile_dir, enabled_dir)
+
+            launch = self.run_cli(
+                "launch",
+                str(profile_dir),
+                "--package",
+                str(package_dir),
+                "--registry",
+                str(registry_path),
+                "--dry-run",
+            )
+            self.assertNotEqual(launch.returncode, 0, launch.stdout)
+            self.assertIn("BML_PROFILE_PACKAGE_PATH_MISMATCH", launch.stdout)
+            self.assertIn(str(enabled_dir.resolve()), launch.stdout)
+            self.assertIn(str(package_dir.resolve()), launch.stdout)
+
+    def test_package_validate_rejects_missing_or_uninstallable_asset_references(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_package(workspace)
+            manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["assets"] = {
+                "icon": "preview.png",
+                "previewImages": ["assets/missing-preview.png"],
+                "readme": "assets/README.md",
+            }
+            write_json(manifest_path, manifest)
+            (package_dir / "preview.png").write_text("workshop preview only\n", encoding="utf-8")
+            (package_dir / "assets").mkdir()
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertNotEqual(validate.returncode, 0, validate.stdout)
+            self.assertIn("BML_PACKAGE_ASSET_REFERENCE_OUTSIDE_INSTALLABLE_ROOT", validate.stdout)
+            self.assertIn("BML_PACKAGE_ASSET_REFERENCE_MISSING", validate.stdout)
+            self.assertIn("assets.icon", validate.stdout)
+            self.assertIn("assets.previewImages[0]", validate.stdout)
+            self.assertIn("assets.readme", validate.stdout)
 
     def test_steam_client_process_detection_uses_proc_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

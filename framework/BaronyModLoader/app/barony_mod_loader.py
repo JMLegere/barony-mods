@@ -127,6 +127,7 @@ class LoadedPackage:
     manifest: dict[str, Any]
     manifest_path: Path
     package_root: Path
+    archive_members: set[str] | None = None
 
 
 @dataclass
@@ -572,6 +573,59 @@ def validate_stash_modules(manifest: dict[str, Any], result: ValidationResult) -
                     )
 
 
+def relative_path_is_under_directory(path_name: str, directory_name: str) -> bool:
+    return path_name.startswith(f"{directory_name.rstrip('/')}/")
+
+
+def package_contains_file(loaded: LoadedPackage, relative_name: str) -> bool:
+    if loaded.archive_members is not None:
+        return relative_name in loaded.archive_members
+    path = loaded.package_root / relative_name
+    return path.is_file() and not path.is_symlink()
+
+
+def validate_package_asset_reference(loaded: LoadedPackage, result: ValidationResult, field: str, value: Any, asset_root: str | None) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value:
+        result.add("BML_PACKAGE_ASSET_REFERENCE_INVALID", "error", "Package asset reference must be a non-empty relative path.", field=field, path=value)
+        return
+    relative_name = safe_archive_name(value)
+    if relative_name is None:
+        result.add("BML_PACKAGE_ASSET_REFERENCE_INVALID", "error", "Package asset reference must be a safe relative path.", field=field, path=value)
+        return
+    if not archive_name_is_installable(relative_name) or asset_root is None or not relative_path_is_under_directory(relative_name, asset_root):
+        result.add(
+            "BML_PACKAGE_ASSET_REFERENCE_OUTSIDE_INSTALLABLE_ROOT",
+            "error",
+            "Package asset reference must live under layout.assetRoot so it is installed with the package.",
+            field=field,
+            path=value,
+            assetRoot=asset_root,
+            installableDirectories=list(PACKAGE_INSTALL_DIRECTORIES),
+        )
+        return
+    if not package_contains_file(loaded, relative_name):
+        result.add("BML_PACKAGE_ASSET_REFERENCE_MISSING", "error", "Package asset reference does not exist in the installable package files.", field=field, path=value)
+
+
+def validate_package_asset_references(loaded: LoadedPackage, result: ValidationResult) -> None:
+    manifest = loaded.manifest
+    assets = manifest.get("assets")
+    if not isinstance(assets, dict):
+        return
+    layout = manifest.get("layout")
+    asset_root = None
+    if isinstance(layout, dict) and isinstance(layout.get("assetRoot"), str):
+        asset_root = safe_archive_name(layout["assetRoot"])
+    validate_package_asset_reference(loaded, result, "assets.icon", assets.get("icon"), asset_root)
+    preview_images = assets.get("previewImages")
+    if isinstance(preview_images, list):
+        for index, image in enumerate(preview_images):
+            validate_package_asset_reference(loaded, result, f"assets.previewImages[{index}]", image, asset_root)
+    validate_package_asset_reference(loaded, result, "assets.readme", assets.get("readme"), asset_root)
+
+
 def validate_package(loaded: LoadedPackage) -> ValidationResult:
     manifest = loaded.manifest
     result = ValidationResult(f"package {loaded.manifest_path}")
@@ -658,6 +712,8 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
             runtime_reports.get("expectedLoadedCapabilities"),
             "runtimeReports.expectedLoadedCapabilities",
         )
+
+    validate_package_asset_references(loaded, result)
 
     if manifest.get("id") == "jml.stash" or manifest.get("name") == "Stash":
         validate_stash_modules(manifest, result)
@@ -1470,12 +1526,16 @@ def load_package_archive(path_arg: str) -> tuple[LoadedPackage | None, Path, Val
     if not zipfile.is_zipfile(path):
         result.add("BML_PACKAGE_ARCHIVE_INVALID", "fatal", f"Package archive is not a zip-compatible .bmlpkg file: {path}")
         return None, path, result
+    archive_members: set[str] = set()
 
     try:
         with zipfile.ZipFile(path) as archive:
             for info in archive.infolist():
-                if safe_archive_name(info.filename) is None:
+                safe_name = safe_archive_name(info.filename)
+                if safe_name is None:
                     result.add("BML_PACKAGE_ARCHIVE_PATH_UNSAFE", "fatal", "Package archive contains an unsafe member path.", member=info.filename)
+                elif not info.is_dir():
+                    archive_members.add(safe_name)
             if not result.ok:
                 return None, path, result
             try:
@@ -1513,7 +1573,7 @@ def load_package_archive(path_arg: str) -> tuple[LoadedPackage | None, Path, Val
     if not isinstance(payload, dict):
         result.add("BML_PACKAGE_MANIFEST_INVALID", "fatal", "Package archive manifest root must be a JSON object.")
         return None, path, result
-    return LoadedPackage(payload, path.resolve(), path.resolve().parent), path.resolve(), result
+    return LoadedPackage(payload, path.resolve(), path.resolve().parent, archive_members), path.resolve(), result
 
 
 def package_install_target(store_dir: Path, manifest: dict[str, Any]) -> Path:
@@ -1670,12 +1730,52 @@ def load_active_mods_file(profile_dir: Path) -> list[dict[str, Any]]:
 
 
 def profile_has_active_mod_state(profile: dict[str, Any], profile_dir: Path) -> bool:
-    return bool(profile_active_mods(profile)) or active_mods_json_path(profile_dir).is_file()
+    return isinstance(profile.get("activeMods"), list) or active_mods_json_path(profile_dir).is_file()
 
 
 def profile_authoritative_mods(profile: dict[str, Any], profile_dir: Path) -> list[dict[str, Any]]:
-    profile_mods = profile_active_mods(profile)
-    return profile_mods if profile_mods else load_active_mods_file(profile_dir)
+    if isinstance(profile.get("activeMods"), list):
+        return profile_active_mods(profile)
+    return load_active_mods_file(profile_dir)
+
+
+def normalized_profile_path(value: Any) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return Path(value).expanduser().resolve(strict=False)
+    except OSError:
+        return None
+
+
+def requested_package_paths(package: LoadedPackage) -> set[Path]:
+    paths: set[Path] = set()
+    for path in (preferred_package_path(package), package.manifest_path):
+        try:
+            paths.add(path.resolve(strict=False))
+        except OSError:
+            paths.add(path)
+    return paths
+
+
+def validate_enabled_package_path(result: ValidationResult, mod: dict[str, Any], package: LoadedPackage, package_id: str, package_version: str) -> None:
+    requested_paths = requested_package_paths(package)
+    enabled_paths = [
+        path
+        for path in (normalized_profile_path(mod.get("packagePath")), normalized_profile_path(mod.get("manifestPath")))
+        if path is not None
+    ]
+    if any(path in requested_paths for path in enabled_paths):
+        return
+    result.add(
+        "BML_PROFILE_PACKAGE_PATH_MISMATCH",
+        "fatal",
+        "Requested package id/version is enabled in the profile from a different package path.",
+        packageId=package_id,
+        requestedVersion=package_version,
+        requestedPaths=sorted(str(path) for path in requested_paths),
+        enabledPaths=[str(path) for path in enabled_paths],
+    )
 
 
 def validate_profile_package_enabled(profile: dict[str, Any], profile_dir: Path, package: LoadedPackage) -> ValidationResult:
@@ -1699,6 +1799,8 @@ def validate_profile_package_enabled(profile: dict[str, Any], profile_dir: Path,
                 requestedVersion=package_version,
                 enabledVersion=active_version,
             )
+            return result
+        validate_enabled_package_path(result, mod, package, package_id, package_version)
         return result
 
     result.add(
@@ -1853,9 +1955,7 @@ def command_profile_disable(args: argparse.Namespace) -> int:
         return 1
 
     mod_id = args.mod_id
-    profile_mods = profile_active_mods(profile)
-    file_mods = load_active_mods_file(profile_dir)
-    candidates = profile_mods if profile_mods else file_mods
+    candidates = profile_authoritative_mods(profile, profile_dir)
     remaining = [mod for mod in candidates if mod.get("id") != mod_id]
     removed = len(candidates) - len(remaining)
     now = utc_now()
@@ -2420,7 +2520,7 @@ def launch_working_directory(profile: dict[str, Any], executable: Path) -> Path:
 def launch_environment(profile: dict[str, Any], profile_dir: Path, manifest_path: Path, runtime: dict[str, Any] | None = None) -> dict[str, str]:
     env = dict(os.environ)
     for key in list(env):
-        if key in BML_LAUNCH_ENV_KEYS or key in STEAM_LAUNCH_ENV_KEYS or key in DYNAMIC_LOADER_ENV_KEYS or key.startswith(DYNAMIC_LOADER_ENV_PREFIXES):
+        if key.startswith("BML_") or key in STEAM_LAUNCH_ENV_KEYS or key in DYNAMIC_LOADER_ENV_KEYS or key.startswith(DYNAMIC_LOADER_ENV_PREFIXES):
             env.pop(key, None)
 
     env["BML_PROFILE_DIR"] = str(profile_dir)

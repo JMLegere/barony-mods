@@ -43,9 +43,9 @@
     "entries": []
   },
   "assets": {
-    "icon": "preview.png",
+    "icon": "assets/preview.png",
     "previewImages": [
-      "preview.png"
+      "assets/preview.png"
     ],
     "readme": null
   },
@@ -262,10 +262,10 @@
     "releaseRequired": true,
     "entries": [
       {
-        "path": "bml-package.json",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-        "size": 0,
-        "status": "release-manifest-records-current-package-checksum"
+        "path": "assets/preview.png",
+        "sha256": "924c4a453c21e61b9e0aeada0a74eb4fa71aa13085dc1a988ca4ee92e8fb5692",
+        "size": 11240,
+        "status": "installable_preview_asset"
       },
       {
         "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
@@ -305,7 +305,7 @@
   "runtimeReports": {
     "paths": {
       "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
-      "runtimeLoadReport": "BaronyModLoader/runtime-load-report.json",
+      "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
       "runtimeLog": "BaronyModLoader/logs/runtime.log",
       "validationReport": "BaronyModLoader/validation-report.json"
     },
