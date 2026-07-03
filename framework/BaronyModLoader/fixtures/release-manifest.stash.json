@@ -64,11 +64,11 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "023fbd056d954420e22a67067c9c0517b6b3e223d8c5ecd009f7217c30c963d0",
-        "size": 51480
+        "sha256": "ff3d3f649e19a2952cddb2da73698399d7cfdef201d6d0327627cea278e1020e",
+        "size": 51672
       },
       "status": "built_available_fail_closed",
-      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues including REX-prefixed callee-saved push/register-move windows and non-RIP-memory ModRM windows, and pass an opt-in fake-symbol Entity::addItemToVoidChestServer detour call-through self-test, but Stash gameplay targets remain fail-closed until relocation-safe Stash detours are installed and verified in game."
+      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test with relocated short conditional branch call-through, classify decoder-safe Stash target prologues including REX-prefixed callee-saved push/register-move windows, non-RIP-memory ModRM windows, and relative-control-flow windows, and pass an opt-in fake-symbol Entity::addItemToVoidChestServer detour call-through self-test, but Stash gameplay targets remain fail-closed until Stash detours are installed and verified in game."
     },
     "hookManifest": {
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
@@ -194,7 +194,7 @@
           "kind": "detour-self-test",
           "path": "BaronyModLoader/reports/detour-self-test-report.json",
           "status": "passed",
-          "notes": "The native hook smoke runs with BML_DETOUR_SELF_TEST=1 and validates the fake-symbol absolute-jump detour plus trampoline call-through."
+          "notes": "The native hook smoke runs with BML_DETOUR_SELF_TEST=1 and validates the fake-symbol absolute-jump detour, relocated short conditional branch prologue, and trampoline call-through."
         },
         {
           "kind": "stash-detour-self-test",
@@ -206,7 +206,7 @@
           "kind": "stash-hook",
           "path": "BaronyModLoader/reports/stash-hook-report.json",
           "status": "current_fail_closed",
-          "notes": "Required Stash targets currently report not_installed with a conservative static/readiness split (19 ready, 15 blocked, 0 missing for Steam/Linux build 22630456) and failClosed=true until function detours are implemented."
+          "notes": "Required Stash targets currently report not_installed with a conservative static/readiness split (27 ready, 7 blocked, 0 missing for Steam/Linux build 22630456) and failClosed=true until function detours are implemented."
         }
       ],
       "notes": "Current status is intentionally non-playable: Stash activation must fail closed with BML_STASH_HOOKS_NOT_INSTALLED or equivalent target-level detour-unavailable codes."

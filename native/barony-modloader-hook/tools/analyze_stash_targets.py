@@ -206,12 +206,20 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
     if op in {0xC2, 0xC3, 0xCA, 0xCB}:
         return None, "BML_DETOUR_EARLY_RETURN_UNSUPPORTED", "Detour target returns before the absolute-jump patch window can be reserved."
 
-    if (
-        op in {0xE8, 0xE9, 0xEB}
-        or byte_is_short_relative_branch(op)
-        or (op == 0x0F and offset + 1 < limit and 0x80 <= code[offset + 1] <= 0x8F)
-    ):
-        return None, "BML_DETOUR_RELATIVE_CONTROL_FLOW_UNSUPPORTED", "Detour target prologue contains relative control flow that this substrate does not relocate."
+    if op in {0xE8, 0xE9}:
+        if offset + 5 > limit:
+            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported relative control-flow instruction."
+        return 5, None, None
+
+    if op == 0xEB or byte_is_short_relative_branch(op):
+        if offset + 2 > limit:
+            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported short relative control-flow instruction."
+        return 2, None, None
+
+    if op == 0x0F and offset + 1 < limit and 0x80 <= code[offset + 1] <= 0x8F:
+        if offset + 6 > limit:
+            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported near conditional branch instruction."
+        return 6, None, None
 
     if 0x40 <= op <= 0x4F:
         if offset + 2 > limit:

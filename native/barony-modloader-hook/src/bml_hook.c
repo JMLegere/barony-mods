@@ -34,6 +34,8 @@
 #define BML_MAX_REQUIRED_SYMBOLS 32
 #define BML_DETOUR_PATCH_BYTES 14U
 #define BML_DETOUR_MAX_COPY_BYTES 32U
+#define BML_DETOUR_MAX_INSTRUCTIONS 32U
+#define BML_DETOUR_MAX_RELOCATED_BYTES ((BML_DETOUR_MAX_COPY_BYTES * 8U) + BML_DETOUR_PATCH_BYTES)
 
 typedef struct BmlError {
     const char *code;
@@ -125,6 +127,13 @@ typedef struct BmlDetourInstall {
     void *trampoline;
     size_t patch_size;
 } BmlDetourInstall;
+
+typedef struct BmlPatchInstruction {
+    size_t source_offset;
+    size_t source_length;
+    size_t relocated_offset;
+    size_t relocated_length;
+} BmlPatchInstruction;
 
 static int g_bml_initialized = 0;
 static int g_bml_init_result = 1;
@@ -783,11 +792,34 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return -1;
     }
 
-    if (op == 0xe8U || op == 0xe9U || op == 0xebU || bml_byte_is_short_relative_branch(op) ||
-        (op == 0x0fU && offset + 1U < limit && code[offset + 1U] >= 0x80U && code[offset + 1U] <= 0x8fU)) {
-        *out_code = "BML_DETOUR_RELATIVE_CONTROL_FLOW_UNSUPPORTED";
-        *out_message = "Detour target prologue contains relative control flow that this substrate does not relocate.";
-        return -1;
+    if (op == 0xe8U || op == 0xe9U) {
+        if (offset + 5U > limit) {
+            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+            *out_message = "Detour target prologue ended in the middle of a supported relative control-flow instruction.";
+            return -1;
+        }
+        *out_length = 5U;
+        return 0;
+    }
+
+    if (op == 0xebU || bml_byte_is_short_relative_branch(op)) {
+        if (offset + 2U > limit) {
+            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+            *out_message = "Detour target prologue ended in the middle of a supported short relative control-flow instruction.";
+            return -1;
+        }
+        *out_length = 2U;
+        return 0;
+    }
+
+    if (op == 0x0fU && offset + 1U < limit && code[offset + 1U] >= 0x80U && code[offset + 1U] <= 0x8fU) {
+        if (offset + 6U > limit) {
+            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+            *out_message = "Detour target prologue ended in the middle of a supported near conditional branch instruction.";
+            return -1;
+        }
+        *out_length = 6U;
+        return 0;
     }
 
     if (op >= 0x40U && op <= 0x4fU) {
@@ -903,6 +935,162 @@ static void bml_write_abs_jump(unsigned char *location, const void *destination)
     memcpy(location + 6U, &address, sizeof(address));
 }
 
+static void bml_write_abs_call(unsigned char *location, const void *destination) {
+    const uint32_t zero_displacement = 0U;
+    uintptr_t address = (uintptr_t)destination;
+    location[0] = 0xffU;
+    location[1] = 0x15U;
+    memcpy(location + 2U, &zero_displacement, sizeof(zero_displacement));
+    memcpy(location + 6U, &address, sizeof(address));
+}
+
+static bool bml_instruction_is_short_jcc(const unsigned char *code, size_t offset) {
+    return bml_byte_is_short_relative_branch(code[offset]);
+}
+
+static bool bml_instruction_is_near_jcc(const unsigned char *code, size_t offset, size_t source_length) {
+    return source_length >= 2U && code[offset] == 0x0fU && code[offset + 1U] >= 0x80U && code[offset + 1U] <= 0x8fU;
+}
+
+static size_t bml_relocated_instruction_length(const unsigned char *code, size_t offset, size_t source_length) {
+    const unsigned char op = code[offset];
+    if (op == 0xe8U || op == 0xe9U || op == 0xebU) {
+        return BML_DETOUR_PATCH_BYTES;
+    }
+    if (bml_instruction_is_short_jcc(code, offset) || bml_instruction_is_near_jcc(code, offset, source_length)) {
+        return BML_DETOUR_PATCH_BYTES + 2U;
+    }
+    return source_length;
+}
+
+static int bml_relative_target_offset(const unsigned char *code, size_t offset, size_t source_length, int64_t *out_target_offset) {
+    const unsigned char op = code[offset];
+    if (op == 0xe8U || op == 0xe9U) {
+        int32_t displacement = 0;
+        if (source_length < 5U) {
+            return -1;
+        }
+        memcpy(&displacement, code + offset + 1U, sizeof(displacement));
+        *out_target_offset = (int64_t)offset + 5 + (int64_t)displacement;
+        return 0;
+    }
+    if (op == 0xebU || bml_instruction_is_short_jcc(code, offset)) {
+        const int8_t displacement = (int8_t)code[offset + 1U];
+        if (source_length < 2U) {
+            return -1;
+        }
+        *out_target_offset = (int64_t)offset + 2 + (int64_t)displacement;
+        return 0;
+    }
+    if (bml_instruction_is_near_jcc(code, offset, source_length)) {
+        int32_t displacement = 0;
+        if (source_length < 6U) {
+            return -1;
+        }
+        memcpy(&displacement, code + offset + 2U, sizeof(displacement));
+        *out_target_offset = (int64_t)offset + 6 + (int64_t)displacement;
+        return 0;
+    }
+    return -1;
+}
+
+static int bml_resolve_relocated_destination(const unsigned char *target_bytes, const BmlPatchInstruction *instructions, size_t instruction_count, size_t patch_size, const unsigned char *trampoline, int64_t target_offset, const void **out_destination, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    if (target_offset < 0) {
+        bml_copy_string(error_code, error_code_size, "BML_DETOUR_RELATIVE_CONTROL_FLOW_UNSUPPORTED");
+        bml_copy_string(error_message, error_message_size, "Detour target prologue branches before the copied patch window; this conservative relocator does not support that shape.");
+        return -1;
+    }
+    if ((uint64_t)target_offset < (uint64_t)patch_size) {
+        for (size_t index = 0U; index < instruction_count; ++index) {
+            if ((uint64_t)instructions[index].source_offset == (uint64_t)target_offset) {
+                *out_destination = trampoline + instructions[index].relocated_offset;
+                return 0;
+            }
+        }
+        bml_copy_string(error_code, error_code_size, "BML_DETOUR_RELATIVE_CONTROL_FLOW_UNSUPPORTED");
+        bml_copy_string(error_message, error_message_size, "Detour target prologue branches into the middle of the copied patch window.");
+        return -1;
+    }
+    *out_destination = target_bytes + target_offset;
+    return 0;
+}
+
+static int bml_relocate_patch_window(const unsigned char *target_bytes, size_t patch_size, unsigned char *trampoline, size_t trampoline_capacity, size_t *out_trampoline_length, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    BmlPatchInstruction instructions[BML_DETOUR_MAX_INSTRUCTIONS];
+    size_t instruction_count = 0U;
+    size_t source_offset = 0U;
+    size_t relocated_offset = 0U;
+
+    memset(instructions, 0, sizeof(instructions));
+    *out_trampoline_length = 0U;
+
+    while (source_offset < patch_size) {
+        size_t instruction_length = 0U;
+        const char *decode_code = NULL;
+        const char *decode_message = NULL;
+        size_t relocated_length;
+
+        if (instruction_count >= BML_DETOUR_MAX_INSTRUCTIONS) {
+            bml_copy_string(error_code, error_code_size, "BML_DETOUR_PATCH_WINDOW_TOO_LARGE");
+            bml_copy_string(error_message, error_message_size, "Detour patch window contains more instructions than the bounded relocator can track.");
+            return -1;
+        }
+        if (bml_decode_supported_x86_64_instruction(target_bytes, source_offset, patch_size, &instruction_length, &decode_code, &decode_message) != 0 ||
+            instruction_length == 0U || source_offset + instruction_length > patch_size) {
+            bml_copy_string(error_code, error_code_size, decode_code != NULL ? decode_code : "BML_DETOUR_UNSUPPORTED_INSTRUCTION");
+            bml_copy_string(error_message, error_message_size, decode_message != NULL ? decode_message : "Detour target prologue is not safe for relocation.");
+            return -1;
+        }
+
+        relocated_length = bml_relocated_instruction_length(target_bytes, source_offset, instruction_length);
+        if (relocated_offset + relocated_length + BML_DETOUR_PATCH_BYTES > trampoline_capacity) {
+            bml_copy_string(error_code, error_code_size, "BML_DETOUR_TRAMPOLINE_ALLOC_FAILED");
+            bml_copy_string(error_message, error_message_size, "Relocated trampoline would exceed the bounded executable trampoline buffer.");
+            return -1;
+        }
+
+        instructions[instruction_count].source_offset = source_offset;
+        instructions[instruction_count].source_length = instruction_length;
+        instructions[instruction_count].relocated_offset = relocated_offset;
+        instructions[instruction_count].relocated_length = relocated_length;
+        instruction_count += 1U;
+        source_offset += instruction_length;
+        relocated_offset += relocated_length;
+    }
+
+    for (size_t index = 0U; index < instruction_count; ++index) {
+        const BmlPatchInstruction *instruction = &instructions[index];
+        const size_t source = instruction->source_offset;
+        unsigned char *destination = trampoline + instruction->relocated_offset;
+        const unsigned char op = target_bytes[source];
+
+        if (op == 0xe8U || op == 0xe9U || op == 0xebU || bml_instruction_is_short_jcc(target_bytes, source) || bml_instruction_is_near_jcc(target_bytes, source, instruction->source_length)) {
+            int64_t target_offset = 0;
+            const void *absolute_destination = NULL;
+            if (bml_relative_target_offset(target_bytes, source, instruction->source_length, &target_offset) != 0 ||
+                bml_resolve_relocated_destination(target_bytes, instructions, instruction_count, patch_size, trampoline, target_offset, &absolute_destination, error_code, error_code_size, error_message, error_message_size) != 0) {
+                return -1;
+            }
+            if (op == 0xe8U) {
+                bml_write_abs_call(destination, absolute_destination);
+            } else if (op == 0xe9U || op == 0xebU) {
+                bml_write_abs_jump(destination, absolute_destination);
+            } else {
+                const unsigned char condition = (op == 0x0fU) ? (unsigned char)(target_bytes[source + 1U] & 0x0fU) : (unsigned char)(op & 0x0fU);
+                destination[0] = (unsigned char)(0x70U | (condition ^ 0x01U));
+                destination[1] = (unsigned char)BML_DETOUR_PATCH_BYTES;
+                bml_write_abs_jump(destination + 2U, absolute_destination);
+            }
+        } else {
+            memcpy(destination, target_bytes + source, instruction->source_length);
+        }
+    }
+
+    bml_write_abs_jump(trampoline + relocated_offset, target_bytes + patch_size);
+    *out_trampoline_length = relocated_offset + BML_DETOUR_PATCH_BYTES;
+    return 0;
+}
+
 static int bml_page_span_for_patch(void *target, size_t patch_size, uintptr_t *out_page_start, size_t *out_page_span) {
     long page_size_long = sysconf(_SC_PAGESIZE);
     uintptr_t start;
@@ -955,6 +1143,7 @@ static int bml_install_absolute_jump_detour(void *target, void *replacement, Bml
     const unsigned char *target_bytes = (const unsigned char *)target;
     unsigned char original[BML_DETOUR_MAX_COPY_BYTES];
     unsigned char *trampoline;
+    const size_t trampoline_capacity = BML_DETOUR_MAX_RELOCATED_BYTES;
     size_t trampoline_length = 0U;
     size_t patch_size = 0U;
     uintptr_t page_start = 0U;
@@ -979,20 +1168,21 @@ static int bml_install_absolute_jump_detour(void *target, void *replacement, Bml
     }
 
     memcpy(original, target, patch_size);
-    trampoline_length = patch_size + BML_DETOUR_PATCH_BYTES;
-    trampoline = mmap(NULL, trampoline_length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    trampoline = mmap(NULL, trampoline_capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (trampoline == MAP_FAILED) {
         bml_copy_string(error_code, error_code_size, "BML_DETOUR_TRAMPOLINE_ALLOC_FAILED");
         bml_copy_string(error_message, error_message_size, "Executable trampoline allocation failed.");
         return -1;
     }
 
-    memcpy(trampoline, original, patch_size);
-    bml_write_abs_jump(trampoline + patch_size, (const unsigned char *)target + patch_size);
+    if (bml_relocate_patch_window(target_bytes, patch_size, trampoline, trampoline_capacity, &trampoline_length, error_code, error_code_size, error_message, error_message_size) != 0) {
+        (void)munmap(trampoline, trampoline_capacity);
+        return -1;
+    }
     __builtin___clear_cache((char *)trampoline, (char *)trampoline + trampoline_length);
 
-    if (mprotect(trampoline, trampoline_length, PROT_READ | PROT_EXEC) != 0) {
-        (void)munmap(trampoline, trampoline_length);
+    if (mprotect(trampoline, trampoline_capacity, PROT_READ | PROT_EXEC) != 0) {
+        (void)munmap(trampoline, trampoline_capacity);
         bml_copy_string(error_code, error_code_size, "BML_DETOUR_TRAMPOLINE_PROTECT_FAILED");
         bml_copy_string(error_message, error_message_size, "Executable trampoline could not be made read-only/executable after construction.");
         return -1;
@@ -1000,7 +1190,7 @@ static int bml_install_absolute_jump_detour(void *target, void *replacement, Bml
 
     if (bml_page_span_for_patch(target, patch_size, &page_start, &page_span) != 0 ||
         mprotect((void *)page_start, page_span, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        (void)munmap(trampoline, trampoline_length);
+        (void)munmap(trampoline, trampoline_capacity);
         bml_copy_string(error_code, error_code_size, "BML_DETOUR_TARGET_PROTECT_FAILED");
         bml_copy_string(error_message, error_message_size, "Target code page could not be made writable for detour installation.");
         return -1;
@@ -1015,7 +1205,7 @@ static int bml_install_absolute_jump_detour(void *target, void *replacement, Bml
     if (mprotect((void *)page_start, page_span, PROT_READ | PROT_EXEC) != 0) {
         memcpy(target, original, patch_size);
         __builtin___clear_cache((char *)target, (char *)target + patch_size);
-        (void)munmap(trampoline, trampoline_length);
+        (void)munmap(trampoline, trampoline_capacity);
         bml_copy_string(error_code, error_code_size, "BML_DETOUR_TARGET_REPROTECT_FAILED");
         bml_copy_string(error_message, error_message_size, "Target code page could not be restored to executable read-only protection after detour installation.");
         return -1;
