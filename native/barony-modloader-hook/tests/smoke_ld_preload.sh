@@ -43,6 +43,7 @@ ACCESS_INSTALL_REPORT="$ACCESS_INSTALL_REPORT_DIR/runtime-load-report.json"
 ACCESS_INSTALL_SYMBOL_REPORT="$ACCESS_INSTALL_REPORT_DIR/symbol-probe-report.json"
 ACCESS_INSTALL_STASH_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-hook-report.json"
 STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-access-placement-detour-install-report.json"
+STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT="$ACCESS_INSTALL_REPORT_DIR/stash-access-placement-self-test-report.json"
 BEHAVIOR_PROFILE_DIR="$PROFILE_DIR/behavior-profile"
 BEHAVIOR_REPORT_DIR="$BEHAVIOR_PROFILE_DIR/BaronyModLoader/reports"
 BEHAVIOR_REPORT="$BEHAVIOR_REPORT_DIR/runtime-load-report.json"
@@ -403,6 +404,7 @@ print(f"opt-in stash core pass-through install remains fail-closed ok: {core_ins
 PY
 
 BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 \
+BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 \
 BML_PROFILE_DIR="$ACCESS_INSTALL_PROFILE_DIR" \
 BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
 BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
@@ -410,7 +412,7 @@ BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
 LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
 /usr/bin/true
 
-python - "$ACCESS_INSTALL_REPORT" "$ACCESS_INSTALL_SYMBOL_REPORT" "$ACCESS_INSTALL_STASH_REPORT" "$STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT" <<'PY'
+python - "$ACCESS_INSTALL_REPORT" "$ACCESS_INSTALL_SYMBOL_REPORT" "$ACCESS_INSTALL_STASH_REPORT" "$STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT" "$STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT" <<'PY'
 import json
 import pathlib
 import sys
@@ -419,7 +421,8 @@ report_path = pathlib.Path(sys.argv[1])
 symbol_report_path = pathlib.Path(sys.argv[2])
 stash_report_path = pathlib.Path(sys.argv[3])
 access_install_report_path = pathlib.Path(sys.argv[4])
-for path in (report_path, symbol_report_path, stash_report_path, access_install_report_path):
+access_self_test_report_path = pathlib.Path(sys.argv[5])
+for path in (report_path, symbol_report_path, stash_report_path, access_install_report_path, access_self_test_report_path):
     if not path.is_file():
         raise SystemExit(f"missing opt-in access/placement install report: {path}")
 
@@ -427,6 +430,7 @@ report = json.loads(report_path.read_text(encoding="utf-8"))
 symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
 stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
 access_install_report = json.loads(access_install_report_path.read_text(encoding="utf-8"))
+access_self_test_report = json.loads(access_self_test_report_path.read_text(encoding="utf-8"))
 
 assert report["status"] == "failed", report
 runtime_codes = {error["code"] for error in report["errors"]}
@@ -469,10 +473,21 @@ for target in targets:
     assert isinstance(target["replacementAddress"], str) and target["replacementAddress"].startswith("0x"), target
     assert isinstance(target["trampolineAddress"], str) and target["trampolineAddress"].startswith("0x"), target
     assert target["patchSize"] >= 14, target
-    assert target["replacementInvoked"] is False, target
-    assert target["replacementCalls"] == 0, target
+    assert target["replacementInvoked"] is True, target
+    assert target["replacementCalls"] >= 1, target
     assert target["error"] is None, target
-print(f"opt-in stash access/placement pass-through install remains fail-closed ok: {access_install_report_path}")
+
+assert access_self_test_report["schemaVersion"] == "0.1.0"
+assert access_self_test_report["test"] == "stash-access-placement-call-through-self-test"
+assert access_self_test_report["status"] == "passed", access_self_test_report
+assert access_self_test_report["claimBoundary"] == "fake-provider-access-placement-call-through-only"
+assert access_self_test_report["generateDungeonResult"] == 7, access_self_test_report
+assert access_self_test_report["error"] is None, access_self_test_report
+self_test_targets = access_self_test_report["targets"]
+assert {target["targetName"] for target in self_test_targets} == expected_targets, self_test_targets
+for target in self_test_targets:
+    assert target["replacementCalls"] >= 1, target
+print(f"opt-in stash access/placement pass-through call-through self-test remains fail-closed ok: {access_install_report_path}")
 PY
 
 BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 \

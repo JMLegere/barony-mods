@@ -31,6 +31,7 @@
 #define BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-detour-install-report.json"
 #define BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-detour-install-report.json"
 #define BML_STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-access-placement-detour-install-report.json"
+#define BML_STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-access-placement-self-test-report.json"
 #define BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-behavior-report.json"
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
@@ -2034,6 +2035,11 @@ static int g_bml_stash_assign_actions_replacement_calls = 0;
 static int g_bml_stash_new_entity_replacement_calls = 0;
 static int g_bml_stash_set_sprite_attributes_replacement_calls = 0;
 
+static BmlStashCoreDetourInstall g_bml_stash_access_placement_targets[6];
+static size_t g_bml_stash_access_placement_target_count = 0U;
+static char g_bml_stash_access_placement_report_path[PATH_MAX];
+static bool g_bml_stash_access_placement_exit_report_registered = false;
+
 static bool g_bml_stash_core_behavior_active = false;
 static bool g_bml_stash_core_behavior_loaded = false;
 static bool g_bml_stash_core_behavior_dirty = false;
@@ -2779,6 +2785,31 @@ static int bml_write_stash_core_detour_install_report(const char *report_path, c
     return 0;
 }
 
+static void bml_write_stash_access_placement_exit_report(void) {
+    if (g_bml_stash_access_placement_target_count == 0U || !bml_has_value(g_bml_stash_access_placement_report_path)) {
+        return;
+    }
+    (void)bml_write_stash_core_detour_install_report(
+        g_bml_stash_access_placement_report_path,
+        "stash-access-placement-passthrough-install",
+        g_bml_stash_access_placement_targets,
+        g_bml_stash_access_placement_target_count);
+}
+
+static void bml_register_stash_access_placement_exit_report(const char *report_path, const BmlStashCoreDetourInstall *targets, size_t target_count) {
+    if (!bml_has_value(report_path) || targets == NULL || target_count == 0U || target_count > (sizeof(g_bml_stash_access_placement_targets) / sizeof(g_bml_stash_access_placement_targets[0]))) {
+        return;
+    }
+    memcpy(g_bml_stash_access_placement_targets, targets, target_count * sizeof(g_bml_stash_access_placement_targets[0]));
+    g_bml_stash_access_placement_target_count = target_count;
+    bml_copy_string(g_bml_stash_access_placement_report_path, sizeof(g_bml_stash_access_placement_report_path), report_path);
+    if (!g_bml_stash_access_placement_exit_report_registered) {
+        if (atexit(bml_write_stash_access_placement_exit_report) == 0) {
+            g_bml_stash_access_placement_exit_report_registered = true;
+        }
+    }
+}
+
 static int bml_run_stash_core_passthrough_install(const char *report_path) {
     BmlStashCoreDetourInstall targets[7];
     const size_t target_count = sizeof(targets) / sizeof(targets[0]);
@@ -2813,11 +2844,118 @@ static int bml_run_stash_core_passthrough_install(const char *report_path) {
     return result;
 }
 
-static int bml_run_stash_access_placement_passthrough_install(const char *report_path) {
+static int bml_write_stash_access_placement_self_test_report(const char *report_path, const char *status, const char *error_code, const char *error_message, int generate_dungeon_result) {
+    FILE *file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-access-placement-call-through-self-test\",\n  \"status\": ", file);
+    bml_json_write_escaped(file, status);
+    fputs(",\n  \"claimBoundary\": \"fake-provider-access-placement-call-through-only\",\n  \"generateDungeonResult\": ", file);
+    fprintf(file, "%d", generate_dungeon_result);
+    fputs(",\n  \"targets\": [", file);
+    for (size_t index = 0U; index < g_bml_stash_access_placement_target_count; ++index) {
+        const BmlStashCoreDetourInstall *target = &g_bml_stash_access_placement_targets[index];
+        fputs(index == 0U ? "\n    " : ",\n    ", file);
+        fputs("{\"targetName\": ", file);
+        bml_json_write_escaped(file, target->target_name);
+        fputs(", \"targetSymbol\": ", file);
+        bml_json_write_escaped(file, target->target_symbol);
+        fputs(", \"replacementCalls\": ", file);
+        fprintf(file, "%d", bml_stash_core_replacement_calls_for_symbol(target->target_symbol));
+        fputc('}', file);
+    }
+    if (g_bml_stash_access_placement_target_count > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"error\": ", file);
+    if (bml_has_value(error_code) || bml_has_value(error_message)) {
+        fputs("{\"code\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_FAILED");
+        fputs(", \"message\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Stash access/placement call-through self-test failed.");
+        fputc('}', file);
+    } else {
+        fputs("null", file);
+    }
+    fputs(",\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_run_stash_access_placement_self_test(char *error_code, size_t error_code_size, char *error_message, size_t error_message_size, int *generate_dungeon_result) {
+    void *fake_provider_marker = dlsym(RTLD_DEFAULT, "bml_fake_detour_counter");
+    void *act_chest_address = dlsym(RTLD_DEFAULT, "_Z8actChestP6Entity");
+    void *act_chest_lid_address = dlsym(RTLD_DEFAULT, "_Z11actChestLidP6Entity");
+    void *generate_dungeon_address = dlsym(RTLD_DEFAULT, "_Z15generateDungeonPcjSt5tupleIJiiiiEE");
+    void *assign_actions_address = dlsym(RTLD_DEFAULT, "_Z13assignActionsP5map_t");
+    void *new_entity_address = dlsym(RTLD_DEFAULT, "_Z9newEntityijP6list_tS0_");
+    void *set_sprite_attributes_address = dlsym(RTLD_DEFAULT, "_Z19setSpriteAttributesP6EntityS0_S0_");
+    BmlStashEntityActionFunction target_act_chest;
+    BmlStashEntityActionFunction target_act_chest_lid;
+    BmlStashGenerateDungeonFunction target_generate_dungeon;
+    BmlStashAssignActionsFunction target_assign_actions;
+    BmlStashNewEntityFunction target_new_entity;
+    BmlStashSetSpriteAttributesFunction target_set_sprite_attributes;
+    unsigned char fake_entity[1024];
+    int generated;
+
+    if (generate_dungeon_result != NULL) {
+        *generate_dungeon_result = 0;
+    }
+    if (fake_provider_marker == NULL || act_chest_address == NULL || act_chest_lid_address == NULL || generate_dungeon_address == NULL || assign_actions_address == NULL || new_entity_address == NULL || set_sprite_attributes_address == NULL) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_SYMBOL_MISSING");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test requires the fake provider plus all six access/placement symbols.");
+        return -1;
+    }
+
+    memset(fake_entity, 0, sizeof(fake_entity));
+    target_act_chest = bml_stash_entity_action_function_from_address(act_chest_address);
+    target_act_chest_lid = bml_stash_entity_action_function_from_address(act_chest_lid_address);
+    target_generate_dungeon = bml_stash_generate_dungeon_function_from_address(generate_dungeon_address);
+    target_assign_actions = bml_stash_assign_actions_function_from_address(assign_actions_address);
+    target_new_entity = bml_stash_new_entity_function_from_address(new_entity_address);
+    target_set_sprite_attributes = bml_stash_set_sprite_attributes_function_from_address(set_sprite_attributes_address);
+
+    target_act_chest(fake_entity);
+    target_act_chest_lid(fake_entity);
+    generated = target_generate_dungeon(NULL, 123U, 0U, 0U);
+    target_assign_actions(NULL);
+    (void)target_new_entity(1791, 1U, NULL, NULL);
+    target_set_sprite_attributes(NULL, NULL, NULL);
+
+    if (generate_dungeon_result != NULL) {
+        *generate_dungeon_result = generated;
+    }
+    if (generated != 7) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_GENERATE_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not call through to the fake generateDungeon implementation.");
+        return -1;
+    }
+    for (size_t index = 0U; index < g_bml_stash_access_placement_target_count; ++index) {
+        if (bml_stash_core_replacement_calls_for_symbol(g_bml_stash_access_placement_targets[index].target_symbol) <= 0) {
+            bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_CALL_MISSING");
+            bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not invoke every installed replacement.");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int bml_run_stash_access_placement_passthrough_install(const char *report_path, const char *self_test_report_path, bool self_test_requested) {
     BmlStashCoreDetourInstall targets[6];
     const size_t target_count = sizeof(targets) / sizeof(targets[0]);
     int result = 0;
+    int self_test_generate_dungeon_result = 0;
+    char self_test_error_code[BML_MAX_TEXT];
+    char self_test_error_message[BML_MAX_TEXT];
 
+    memset(self_test_error_code, 0, sizeof(self_test_error_code));
+    memset(self_test_error_message, 0, sizeof(self_test_error_message));
     bml_reset_stash_access_placement_state();
     bml_init_stash_core_detour_target(&targets[0], "actChest", "_Z8actChestP6Entity", bml_stash_entity_action_function_address(bml_stash_act_chest_replacement));
     bml_init_stash_core_detour_target(&targets[1], "actChestLid", "_Z11actChestLidP6Entity", bml_stash_entity_action_function_address(bml_stash_act_chest_lid_replacement));
@@ -2840,7 +2978,17 @@ static int bml_run_stash_access_placement_passthrough_install(const char *report
         }
     }
 
+    bml_register_stash_access_placement_exit_report(report_path, targets, target_count);
+    if (result == 0 && self_test_requested &&
+        bml_run_stash_access_placement_self_test(self_test_error_code, sizeof(self_test_error_code), self_test_error_message, sizeof(self_test_error_message), &self_test_generate_dungeon_result) != 0) {
+        result = -1;
+    }
+
     if (bml_write_stash_core_detour_install_report(report_path, "stash-access-placement-passthrough-install", targets, target_count) != 0) {
+        return -1;
+    }
+    if (self_test_requested &&
+        bml_write_stash_access_placement_self_test_report(self_test_report_path, result == 0 ? "passed" : "failed", self_test_error_code, self_test_error_message, self_test_generate_dungeon_result) != 0) {
         return -1;
     }
     return result;
@@ -3068,6 +3216,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *stash_install_add_item_passthrough;
     const char *stash_install_core_passthrough;
     const char *stash_install_access_placement_passthrough;
+    const char *stash_access_placement_self_test;
     const char *stash_enable_core_behavior;
     const char *stash_core_behavior_self_test;
     BmlError errors[BML_MAX_ERRORS];
@@ -3082,6 +3231,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     bool stash_install_access_placement_passthrough_requested;
     bool stash_enable_core_behavior_requested;
     bool stash_core_behavior_self_test_requested;
+    bool stash_access_placement_self_test_requested;
     char report_dir[PATH_MAX];
     char report_path[PATH_MAX];
     char symbol_report_path[PATH_MAX];
@@ -3091,6 +3241,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char stash_detour_install_report_path[PATH_MAX];
     char stash_core_detour_install_report_path[PATH_MAX];
     char stash_access_placement_detour_install_report_path[PATH_MAX];
+    char stash_access_placement_self_test_report_path[PATH_MAX];
     char stash_core_behavior_report_path[PATH_MAX];
     char *runtime_json = NULL;
 
@@ -3115,12 +3266,14 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_install_add_item_passthrough = getenv("BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH");
     stash_install_core_passthrough = getenv("BML_STASH_INSTALL_CORE_PASSTHROUGH");
     stash_install_access_placement_passthrough = getenv("BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH");
+    stash_access_placement_self_test = getenv("BML_STASH_ACCESS_PLACEMENT_SELF_TEST");
     stash_enable_core_behavior = getenv("BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR");
     stash_core_behavior_self_test = getenv("BML_STASH_CORE_BEHAVIOR_SELF_TEST");
     stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
     stash_install_add_item_passthrough_requested = strcmp(stash_install_add_item_passthrough != NULL ? stash_install_add_item_passthrough : "", "1") == 0;
     stash_install_core_passthrough_requested = strcmp(stash_install_core_passthrough != NULL ? stash_install_core_passthrough : "", "1") == 0;
     stash_install_access_placement_passthrough_requested = strcmp(stash_install_access_placement_passthrough != NULL ? stash_install_access_placement_passthrough : "", "1") == 0;
+    stash_access_placement_self_test_requested = strcmp(stash_access_placement_self_test != NULL ? stash_access_placement_self_test : "", "1") == 0;
     stash_enable_core_behavior_requested = strcmp(stash_enable_core_behavior != NULL ? stash_enable_core_behavior : "", "1") == 0;
     stash_core_behavior_self_test_requested = strcmp(stash_core_behavior_self_test != NULL ? stash_core_behavior_self_test : "", "1") == 0;
 
@@ -3154,6 +3307,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_access_placement_detour_install_report_path, sizeof(stash_access_placement_detour_install_report_path), profile_dir, BML_STASH_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(stash_access_placement_self_test_report_path, sizeof(stash_access_placement_self_test_report_path), profile_dir, BML_STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_core_behavior_report_path, sizeof(stash_core_behavior_report_path), profile_dir, BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH) != 0) {
         free(runtime_json);
         g_bml_init_result = 1;
@@ -3182,7 +3336,9 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_DETOUR_SELF_TEST_FAILED", "BML_DETOUR_SELF_TEST=1 was requested, but the native absolute-jump detour substrate self-test failed.", "BML_DETOUR_SELF_TEST", detour_self_test_report_path);
     }
 
-    if (stash_core_behavior_self_test_requested && !stash_enable_core_behavior_requested) {
+    if (stash_access_placement_self_test_requested && !stash_install_access_placement_passthrough_requested) {
+        bml_add_error(errors, &error_count, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_WITHOUT_INSTALL", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 requires BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1.", "BML_STASH_ACCESS_PLACEMENT_SELF_TEST", stash_access_placement_self_test_report_path);
+    } else if (stash_core_behavior_self_test_requested && !stash_enable_core_behavior_requested) {
         bml_add_error(errors, &error_count, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_WITHOUT_BEHAVIOR", "BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 requires BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1.", "BML_STASH_CORE_BEHAVIOR_SELF_TEST", stash_core_behavior_report_path);
     } else if (stash_enable_core_behavior_requested && (stash_install_core_passthrough_requested || stash_install_add_item_passthrough_requested || stash_detour_self_test_requested)) {
         bml_add_error(errors, &error_count, "BML_STASH_DETOUR_REQUEST_CONFLICT", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 installs the same core Stash targets as the pass-through/self-test modes; enable only one Stash detour install/self-test mode.", "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR", stash_core_behavior_report_path);
@@ -3202,7 +3358,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         }
 
         if (stash_install_access_placement_passthrough_requested &&
-            bml_run_stash_access_placement_passthrough_install(stash_access_placement_detour_install_report_path) != 0) {
+            bml_run_stash_access_placement_passthrough_install(stash_access_placement_detour_install_report_path, stash_access_placement_self_test_report_path, stash_access_placement_self_test_requested) != 0) {
             bml_add_error(errors, &error_count, "BML_STASH_ACCESS_PLACEMENT_INSTALL_FAILED", "BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 was requested, but the access/placement Stash pass-through detour set could not be fully installed.", "BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH", stash_access_placement_detour_install_report_path);
         }
 
