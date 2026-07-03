@@ -212,6 +212,29 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertNotEqual(launch.returncode, 0, launch.stdout)
             self.assertIn("BML_PROFILE_PACKAGE_DISABLED", launch.stdout)
 
+    def test_steam_client_process_detection_uses_proc_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc_root = Path(temp_dir)
+            self.assertFalse(loader.steam_client_process_running(proc_root))
+
+            steam_proc = proc_root / "1234"
+            steam_proc.mkdir()
+            (steam_proc / "comm").write_text("steam\n", encoding="utf-8")
+            (steam_proc / "cmdline").write_bytes(b"/home/jerry/.local/share/Steam/ubuntu12_32/steam\0-silent\0")
+            self.assertTrue(loader.steam_client_process_running(proc_root))
+
+    def test_steam_launch_preflight_blocks_missing_client(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc_root = Path(temp_dir)
+            original = loader.steam_client_process_running
+            try:
+                loader.steam_client_process_running = lambda: original(proc_root)
+                result = loader.validate_steam_client_ready_for_launch({"runtime": {"steam": {"appId": loader.STEAM_BARONY_APP_ID}}})
+            finally:
+                loader.steam_client_process_running = original
+            self.assertFalse(result.ok)
+            self.assertEqual(result.problems[0].code, "BML_STEAM_CLIENT_NOT_RUNNING")
+
 
 if __name__ == "__main__":
     unittest.main()

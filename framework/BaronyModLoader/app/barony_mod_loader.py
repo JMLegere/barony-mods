@@ -2236,6 +2236,37 @@ def validate_profile_steam_install(profile: dict[str, Any]) -> ValidationResult:
         result.add("BML_STEAM_GAME_VERSION_MISMATCH", "fatal", "Detected Steam executable version string no longer matches the profile.", profileVersion=steam.get("gameVersionString"), detectedVersion=detected.get("gameVersionString"))
     return result
 
+def steam_client_process_running(proc_root: Path = Path("/proc")) -> bool:
+    if not sys.platform.startswith("linux"):
+        return True
+    if not proc_root.exists():
+        return False
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            comm = (entry / "comm").read_text(encoding="utf-8", errors="replace").strip().lower()
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", errors="replace").lower()
+        except OSError:
+            continue
+        if comm == "steam" or "/steam " in cmdline or cmdline.endswith("/steam"):
+            return True
+    return False
+
+
+def validate_steam_client_ready_for_launch(profile: dict[str, Any]) -> ValidationResult:
+    result = ValidationResult("Steam client launch readiness")
+    if profile_steam_install(profile) is None:
+        return result
+    if sys.platform.startswith("linux") and not steam_client_process_running():
+        result.add(
+            "BML_STEAM_CLIENT_NOT_RUNNING",
+            "fatal",
+            "Steam profile launch requires the Steam client to be running before starting Barony, otherwise Barony opens a Steamworks critical-error dialog before quickstart/gameplay.",
+            hint="Start Steam, wait until it has finished initializing, then run launch again.",
+        )
+    return result
+
 
 def validate_registered_runtime(
     runtime: dict[str, Any],
@@ -2480,6 +2511,8 @@ def command_launch(args: argparse.Namespace) -> int:
 
     if profile is not None:
         combined.extend(validate_profile_steam_install(profile))
+        if not args.dry_run:
+            combined.extend(validate_steam_client_ready_for_launch(profile))
 
     selected_runtime: dict[str, Any] | None = None
     runtime_info: dict[str, Any] | None = None
