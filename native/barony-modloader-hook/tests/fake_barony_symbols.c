@@ -640,6 +640,8 @@ static BmlFakeList bml_fake_tile_entity_list_storage = { NULL, NULL };
 static BmlFakeList bml_fake_map_entity_list_storage = { NULL, NULL };
 static bool bml_fake_shoparea_storage[64U * 48U] = {
     [8U + 8U * 48U] = true,
+    [8U + 9U * 48U] = true,
+    [8U + 10U * 48U] = true,
 };
 void *bml_fake_TileEntityList __asm__("TileEntityList") = &bml_fake_tile_entity_list_storage;
 static void *bml_fake_find_created_entity_by_uid(int uid) {

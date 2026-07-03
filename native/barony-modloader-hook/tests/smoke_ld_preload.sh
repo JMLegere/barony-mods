@@ -59,6 +59,12 @@ PLAYABLE_STASH_REPORT="$PLAYABLE_REPORT_DIR/stash-hook-report.json"
 STASH_PLAYABLE_CORE_BEHAVIOR_REPORT="$PLAYABLE_REPORT_DIR/stash-core-behavior-report.json"
 STASH_PLAYABLE_ACCESS_PLACEMENT_DETOUR_INSTALL_REPORT="$PLAYABLE_REPORT_DIR/stash-access-placement-detour-install-report.json"
 STASH_PLAYABLE_INSTALL_REPORT="$PLAYABLE_REPORT_DIR/stash-playable-install-report.json"
+ROLLBACK_PROFILE_DIR="$PROFILE_DIR/rollback-profile"
+ROLLBACK_REPORT_DIR="$ROLLBACK_PROFILE_DIR/BaronyModLoader/reports"
+ROLLBACK_REPORT="$ROLLBACK_REPORT_DIR/runtime-load-report.json"
+ROLLBACK_SYMBOL_REPORT="$ROLLBACK_REPORT_DIR/symbol-probe-report.json"
+ROLLBACK_STASH_REPORT="$ROLLBACK_REPORT_DIR/stash-hook-report.json"
+ROLLBACK_PLAYABLE_INSTALL_REPORT="$ROLLBACK_REPORT_DIR/stash-playable-install-report.json"
 
 
 cleanup() {
@@ -66,7 +72,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$PLAYABLE_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
+mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$PLAYABLE_PROFILE_DIR/BaronyModLoader" "$ROLLBACK_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
 cat > "$RUNTIME_MANIFEST" <<'JSON'
 {
   "contract": {
@@ -582,6 +588,7 @@ state_path = pathlib.Path(state["path"])
 assert state_path.is_file(), state_path
 rows = [line for line in state_path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
 assert rows == ["1 2 -1 3 12345 1", "2 3 0 4 67890 1"], rows
+assert not list(state_path.parent.glob("stash-inventory-v1.tsv.tmp.*")), sorted(p.name for p in state_path.parent.glob("stash-inventory-v1.tsv.tmp.*"))
 expected_targets = {
     "Entity::getChestInventoryList": 1,
     "Entity::addItemToChest": 1,
@@ -597,6 +604,46 @@ for target in behavior_report["targets"]:
     assert target["replacementCalls"] == expected_targets[target["targetName"]], target
     assert target["error"] is None, target
 print(f"experimental stash core behavior self-test remains fail-closed ok: {behavior_report_path}")
+PY
+
+BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 \
+BML_STASH_FORCE_INSTALL_FAILURE_AFTER=1 \
+BML_PROFILE_DIR="$ROLLBACK_PROFILE_DIR" \
+BML_RUNTIME_MANIFEST="$RUNTIME_MANIFEST" \
+BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
+BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
+LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
+/usr/bin/true
+
+python - "$ROLLBACK_REPORT" "$ROLLBACK_SYMBOL_REPORT" "$ROLLBACK_STASH_REPORT" "$ROLLBACK_PLAYABLE_INSTALL_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1])
+symbol_report_path = pathlib.Path(sys.argv[2])
+stash_report_path = pathlib.Path(sys.argv[3])
+install_report_path = pathlib.Path(sys.argv[4])
+for path in (report_path, symbol_report_path, stash_report_path, install_report_path):
+    if not path.is_file():
+        raise SystemExit(f"missing transactional rollback report: {path}")
+
+report = json.loads(report_path.read_text(encoding="utf-8"))
+symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
+stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+install_report = json.loads(install_report_path.read_text(encoding="utf-8"))
+
+assert report["status"] == "failed", report
+runtime_codes = {error["code"] for error in report["errors"]}
+assert "BML_STASH_PLAYABLE_INSTALL_FAILED" in runtime_codes, report["errors"]
+assert symbol_report["summary"]["missing"] == 0, symbol_report
+assert stash_report["summary"]["failClosed"] is True, stash_report
+assert install_report["status"] == "failed", install_report
+assert install_report["error"]["code"] == "BML_STASH_PLAYABLE_FAILED", install_report
+assert install_report["lobbyPlacement"]["attempted"] == 0, install_report
+assert install_report["shopPlacement"]["attempted"] == 0, install_report
+assert install_report["spellBinding"]["voidChestInventoryHookInstalled"] is False, install_report
+print(f"transactional playable detour rollback on forced partial install failure ok: {install_report_path}")
 PY
 
 BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 \
@@ -657,8 +704,8 @@ if "lidBehavior" in lobby:
     assert "actChestLid" in str(lobby["lidBehavior"]), lobby
 
 shop = playable_install_report["shopPlacement"]
-assert shop["attempted"] == 1, shop
-assert shop["succeeded"] == 1, shop
+assert shop["attempted"] == 2, shop
+assert shop["succeeded"] == 2, shop
 assert shop["failed"] == 0, shop
 assert shop["chestPlaced"] is True, shop
 assert shop["lidPlaced"] is True, shop
@@ -684,7 +731,10 @@ diagnostics_path = playable_install_report_path.parents[1] / "state" / "stash-di
 assert diagnostics_path.is_file(), diagnostics_path
 diagnostics = [json.loads(line) for line in diagnostics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby" and event["map"] == "fake-lobby" and event["x"] == 232.0 and event["y"] == 456.0 for event in diagnostics), diagnostics
-assert any(event["event"] == "stash_access_point_created" and event["kind"] == "shop" and event["map"] == "fake-shop" for event in diagnostics), diagnostics
+shop_events = [event for event in diagnostics if event["event"] == "stash_access_point_created" and event["kind"] == "shop" and event["map"] == "fake-shop"]
+assert len(shop_events) == 2, diagnostics
+assert (shop_events[0]["x"], shop_events[0]["y"]) == (152.0, 136.0), shop_events
+assert (shop_events[1]["x"], shop_events[1]["y"]) == (168.0, 136.0), shop_events
 assert any(event["event"] == "stash_inventory_loaded" and event["rows"] >= 0 for event in diagnostics), diagnostics
 print(f"production playable stash fake-provider lobby/shop/spell/metadata ok: {playable_install_report_path}")
 PY

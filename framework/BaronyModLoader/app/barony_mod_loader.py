@@ -41,6 +41,45 @@ STEAM_MANIFEST_NAME = f"appmanifest_{STEAM_BARONY_APP_ID}.acf"
 RUNTIME_STRATEGY_INSTALLED_HOOK = "installed-binary-hook"
 SUPPORTED_RUNTIME_STRATEGIES = (RUNTIME_STRATEGY_INSTALLED_HOOK,)
 
+DYNAMIC_LOADER_ENV_PREFIXES = ("LD_", "DYLD_")
+DYNAMIC_LOADER_ENV_KEYS = frozenset(
+    {
+        "LD_PRELOAD",
+        "LD_AUDIT",
+        "LD_LIBRARY_PATH",
+        "LD_ORIGIN_PATH",
+        "LD_DEBUG",
+        "LD_DEBUG_OUTPUT",
+        "LD_DYNAMIC_WEAK",
+        "LD_BIND_NOW",
+        "LD_BIND_NOT",
+        "LD_PROFILE",
+        "LD_PROFILE_OUTPUT",
+        "LD_SHOW_AUXV",
+        "LD_TRACE_LOADED_OBJECTS",
+        "LD_USE_LOAD_BIAS",
+        "LD_PREFER_MAP_32BIT_EXEC",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "DYLD_FALLBACK_FRAMEWORK_PATH",
+        "DYLD_PRINT_LIBRARIES",
+        "DYLD_PRINT_TO_FILE",
+        "DYLD_SHARED_CACHE_DIR",
+    }
+)
+BML_LAUNCH_ENV_KEYS = frozenset(
+    {
+        "BML_PROFILE_DIR",
+        "BML_RUNTIME_MANIFEST",
+        "BML_RUNTIME_STRATEGY",
+        "BML_HOOK_MANIFEST",
+        "BML_HOOK_LIBRARY",
+    }
+)
+STEAM_LAUNCH_ENV_KEYS = frozenset({"SteamAppId", "SteamGameId"})
+
 DEFAULT_RUNTIME_REGISTRY_PATH = Path.home() / ".local" / "share" / APP_ID / "runtime-registry.json"
 
 CANONICAL_STASH_CAPABILITIES = (
@@ -104,6 +143,10 @@ class ValidationResult:
 
     def extend(self, other: "ValidationResult") -> None:
         self.problems.extend(other.problems)
+
+
+class PackageInstallError(Exception):
+    """Fatal package install error with a user-facing message."""
 
 
 def utc_now() -> str:
@@ -1488,19 +1531,69 @@ def replace_install_target(temp_target: Path, final_target: Path) -> None:
     temp_target.rename(final_target)
 
 
+
+def resolved_path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def reject_package_symlink(path: Path, package_root: Path) -> None:
+    try:
+        relative_path = path.relative_to(package_root).as_posix()
+    except ValueError:
+        relative_path = str(path)
+    raise PackageInstallError(f"Refusing to install package symlink: {relative_path}. Package installs cannot contain symlinks.")
+
+
+def verify_install_source_path(path: Path, package_root: Path) -> Path:
+    if path.is_symlink():
+        reject_package_symlink(path, package_root)
+    resolved = path.resolve(strict=True)
+    package_root_resolved = package_root.resolve(strict=True)
+    if not resolved_path_is_within(resolved, package_root_resolved):
+        raise PackageInstallError(f"Refusing to install package path outside package root: {path}")
+    return resolved
+
+
+def copy_installed_tree_without_symlinks(package_root: Path, source: Path, target: Path, copied: list[str]) -> None:
+    source_resolved = verify_install_source_path(source, package_root)
+    for dirpath, dirnames, filenames in os.walk(source):
+        dirnames.sort()
+        current = Path(dirpath)
+        current_resolved = verify_install_source_path(current, package_root)
+        if not resolved_path_is_within(current_resolved, source_resolved):
+            raise PackageInstallError(f"Refusing to install directory outside package root: {current}")
+        for dirname in list(dirnames):
+            child = current / dirname
+            verify_install_source_path(child, package_root)
+        for filename in sorted(filenames):
+            source_file = current / filename
+            verify_install_source_path(source_file, package_root)
+            if not source_file.is_file():
+                continue
+            relative_name = source_file.relative_to(package_root).as_posix()
+            destination = target / relative_name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, destination)
+            copied.append(relative_name)
+
 def copy_installed_package_files(package: LoadedPackage, target: Path) -> list[str]:
     copied = [PACKAGE_MANIFEST_NAME]
     target.mkdir(parents=True, exist_ok=True)
+    verify_install_source_path(package.manifest_path, package.package_root)
     shutil.copy2(package.manifest_path, target / PACKAGE_MANIFEST_NAME)
     for directory in PACKAGE_INSTALL_DIRECTORIES:
         source = package.package_root / directory
+        if source.is_symlink():
+            reject_package_symlink(source, package.package_root)
+        if not source.exists():
+            continue
         if not source.is_dir():
             continue
-        destination = target / directory
-        shutil.copytree(source, destination)
-        for path in sorted(destination.rglob("*")):
-            if path.is_file():
-                copied.append(path.relative_to(target).as_posix())
+        copy_installed_tree_without_symlinks(package.package_root, source, target, copied)
     return copied
 
 
@@ -1574,6 +1667,48 @@ def load_active_mods_file(profile_dir: Path) -> list[dict[str, Any]]:
     if not isinstance(mods, list):
         return []
     return [dict(mod) for mod in mods if isinstance(mod, dict)]
+
+
+def profile_has_active_mod_state(profile: dict[str, Any], profile_dir: Path) -> bool:
+    return bool(profile_active_mods(profile)) or active_mods_json_path(profile_dir).is_file()
+
+
+def profile_authoritative_mods(profile: dict[str, Any], profile_dir: Path) -> list[dict[str, Any]]:
+    profile_mods = profile_active_mods(profile)
+    return profile_mods if profile_mods else load_active_mods_file(profile_dir)
+
+
+def validate_profile_package_enabled(profile: dict[str, Any], profile_dir: Path, package: LoadedPackage) -> ValidationResult:
+    result = ValidationResult("profile active mods")
+    if not profile_has_active_mod_state(profile, profile_dir):
+        return result
+
+    package_id = str(package.manifest.get("id"))
+    package_version = str(package.manifest.get("version"))
+    active_mods = profile_authoritative_mods(profile, profile_dir)
+    for mod in active_mods:
+        if mod.get("id") != package_id:
+            continue
+        active_version = mod.get("version")
+        if isinstance(active_version, str) and active_version and active_version != package_version:
+            result.add(
+                "BML_PROFILE_PACKAGE_VERSION_DISABLED",
+                "fatal",
+                "Requested package id is enabled in the profile with a different version.",
+                packageId=package_id,
+                requestedVersion=package_version,
+                enabledVersion=active_version,
+            )
+        return result
+
+    result.add(
+        "BML_PROFILE_PACKAGE_DISABLED",
+        "fatal",
+        "Requested package is not enabled in the profile active mod state. Run profile enable before launch, or use profile disable to keep it inactive.",
+        packageId=package_id,
+        enabledPackageIds=[str(mod.get("id")) for mod in active_mods if mod.get("id") is not None],
+    )
+    return result
 
 
 def write_profile_active_mods(profile_dir: Path, profile: dict[str, Any], mods: list[dict[str, Any]], generated_at: str) -> None:
@@ -1654,7 +1789,7 @@ def command_package_install(args: argparse.Namespace) -> int:
 
     try:
         installed_path, copied = install_loaded_package(package, store_dir, archive_path=archive_path)
-    except (OSError, zipfile.BadZipFile) as exc:
+    except (PackageInstallError, OSError, zipfile.BadZipFile) as exc:
         result = ValidationResult("package install")
         result.add("BML_PACKAGE_INSTALL_FAILED", "fatal", f"Could not install package: {exc}")
         print_report(result, heading="Package install")
@@ -2253,6 +2388,10 @@ def launch_working_directory(profile: dict[str, Any], executable: Path) -> Path:
 
 def launch_environment(profile: dict[str, Any], profile_dir: Path, manifest_path: Path, runtime: dict[str, Any] | None = None) -> dict[str, str]:
     env = dict(os.environ)
+    for key in list(env):
+        if key in BML_LAUNCH_ENV_KEYS or key in STEAM_LAUNCH_ENV_KEYS or key in DYNAMIC_LOADER_ENV_KEYS or key.startswith(DYNAMIC_LOADER_ENV_PREFIXES):
+            env.pop(key, None)
+
     env["BML_PROFILE_DIR"] = str(profile_dir)
     env["BML_RUNTIME_MANIFEST"] = str(manifest_path)
     if isinstance(runtime, dict):
@@ -2264,19 +2403,16 @@ def launch_environment(profile: dict[str, Any], profile_dir: Path, manifest_path
         if isinstance(hook_library, str) and hook_library:
             env["BML_HOOK_LIBRARY"] = hook_library
             if sys.platform.startswith("linux"):
-                old_preload = env.get("LD_PRELOAD")
-                env["LD_PRELOAD"] = hook_library if not old_preload else f"{hook_library}:{old_preload}"
+                env["LD_PRELOAD"] = hook_library
             elif sys.platform == "darwin":
-                old_insert_libraries = env.get("DYLD_INSERT_LIBRARIES")
-                env["DYLD_INSERT_LIBRARIES"] = hook_library if not old_insert_libraries else f"{hook_library}:{old_insert_libraries}"
+                env["DYLD_INSERT_LIBRARIES"] = hook_library
     steam = profile_steam_install(profile)
     if steam:
         env["SteamAppId"] = str(steam.get("appId") or STEAM_BARONY_APP_ID)
         env["SteamGameId"] = str(steam.get("appId") or STEAM_BARONY_APP_ID)
         install_path = steam.get("installPath")
-        if isinstance(install_path, str) and install_path:
-            old_library_path = env.get("LD_LIBRARY_PATH")
-            env["LD_LIBRARY_PATH"] = install_path if not old_library_path else f"{install_path}:{old_library_path}"
+        if sys.platform.startswith("linux") and isinstance(install_path, str) and install_path:
+            env["LD_LIBRARY_PATH"] = install_path
     return env
 
 
@@ -2296,6 +2432,9 @@ def command_launch_plan(args: argparse.Namespace) -> int:
     combined.extend(package_load_result)
     if package is not None:
         combined.extend(validate_package(package))
+    if profile is not None and package is not None:
+        combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
+
 
     runtime_info, runtime_info_path, runtime_load_result = load_runtime_info(args.runtime_info)
     combined.extend(runtime_load_result)
@@ -2331,6 +2470,9 @@ def command_launch(args: argparse.Namespace) -> int:
     combined.extend(package_load_result)
     if package is not None:
         combined.extend(validate_package(package))
+    if profile is not None and package is not None:
+        combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
+
 
     registry_path = runtime_registry_path(args.registry)
     registry, registry_result = load_runtime_registry(registry_path, missing_ok=False)

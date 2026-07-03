@@ -5,7 +5,7 @@
 name = "BaronyModLoader v1.0 deliverables"
 status = "active"
 created = "2026-07-02"
-objective = "A usable v1.0 BaronyModLoader path for the Stash reference mod, with a standalone app, clean package contract, installed-executable hook/bootstrap runtime provenance, and explicit fail-closed verification evidence."
+objective = "A usable v1.0 BaronyModLoader path for the Stash reference mod, with a standalone app, clean package contract, installed-executable hook/bootstrap runtime provenance, production-loaded Stash evidence, and explicit remaining player-scenario gaps."
 
 [[deliverables]]
 id = "p1_loader_app"
@@ -43,13 +43,13 @@ evidence = [
   "source-build is not listed as a supported v1 runtime strategy",
   "PC storefront/platform matrix is documented as Steam Windows/macOS/Linux, Epic Windows/macOS, GOG Windows/macOS/Linux, and Humble Windows/macOS/Linux",
   "Nintendo Switch is explicitly out of scope",
-  "runtime-info, runtime-load-report, registry, and release-manifest fixtures model installed-binary-hook provenance and fail-closed status",
+  "runtime-info, runtime-load-report, registry, and release-manifest fixtures model installed-binary-hook provenance, current production-loaded Stash status, and historical fail-closed diagnostics",
 ]
 
 [[deliverables]]
-id = "p3_symbol_probe_fail_closed_hook_gate"
-status = "implemented_symbol_probe_fail_closed_hook_gate"
-summary = "BML-owned Linux hook/bootstrap library validates installed Steam/Linux provenance, probes required Barony symbols, classifies Stash target readiness with the conservative detour decoder, proves opt-in fake-symbol detour call-through paths, can opt-in install single-target, seven-target core inventory lifecycle, and eight-target access/placement/prompt pass-through detours, has a fake-provider access/placement call-through self-test and process-exit access/placement call-count report, has a non-Barony process guard for inherited LD_PRELOAD helpers, and has an experimental fake-provider-only state-backed core lifecycle self-test including generic chest add/get mutation while keeping runtime activation fail-closed until playable in-game Stash behavior is verified."
+id = "p3_symbol_probe_hook_gate"
+status = "implemented_symbol_probe_hook_gate"
+summary = "BML-owned Linux hook/bootstrap library validates installed Steam/Linux provenance, probes 30 required Barony symbols, classifies 42 ready Stash targets with the conservative detour decoder, proves opt-in fake-symbol detour call-through paths, can opt-in install single-target, seven-target core inventory lifecycle, and eight-target access/placement/prompt pass-through detours, has fake-provider access/placement/prompt and state-backed core behavior self-tests, guards inherited LD_PRELOAD helper processes, and now reports failClosed=false when the production Stash bundle loads for a validated jml.stash runtime manifest."
 required_artifacts = [
   "native/barony-modloader-hook/",
   "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
@@ -65,19 +65,19 @@ evidence = [
   "dry-run environment includes BML_RUNTIME_MANIFEST, BML_PROFILE_DIR, SteamAppId, SteamGameId, LD_LIBRARY_PATH, and hook preload configuration",
   "Linux hook writes BaronyModLoader/reports/runtime-load-report.json using the canonical schema",
   "Linux hook writes BaronyModLoader/reports/symbol-probe-report.json after resolving required dlsym(RTLD_DEFAULT, mangledSymbol) targets for Steam app 371970 build 22630456",
-  "Linux hook writes BaronyModLoader/reports/stash-hook-report.json with the abstract direct Stash hook backend, per-target ready/blocked/missing analysis, decoder-safe patchWindowBytes for ready function targets spanning REX/register/non-RIP-memory/RIP-relative/terminal-return/relative-control-flow/two-byte prologue shapes, and failClosed=true until required gameplay hooks are actually installed",
+  "Linux hook writes BaronyModLoader/reports/stash-hook-report.json with the abstract direct Stash hook backend, per-target ready/blocked/missing analysis, decoder-safe patchWindowBytes for ready function targets spanning REX/register/non-RIP-memory/RIP-relative/terminal-return/relative-control-flow/two-byte prologue shapes, and failClosed=false when the production Stash bundle loads for a validated jml.stash runtime manifest",
   "BML_DETOUR_SELF_TEST=1 writes BaronyModLoader/reports/detour-self-test-report.json proving the absolute-jump detour substrate can allocate a near-target trampoline, relocate an internal RIP-relative cmp, relocate short conditional branches in the fake target prologue, and call through to the original fake-symbol implementation",
-  "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-detour-install-report.json proving an opt-in process-lifetime pass-through detour can be installed for Entity::addItemToVoidChestServer while runtime-load-report still fails closed for the incomplete Stash hook set",
-  "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-core-detour-install-report.json proving opt-in process-lifetime pass-through detours can be installed for Entity::getChestInventoryList, Entity::addItemToChest, Entity::getItemFromChest, Entity::addItemToVoidChestServer, Entity::removeItemFromVoidChestServer, Entity::closeChest, and Entity::closeChestServer while runtime-load-report still fails closed for the incomplete behavior-changing Stash hook set",
+  "BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-detour-install-report.json proving a historical opt-in process-lifetime pass-through detour install for Entity::addItemToVoidChestServer; this diagnostic mode is not the current production-load status",
+  "BML_STASH_INSTALL_CORE_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-core-detour-install-report.json proving historical opt-in process-lifetime pass-through detours for Entity::getChestInventoryList, Entity::addItemToChest, Entity::getItemFromChest, Entity::addItemToVoidChestServer, Entity::removeItemFromVoidChestServer, Entity::closeChest, and Entity::closeChestServer; this diagnostic mode is not the current production-load status",
   "BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 with BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 writes BaronyModLoader/reports/stash-core-behavior-report.json proving the fake-provider core lifecycle can load one seeded item from BaronyModLoader/state/stash-inventory-v1.tsv, route Entity::addItemToVoidChestServer into the bound stats[0]->void_chest_inventory list, exercise generic Entity::addItemToChest and Entity::getItemFromChest add/remove mutation against that same list, and save two rows on Entity::closeChest while runtime-load-report still fails closed for the incomplete in-game Stash hook set",
-  "A timed installed Steam/Linux probe with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and no fake self-test launched /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 for 25 seconds, wrote BaronyModLoader/reports/stash-core-behavior-report.json with status=installed and all seven core inventory lifecycle targets installed, and still left runtime-load-report failed only with BML_STASH_HOOKS_NOT_INSTALLED because the full in-game Stash hook set remains incomplete",
-  "BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-access-placement-detour-install-report.json proving opt-in process-lifetime pass-through detours can be installed for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get while runtime-load-report still fails closed for the incomplete opt-in-only probe set",
-  "BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 with BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-access-placement-self-test-report.json proving fake-provider trampoline call-through for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get, including generateDungeonResult=7, selected-entity scoped prompt replacement from \"Open chest\" to \"Open stash\", hover-tooltip scoped prompt replacement after uidToEntity resolves a framework Stash access entity, one-shot prompt context consumption, non-Stash non-rename coverage, and at least one replacement call for every installed access/placement target",
-  "A timed installed Steam/Linux probe with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1, BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1, and no fake self-test launched /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 for 25 seconds without preloading non-Barony helper processes, wrote BaronyModLoader/reports/stash-core-behavior-report.json with status=installed and all seven core inventory lifecycle targets installed, wrote BaronyModLoader/reports/stash-access-placement-detour-install-report.json with status=installed for the then-six access/placement targets, rewrote that access/placement report at process exit with live replacement calls for assignActions, newEntity, and setSpriteAttributes, and still left runtime-load-report failed only with BML_STASH_HOOKS_NOT_INSTALLED because the full in-game Stash hook set was not yet enabled",
+  "A historical timed installed Steam/Linux probe with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and no fake self-test launched /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 for 25 seconds and wrote BaronyModLoader/reports/stash-core-behavior-report.json with status=installed and all seven core inventory lifecycle targets installed; current production loading is represented by the playable bundle evidence below",
+  "BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-access-placement-detour-install-report.json proving historical opt-in process-lifetime pass-through detours for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get; this diagnostic mode is not the current production-load status",
+  "BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 with BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 writes BaronyModLoader/reports/stash-access-placement-self-test-report.json proving fake-provider trampoline call-through for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get, including generateDungeonResult=7, selected-entity scoped prompt replacement from \"Open chest\" to \"Open stash\", hover-tooltip scoped prompt replacement after uidToEntity lookup, and coverage for all eight access/placement/prompt targets",
+  "A historical timed installed Steam/Linux probe with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1, BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1, and no fake self-test launched /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 for 25 seconds without preloading non-Barony helper processes and confirmed the eight-target access/placement/prompt pass-through diagnostic path, including uidToEntity and Language::get",
   "python native/barony-modloader-hook/tools/analyze_stash_targets.py --manifest native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json --executable /home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64 emits static-prologue readiness evidence with 42 ready targets, 0 blocked targets, 0 missing targets, and playableBehaviorClaimed=false",
-  "mismatched executable provenance, missing required symbols, or uninstalled required Stash hook targets fail closed before runtime-load-report can claim Stash loaded",
+  "mismatched executable provenance, missing required symbols, or missing required production Stash hook targets fail closed before runtime-load-report can claim Stash loaded",
   "BML_STASH_PLACEMENT_DISCOVERY=1 requires BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1; the fake-provider smoke confirms assignActions called once with fake map name \"fake-lobby\" and sprite 1791 sampled in scoped newEntity buffer",
-  "A timed installed Steam/Linux probe with BML_STASH_PLACEMENT_DISCOVERY=1 launched barony.x86_64 quickstart=barbarian for 25 seconds, resolved 27/27 symbols, observed assignActions called twice on map \"Start Map\" (24x30 skybox=234), counted 5737 total newEntity calls globally and 19 scoped to assignActions, captured 16 scoped newEntity samples and 5 scoped setSpriteAttributes samples inside assignActions boundaries, recorded 0 Stash sprites placed, and wrote stash-placement-discovery-report.json confirming the scoped sampler correctly isolates placement-phase entity creation from unrelated entity activity",
+  "A historical timed installed Steam/Linux probe with BML_STASH_PLACEMENT_DISCOVERY=1 launched barony.x86_64 quickstart=barbarian for 25 seconds, resolved the then-current symbol set, observed assignActions on Start Map, recorded no Stash sprites before production placement was implemented, and is retained only as placement-boundary discovery",
 ]
 
 [[deliverables]]
@@ -103,8 +103,8 @@ evidence = [
 
 [[deliverables]]
 id = "p5_packaging_release"
-status = "implemented_release_manifest_records_installed_hook_provenance_fail_closed"
-summary = "BaronyModLoader can create/install/enable/disable a clean Stash package archive and records installed-executable hook provenance without claiming gameplay behavior before verification."
+status = "implemented_release_manifest_records_installed_hook_provenance_loaded"
+summary = "BaronyModLoader can create/install/enable/disable a clean Stash package archive and records installed-executable hook provenance, production-loaded Stash runtime status, and explicit remaining gameplay verification gaps."
 required_artifacts = [
   "framework/BaronyModLoader/app/barony_mod_loader.py",
   "framework/BaronyModLoader/schema/release-manifest.schema.json",
@@ -120,7 +120,7 @@ evidence = [
   "python framework/BaronyModLoader/app/barony_mod_loader.py package install framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg --store .tmp/bml-package-store",
   "profile create --steam produces an installed PC game profile with executable provenance",
   "launch dry-run for a Steam-backed profile emits installed-executable hook command and provenance",
-  "release manifest records app/runtime/package identity, deterministic Stash archive checksum, Steam app 371970 build 22630456, Barony v5.0.2, installed executable SHA-256/build id, hook library checksum/status, hook manifest checksum, runtime-info checksum, rollback notes, and fail-closed pending gameplay verification status",
+  "release manifest records app/runtime/package identity, deterministic Stash archive checksum, Steam app 371970 build 22630456, Barony v5.0.2, installed executable SHA-256/build id, hook library checksum/status, hook manifest checksum, runtime-info checksum, rollback notes, production-loaded Stash status, historical fail-closed diagnostic evidence, and remaining unverified player-facing scenarios",
 ]
 
 [[deliverables]]

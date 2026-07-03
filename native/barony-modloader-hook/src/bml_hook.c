@@ -3,6 +3,7 @@
 
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -97,6 +98,7 @@
 #define BML_STASH_SPRITE_LOBBY_LID 1790
 #define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
 #define BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST 4005
+#define BML_STASH_PROMPT_LANGUAGE_ID_TOOLTIP_ACTION 3998
 #define BML_STASH_PROMPT_OPEN_STASH "Open stash"
 #define BML_STASH_SELECTED_ENTITY_PLAYERS 4U
 
@@ -197,6 +199,8 @@ typedef struct BmlDetourInstall {
     void *replacement;
     void *trampoline;
     size_t patch_size;
+    size_t trampoline_capacity;
+    unsigned char original[BML_DETOUR_MAX_COPY_BYTES];
 } BmlDetourInstall;
 
 typedef struct BmlStashCoreDetourInstall {
@@ -1498,6 +1502,36 @@ static int bml_measure_supported_patch_window(const unsigned char *target_bytes,
     return 0;
 }
 
+static int bml_rollback_absolute_jump_detour(BmlDetourInstall *install) {
+    uintptr_t page_start = 0U;
+    size_t page_span = 0U;
+    int result = 0;
+
+    if (install == NULL || install->target == NULL || install->patch_size == 0U) {
+        return 0;
+    }
+    if (bml_page_span_for_patch(install->target, install->patch_size, &page_start, &page_span) != 0 ||
+        mprotect((void *)page_start, page_span, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        result = -1;
+    } else {
+        memcpy(install->target, install->original, install->patch_size);
+        __builtin___clear_cache((char *)install->target, (char *)install->target + install->patch_size);
+        if (mprotect((void *)page_start, page_span, PROT_READ | PROT_EXEC) != 0) {
+            result = -1;
+        }
+    }
+    if (install->trampoline != NULL && install->trampoline_capacity != 0U) {
+        (void)munmap(install->trampoline, install->trampoline_capacity);
+    }
+    install->target = NULL;
+    install->replacement = NULL;
+    install->trampoline = NULL;
+    install->patch_size = 0U;
+    install->trampoline_capacity = 0U;
+    memset(install->original, 0, sizeof(install->original));
+    return result;
+}
+
 static int bml_install_absolute_jump_detour(void *target, void *replacement, BmlDetourInstall *install, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     const unsigned char *target_bytes = (const unsigned char *)target;
     unsigned char original[BML_DETOUR_MAX_COPY_BYTES];
@@ -1574,6 +1608,8 @@ static int bml_install_absolute_jump_detour(void *target, void *replacement, Bml
     install->replacement = replacement;
     install->trampoline = trampoline;
     install->patch_size = patch_size;
+    install->trampoline_capacity = trampoline_capacity;
+    memcpy(install->original, original, patch_size);
     return 0;
 }
 
@@ -2197,6 +2233,8 @@ static int g_bml_uid_to_entity_replacement_calls = 0;
 static int g_bml_stash_uid_prompt_context_recorded = 0;
 static int g_bml_stash_uid_prompt_context_consumed = 0;
 static bool g_bml_stash_recent_uid_to_entity_was_framework_stash = false;
+static bool g_bml_stash_recent_uid_to_entity_tooltip_armed = false;
+static int g_bml_stash_recent_uid_to_entity_consecutive_count = 0;
 static void *g_bml_stash_recent_uid_to_entity = NULL;
 
 static BmlStashCoreDetourInstall g_bml_stash_access_placement_targets[8];
@@ -2232,6 +2270,8 @@ static int g_bml_stash_playable_shop_already_placed_count = 0;
 static void *g_bml_stash_playable_last_placed_shop_chest = NULL;
 static void *g_bml_stash_playable_last_placed_shop_lid = NULL;
 static void *g_bml_stash_playable_last_shop_map = NULL;
+static int g_bml_stash_playable_shop_generation = 0;
+static int g_bml_stash_playable_last_shop_generation = -1;
 static int g_bml_stash_playable_multiplayer_value = 0;
 static int g_bml_stash_playable_clientnum_value = 0;
 static bool g_bml_stash_playable_multiplayer_client_blocked = false;
@@ -2595,6 +2635,14 @@ static void bml_entity_set_skill(void *entity, int index, int32_t value) {
     }
     bml_entity_set_s32(entity, BML_STASH_ENTITY_OFFSET_SKILL + (uintptr_t)index * sizeof(int32_t), value);
 }
+static double bml_entity_get_real(void *entity, uintptr_t offset) {
+    double value = 0.0;
+    if (entity == NULL) {
+        return value;
+    }
+    memcpy(&value, (unsigned char *)entity + offset, sizeof(value));
+    return value;
+}
 static void bml_entity_set_real(void *entity, uintptr_t offset, double value) {
     if (entity == NULL) {
         return;
@@ -2629,11 +2677,14 @@ static bool bml_stash_any_selected_entity_is_framework_stash_access(void) {
 }
 static void bml_stash_clear_recent_uid_to_entity_prompt_context(void) {
     g_bml_stash_recent_uid_to_entity_was_framework_stash = false;
+    g_bml_stash_recent_uid_to_entity_tooltip_armed = false;
     g_bml_stash_recent_uid_to_entity = NULL;
+    g_bml_stash_recent_uid_to_entity_consecutive_count = 0;
 }
 
 static bool bml_stash_consume_recent_uid_to_entity_prompt_context(void) {
-    bool was_framework_stash = g_bml_stash_recent_uid_to_entity_was_framework_stash;
+    bool was_framework_stash = g_bml_stash_recent_uid_to_entity_was_framework_stash &&
+        (g_bml_stash_recent_uid_to_entity_tooltip_armed || g_bml_stash_recent_uid_to_entity_consecutive_count >= 2);
     if (was_framework_stash) {
         ++g_bml_stash_uid_prompt_context_consumed;
     }
@@ -2687,7 +2738,7 @@ static int bml_stash_resolve_inventory_functions(char *error_code, size_t error_
     void *list_free_all_address = dlsym(RTLD_DEFAULT, "_Z12list_FreeAllP6list_t");
     if (new_item_address == NULL || list_free_all_address == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SYMBOL_MISSING");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior requires newItem and list_FreeAll to be resolvable.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior requires newItem and list_FreeAll to be resolvable.");
         return -1;
     }
     memcpy(&g_bml_stash_new_item, &new_item_address, sizeof(g_bml_stash_new_item));
@@ -2703,7 +2754,7 @@ static int bml_configure_stash_core_behavior(const char *profile_dir, char *erro
         bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0 ||
         bml_join_path(g_bml_stash_diagnostics_path, sizeof(g_bml_stash_diagnostics_path), profile_dir, BML_STASH_DIAGNOSTICS_RELATIVE_PATH) != 0) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_PATH_TOO_LONG");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior state path exceeded PATH_MAX.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior state path exceeded PATH_MAX.");
         return -1;
     }
     if (bml_stash_resolve_inventory_functions(error_code, error_code_size, error_message, error_message_size) != 0) {
@@ -2730,7 +2781,7 @@ static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *er
     }
     if (g_bml_stash_list_free_all == NULL || g_bml_stash_new_item == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SYMBOL_MISSING");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior cannot load inventory before list/newItem helpers resolve.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior cannot load inventory before list/newItem helpers resolve.");
         return -1;
     }
 
@@ -2775,23 +2826,30 @@ static void bml_mark_stash_inventory_dirty(void) {
 
 static int bml_save_stash_inventory_if_dirty(char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     FILE *file;
+    char tmp_path[PATH_MAX];
+    bool close_failed = false;
     if (!g_bml_stash_core_behavior_active || !g_bml_stash_core_behavior_dirty) {
         return 0;
     }
     if (g_bml_stash_core_behavior_inventory == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_INVENTORY_MISSING");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior had dirty state but no bound inventory list.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior had dirty state but no bound inventory list.");
         return -1;
     }
     if (bml_mkdir_p(g_bml_stash_state_dir_path) != 0) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_DIR_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior could not create the Stash state directory.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior could not create the Stash state directory.");
         return -1;
     }
-    file = fopen(g_bml_stash_inventory_path, "wb");
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%ld", g_bml_stash_inventory_path, (long)getpid()) >= (int)sizeof(tmp_path)) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_PATH_TOO_LONG");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior temporary inventory path exceeded PATH_MAX.");
+        return -1;
+    }
+    file = fopen(tmp_path, "wb");
     if (file == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_WRITE_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior could not open the Stash inventory state file for writing.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior could not open the temporary Stash inventory state file for writing.");
         return -1;
     }
     fputs("# bml-stash-inventory-v1\n", file);
@@ -2802,10 +2860,32 @@ static int bml_save_stash_inventory_if_dirty(char *error_code, size_t error_code
         }
         fprintf(file, "%d %d %d %d %" PRIu32 " %d\n", item->type, item->status, (int)item->beatitude, (int)item->count, item->appearance, item->identified ? 1 : 0);
     }
-    if (fclose(file) != 0) {
-        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_CLOSE_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior failed while closing the Stash inventory state file.");
+    if (ferror(file) != 0 || fflush(file) != 0 || fsync(fileno(file)) != 0) {
+        close_failed = fclose(file) != 0;
+        (void)close_failed;
+        (void)unlink(tmp_path);
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_WRITE_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior failed while writing the temporary Stash inventory state file; the previous inventory file was left untouched.");
         return -1;
+    }
+    if (fclose(file) != 0) {
+        (void)unlink(tmp_path);
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_CLOSE_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior failed while closing the temporary Stash inventory state file; the previous inventory file was left untouched.");
+        return -1;
+    }
+    if (rename(tmp_path, g_bml_stash_inventory_path) != 0) {
+        (void)unlink(tmp_path);
+        bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_STATE_RENAME_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior could not atomically replace the Stash inventory state file; the previous inventory file was left untouched.");
+        return -1;
+    }
+    {
+        int dir_fd = open(g_bml_stash_state_dir_path, O_RDONLY | O_DIRECTORY);
+        if (dir_fd >= 0) {
+            (void)fsync(dir_fd);
+            (void)close(dir_fd);
+        }
     }
     g_bml_stash_core_behavior_dirty = false;
     g_bml_stash_core_behavior_saves += 1;
@@ -2957,7 +3037,13 @@ static void *bml_uid_to_entity_replacement(int uid) {
         entity = g_bml_uid_to_entity_original(uid);
     }
     if (bml_stash_entity_is_framework_stash_access(entity)) {
+        if (g_bml_stash_recent_uid_to_entity_was_framework_stash && g_bml_stash_recent_uid_to_entity == entity) {
+            g_bml_stash_recent_uid_to_entity_consecutive_count += 1;
+        } else {
+            g_bml_stash_recent_uid_to_entity_consecutive_count = 1;
+        }
         g_bml_stash_recent_uid_to_entity_was_framework_stash = true;
+        g_bml_stash_recent_uid_to_entity_tooltip_armed = false;
         g_bml_stash_recent_uid_to_entity = entity;
         ++g_bml_stash_uid_prompt_context_recorded;
     } else {
@@ -2968,11 +3054,15 @@ static void *bml_uid_to_entity_replacement(int uid) {
 
 static const char *bml_language_get_replacement(int language_id) {
     ++g_bml_language_get_replacement_calls;
-    if (language_id == BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST) {
+    if (language_id == BML_STASH_PROMPT_LANGUAGE_ID_TOOLTIP_ACTION && g_bml_stash_recent_uid_to_entity_was_framework_stash) {
+        g_bml_stash_recent_uid_to_entity_tooltip_armed = true;
+    } else if (language_id == BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST) {
         bool recent_uid_stash = bml_stash_consume_recent_uid_to_entity_prompt_context();
         if (bml_stash_any_selected_entity_is_framework_stash_access() || recent_uid_stash) {
             return BML_STASH_PROMPT_OPEN_STASH;
         }
+    } else if (g_bml_stash_recent_uid_to_entity_was_framework_stash) {
+        bml_stash_clear_recent_uid_to_entity_prompt_context();
     }
     if (g_bml_language_get_original != NULL) {
         return g_bml_language_get_original(language_id);
@@ -2988,6 +3078,7 @@ static int bml_stash_generate_dungeon_replacement(char *levelset, uint32_t seed,
     if (g_bml_stash_generate_dungeon_original != NULL) {
         result = g_bml_stash_generate_dungeon_original(levelset, seed, tuple_low, tuple_high);
     }
+        g_bml_stash_playable_shop_generation += 1;
     if (g_bml_stash_playable_active) {
         (void)bml_stash_playable_try_place_shop_chest_and_lid(bml_stash_playable_get_map_symbol());
     }
@@ -3211,6 +3302,32 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     g_bml_stash_playable_lobby_placements_failed += 1;
     return false;
 }
+static bool bml_stash_playable_shop_tile_is_occupied(void *map_argument, double chest_x, double chest_y) {
+    BmlBaronyList *entity_list = bml_stash_playable_get_map_entity_list(map_argument);
+    unsigned int candidate_tile_x = chest_x >= 0.0 ? (unsigned int)(chest_x / 16.0) : 0U;
+    unsigned int candidate_tile_y = chest_y >= 0.0 ? (unsigned int)(chest_y / 16.0) : 0U;
+    if (entity_list == NULL) {
+        return false;
+    }
+    for (const BmlBaronyNode *node = entity_list->first; node != NULL; node = node->next) {
+        void *entity = node->element;
+        double x;
+        double y;
+        if (entity == NULL) {
+            continue;
+        }
+        x = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_X);
+        y = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_Y);
+        if (x < 0.0 || y < 0.0) {
+            continue;
+        }
+        if ((unsigned int)(x / 16.0) == candidate_tile_x && (unsigned int)(y / 16.0) == candidate_tile_y) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool bml_stash_playable_try_place_shop_chest_and_lid(void *map_argument) {
     BmlStashPlacementMapPrefix *map_prefix = (BmlStashPlacementMapPrefix *)map_argument;
     void *shoparea_symbol;
@@ -3222,7 +3339,7 @@ static bool bml_stash_playable_try_place_shop_chest_and_lid(void *map_argument) 
     if (!g_bml_stash_playable_active) {
         return false;
     }
-    if (g_bml_stash_playable_last_shop_map == map_argument && g_bml_stash_playable_last_placed_shop_chest != NULL) {
+    if (g_bml_stash_playable_last_shop_map == map_argument && g_bml_stash_playable_last_shop_generation == g_bml_stash_playable_shop_generation && g_bml_stash_playable_last_placed_shop_chest != NULL) {
         g_bml_stash_playable_shop_already_placed_count += 1;
         return false;
     }
@@ -3240,17 +3357,23 @@ static bool bml_stash_playable_try_place_shop_chest_and_lid(void *map_argument) 
     for (x = 0U; x < map_prefix->width; ++x) {
         for (y = 0U; y < map_prefix->height; ++y) {
             if (shoparea[y + x * map_prefix->height]) {
+                double chest_x = (double)x * 16.0 + 8.0;
+                double chest_y = (double)y * 16.0 + 8.0;
+                if (bml_stash_playable_shop_tile_is_occupied(map_argument, chest_x, chest_y)) {
+                    continue;
+                }
                 g_bml_stash_playable_shop_placements_attempted += 1;
-                if (bml_stash_playable_place_chest_and_lid_at(map_argument, (double)x * 16.0 + 8.0, (double)y * 16.0 + 8.0, 0.0, &chest, &lid)) {
+                if (bml_stash_playable_place_chest_and_lid_at(map_argument, chest_x, chest_y, 0.0, &chest, &lid)) {
                     g_bml_stash_playable_last_placed_shop_chest = chest;
                     g_bml_stash_playable_last_placed_shop_lid = lid;
                     g_bml_stash_playable_last_shop_map = map_argument;
-                    bml_append_stash_diagnostic_event("stash_access_point_created", "shop", map_prefix->name, true, (double)x * 16.0 + 8.0, (double)y * 16.0 + 8.0, -1);
+                    g_bml_stash_playable_last_shop_generation = g_bml_stash_playable_shop_generation;
+                    bml_append_stash_diagnostic_event("stash_access_point_created", "shop", map_prefix->name, true, chest_x, chest_y, -1);
                     g_bml_stash_playable_shop_placements_succeeded += 1;
                     return true;
                 }
                 g_bml_stash_playable_shop_placements_failed += 1;
-                return false;
+                continue;
             }
         }
     }
@@ -3493,6 +3616,7 @@ static void bml_reset_stash_access_placement_state(void) {
     g_bml_uid_to_entity_replacement_calls = 0;
     g_bml_stash_uid_prompt_context_recorded = 0;
     g_bml_stash_uid_prompt_context_consumed = 0;
+    g_bml_stash_recent_uid_to_entity_tooltip_armed = false;
     bml_stash_clear_recent_uid_to_entity_prompt_context();
     g_bml_stash_placement_discovery_active = false;
     g_bml_stash_placement_discovery_report_path[0] = '\0';
@@ -3637,6 +3761,53 @@ static int bml_install_stash_core_detour_target(BmlStashCoreDetourInstall *targe
     return 0;
 }
 
+static bool bml_stash_forced_install_failure_due(size_t installed_count) {
+    const char *value = getenv("BML_STASH_FORCE_INSTALL_FAILURE_AFTER");
+    char *end = NULL;
+    long threshold;
+    if (!bml_has_value(value)) {
+        return false;
+    }
+    errno = 0;
+    threshold = strtol(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0' || threshold <= 0) {
+        return false;
+    }
+    return installed_count >= (size_t)threshold;
+}
+
+static void bml_rollback_stash_detour_targets(BmlStashCoreDetourInstall *targets, size_t target_count) {
+    for (size_t reverse_index = target_count; reverse_index > 0U; --reverse_index) {
+        BmlStashCoreDetourInstall *target = &targets[reverse_index - 1U];
+        bool failed_target = strcmp(target->status, "failed") == 0;
+        if (strcmp(target->status, "installed") == 0 || (failed_target && target->install.target != NULL)) {
+            (void)bml_rollback_absolute_jump_detour(&target->install);
+            if (!failed_target) {
+                target->status = "rolled_back";
+            }
+        }
+    }
+}
+
+static int bml_install_stash_detour_group(BmlStashCoreDetourInstall *targets, size_t target_count) {
+    size_t installed_count = 0U;
+    for (size_t index = 0U; index < target_count; ++index) {
+        if (bml_install_stash_core_detour_target(&targets[index]) != 0) {
+            bml_rollback_stash_detour_targets(targets, target_count);
+            return -1;
+        }
+        installed_count += 1U;
+        if (bml_stash_forced_install_failure_due(installed_count)) {
+            targets[index].status = "failed";
+            bml_copy_string(targets[index].error_code, sizeof(targets[index].error_code), "BML_STASH_FORCED_INSTALL_FAILURE");
+            bml_copy_string(targets[index].error_message, sizeof(targets[index].error_message), "BML_STASH_FORCE_INSTALL_FAILURE_AFTER requested a fake-provider transactional rollback after at least one detour was installed.");
+            bml_rollback_stash_detour_targets(targets, target_count);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int bml_write_stash_core_detour_install_report(const char *report_path, const char *test_name, const BmlStashCoreDetourInstall *targets, size_t target_count) {
     size_t installed_count = 0U;
     size_t failed_count = 0U;
@@ -3757,13 +3928,9 @@ static int bml_run_stash_core_passthrough_install(const char *report_path) {
             result = -1;
         }
     }
-    if (result == 0) {
-        for (size_t index = 0U; index < target_count; ++index) {
-            if (bml_install_stash_core_detour_target(&targets[index]) != 0) {
-                result = -1;
-                break;
-            }
-        }
+    if (result == 0 && bml_install_stash_detour_group(targets, target_count) != 0) {
+        bml_reset_stash_core_passthrough_state();
+        result = -1;
     }
 
     if (bml_write_stash_core_detour_install_report(report_path, "stash-core-passthrough-install", targets, target_count) != 0) {
@@ -3895,15 +4062,40 @@ static int bml_run_stash_access_placement_self_test(char *error_code, size_t err
         bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not resolve the fake Stash prompt entity through uidToEntity.");
         return -1;
     }
-    (void)target_language_get(3998);
+    if (strcmp(target_language_get(BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST), "Open chest") != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_UID_PROMPT_BROAD");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test observed a non-tooltip uidToEntity result leaking into the vanilla chest prompt.");
+        return -1;
+    }
+    if (target_uid_to_entity(stash_prompt_uid) != stash_prompt_entity || target_uid_to_entity(stash_prompt_uid) != stash_prompt_entity) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_UID_PROMPT_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not resolve the fake Stash prompt entity through the repeated tooltip uidToEntity path.");
+        return -1;
+    }
     if (strcmp(target_language_get(BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST), BML_STASH_PROMPT_OPEN_STASH) != 0) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_UID_PROMPT_FAILED");
-        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not rename the hover tooltip prompt after uidToEntity resolved a framework Stash access entity.");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not rename the hover prompt after the tooltip resolved a framework Stash access entity twice.");
         return -1;
     }
     if (strcmp(target_language_get(BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST), "Open chest") != 0) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_UID_PROMPT_LEAKED");
         bml_copy_string(error_message, error_message_size, "Stash access/placement self-test observed uidToEntity prompt context leaking past one Language::get(4005) call.");
+        return -1;
+    }
+    if (target_uid_to_entity(stash_prompt_uid) != stash_prompt_entity) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_UID_PROMPT_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not resolve the fake Stash prompt entity through uidToEntity before tooltip arming.");
+        return -1;
+    }
+    (void)target_language_get(BML_STASH_PROMPT_LANGUAGE_ID_TOOLTIP_ACTION);
+    if (strcmp(target_language_get(BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST), BML_STASH_PROMPT_OPEN_STASH) != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_UID_PROMPT_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test did not rename the hold-to-activate hover prompt after uidToEntity resolved a framework Stash access entity.");
+        return -1;
+    }
+    if (strcmp(target_language_get(BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST), "Open chest") != 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_ACCESS_PLACEMENT_SELF_TEST_UID_PROMPT_LEAKED");
+        bml_copy_string(error_message, error_message_size, "Stash access/placement self-test observed uidToEntity prompt context leaking past one hold-to-activate Language::get(4005) call.");
         return -1;
     }
     vanilla_prompt_entity = target_new_entity(188, 2U, NULL, NULL);
@@ -3970,13 +4162,9 @@ static int bml_run_stash_access_placement_passthrough_install(const char *report
             result = -1;
         }
     }
-    if (result == 0) {
-        for (size_t index = 0U; index < target_count; ++index) {
-            if (bml_install_stash_core_detour_target(&targets[index]) != 0) {
-                result = -1;
-                break;
-            }
-        }
+    if (result == 0 && bml_install_stash_detour_group(targets, target_count) != 0) {
+        bml_reset_stash_access_placement_state();
+        result = -1;
     }
 
     bml_register_stash_access_placement_exit_report(report_path, targets, target_count);
@@ -4032,7 +4220,7 @@ static int bml_write_stash_core_behavior_report(const char *report_path, const c
             fputs("{\"code\": ", file);
             bml_json_write_escaped(file, bml_has_value(target->error_code) ? target->error_code : "BML_STASH_CORE_BEHAVIOR_TARGET_FAILED");
             fputs(", \"message\": ", file);
-            bml_json_write_escaped(file, bml_has_value(target->error_message) ? target->error_message : "Experimental Stash core behavior target failed.");
+            bml_json_write_escaped(file, bml_has_value(target->error_message) ? target->error_message : "Stash core behavior target failed.");
             fputc('}', file);
         } else {
             fputs("null", file);
@@ -4047,7 +4235,7 @@ static int bml_write_stash_core_behavior_report(const char *report_path, const c
         fputs("{\"code\": ", file);
         bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_STASH_CORE_BEHAVIOR_FAILED");
         fputs(", \"message\": ", file);
-        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Experimental Stash core behavior failed.");
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Stash core behavior failed.");
         fputc('}', file);
     } else {
         fputs("null", file);
@@ -4088,25 +4276,25 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
     }
     if (fake_provider_marker == NULL || get_address == NULL || add_void_address == NULL || add_chest_address == NULL || get_item_address == NULL || close_address == NULL || g_bml_stash_new_item == NULL) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SYMBOL_MISSING");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test requires the fake provider plus get/add/get-item/close/newItem symbols.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test requires the fake provider plus get/add/get-item/close/newItem symbols.");
         return -1;
     }
     if (bml_mkdir_p(g_bml_stash_state_dir_path) != 0) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_STATE_DIR_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test could not create the state directory.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test could not create the state directory.");
         return -1;
     }
     {
         FILE *seed = fopen(g_bml_stash_inventory_path, "wb");
         if (seed == NULL) {
             bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SEED_FAILED");
-            bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test could not seed the inventory state file.");
+            bml_copy_string(error_message, error_message_size, "Stash core behavior self-test could not seed the inventory state file.");
             return -1;
         }
         fputs("# bml-stash-inventory-v1\n1 2 -1 3 12345 1\n", seed);
         if (fclose(seed) != 0) {
             bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SEED_CLOSE_FAILED");
-            bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test could not close the seeded inventory state file.");
+            bml_copy_string(error_message, error_message_size, "Stash core behavior self-test could not close the seeded inventory state file.");
             return -1;
         }
     }
@@ -4119,7 +4307,7 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
     inventory = (BmlBaronyList *)target_get(NULL);
     if (inventory == NULL || bml_stash_inventory_count(inventory) != 1U) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_LOAD_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not load exactly one seeded item through getChestInventoryList.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not load exactly one seeded item through getChestInventoryList.");
         return -1;
     }
     if (loaded_count != NULL) {
@@ -4129,20 +4317,20 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
     void_added = target_add_void(NULL, 0, void_item, false, NULL);
     if (void_added == NULL || bml_stash_inventory_count(inventory) != 2U) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_ADD_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not route addItemToVoidChestServer into the bound inventory.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not route addItemToVoidChestServer into the bound inventory.");
         return -1;
     }
     generic_item = g_bml_stash_new_item(3, 4, 1, 5, 24680U, false, NULL);
     generic_added = target_add_chest(NULL, generic_item, false, NULL);
     if (generic_added == NULL || bml_stash_inventory_count(inventory) != 3U) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_GENERIC_ADD_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not route addItemToChest into the bound inventory.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not route addItemToChest into the bound inventory.");
         return -1;
     }
     generic_removed = target_get_item(NULL, generic_added, 5, false);
     if (generic_removed == NULL || bml_stash_inventory_count(inventory) != 2U) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_GENERIC_GET_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not route getItemFromChest removal through the bound inventory.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not route getItemFromChest removal through the bound inventory.");
         return -1;
     }
     target_close(NULL);
@@ -4151,7 +4339,7 @@ static int bml_run_stash_core_behavior_self_test(size_t *loaded_count, size_t *s
     }
     if (g_bml_stash_core_behavior_saves < 1 || bml_count_stash_inventory_file_rows() != 2U) {
         bml_copy_string(error_code, error_code_size, "BML_STASH_CORE_BEHAVIOR_SELF_TEST_SAVE_FAILED");
-        bml_copy_string(error_message, error_message_size, "Experimental Stash core behavior self-test did not persist exactly two inventory rows after closeChest.");
+        bml_copy_string(error_message, error_message_size, "Stash core behavior self-test did not persist exactly two inventory rows after closeChest.");
         return -1;
     }
     return 0;
@@ -4218,6 +4406,7 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
     size_t access_target_count = sizeof(access_targets) / sizeof(access_targets[0]);
     int result = 0;
     char error_code[BML_MAX_TEXT];
+    bool core_installed = false;
     char error_message[BML_MAX_TEXT];
 
     memset(error_code, 0, sizeof(error_code));
@@ -4227,7 +4416,7 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
         bml_join_path(g_bml_stash_inventory_path, sizeof(g_bml_stash_inventory_path), profile_dir, BML_STASH_INVENTORY_RELATIVE_PATH) != 0 ||
         bml_join_path(g_bml_stash_diagnostics_path, sizeof(g_bml_stash_diagnostics_path), profile_dir, BML_STASH_DIAGNOSTICS_RELATIVE_PATH) != 0) {
         bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_PATH_TOO_LONG");
-        bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable state path exceeded PATH_MAX.");
+        bml_copy_string(error_message, sizeof(error_message), "Production Stash state path exceeded PATH_MAX.");
         (void)bml_write_stash_playable_install_report(report_path, "failed", error_code, error_message);
         return -1;
     }
@@ -4262,6 +4451,8 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
     g_bml_stash_playable_last_placed_shop_chest = NULL;
     g_bml_stash_playable_last_placed_shop_lid = NULL;
     g_bml_stash_playable_last_shop_map = NULL;
+    g_bml_stash_playable_shop_generation = 0;
+    g_bml_stash_playable_last_shop_generation = -1;
     g_bml_stash_playable_multiplayer_value = 0;
     g_bml_stash_playable_clientnum_value = 0;
     g_bml_stash_playable_multiplayer_client_blocked = false;
@@ -4282,13 +4473,12 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
             result = -1;
         }
     }
+    if (result == 0 && bml_install_stash_detour_group(core_targets, core_target_count) != 0) {
+        bml_reset_stash_core_passthrough_state();
+        result = -1;
+    }
     if (result == 0) {
-        for (size_t index = 0U; index < core_target_count; ++index) {
-            if (bml_install_stash_core_detour_target(&core_targets[index]) != 0) {
-                result = -1;
-                break;
-            }
-        }
+        core_installed = true;
     }
 
     bml_init_stash_core_detour_target(&access_targets[0], "actChest", "_Z8actChestP6Entity", bml_stash_entity_action_function_address(bml_stash_act_chest_replacement));
@@ -4305,15 +4495,18 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
             result = -1;
         }
     }
-    if (result == 0) {
-        for (size_t index = 0U; index < access_target_count; ++index) {
-            if (bml_install_stash_core_detour_target(&access_targets[index]) != 0) {
-                result = -1;
-                break;
-            }
-        }
+    if (result == 0 && bml_install_stash_detour_group(access_targets, access_target_count) != 0) {
+        bml_rollback_stash_detour_targets(core_targets, core_target_count);
+        bml_reset_stash_core_passthrough_state();
+        bml_reset_stash_access_placement_state();
+        result = -1;
     }
 
+    if (result != 0 && core_installed) {
+        bml_rollback_stash_detour_targets(core_targets, core_target_count);
+        bml_reset_stash_core_passthrough_state();
+        core_installed = false;
+    }
     if (result == 0) {
         g_bml_stash_playable_hooks_installed = true;
     }
@@ -4321,20 +4514,42 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
         void *fake_shop_map = dlsym(RTLD_DEFAULT, "bml_fake_shop_map");
         bml_stash_assign_actions_replacement(bml_stash_playable_get_map_symbol());
         if (fake_shop_map != NULL) {
+            BmlBaronyList *fake_shop_entities = bml_stash_playable_get_map_entity_list(fake_shop_map);
+            if (fake_shop_entities != NULL && g_bml_stash_new_entity_original != NULL) {
+                void *occupant = g_bml_stash_new_entity_original(188, 0U, fake_shop_entities, NULL);
+                bml_entity_set_real(occupant, BML_STASH_ENTITY_OFFSET_X, 136.0);
+                bml_entity_set_real(occupant, BML_STASH_ENTITY_OFFSET_Y, 136.0);
+            }
+            g_bml_stash_playable_shop_generation += 1;
+            bml_stash_assign_actions_replacement(fake_shop_map);
+            g_bml_stash_playable_shop_generation += 1;
             bml_stash_assign_actions_replacement(fake_shop_map);
         }
         if (g_bml_stash_playable_lobby_placements_succeeded < 1) {
             result = -1;
             bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_SELF_TEST_FAILED");
-            bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable install self-test did not place the lobby chest and lid.");
-        } else if (fake_shop_map != NULL && g_bml_stash_playable_shop_placements_succeeded < 1) {
+            bml_copy_string(error_message, sizeof(error_message), "Production Stash install self-test did not place the lobby chest and lid.");
+        } else if (fake_shop_map != NULL && g_bml_stash_playable_shop_placements_succeeded < 2) {
             result = -1;
             bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_SHOP_SELF_TEST_FAILED");
-            bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable install self-test did not place a generated-shop chest and lid.");
+            bml_copy_string(error_message, sizeof(error_message), "Production Stash install self-test did not place two generated-shop chest/lid pairs across fresh shop generations with the same map pointer.");
+        }
+    }
+    if (result != 0) {
+        if (!bml_has_value(error_code)) {
+            bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_FAILED");
+        }
+        if (!bml_has_value(error_message)) {
+            bml_copy_string(error_message, sizeof(error_message), "Production Stash playable install failed before gameplay hooks became active.");
         }
     }
     (void)bml_stash_playable_is_multiplayer_client();
 
+    if (result != 0) {
+        g_bml_stash_playable_active = false;
+        g_bml_stash_playable_hooks_installed = false;
+        g_bml_stash_core_behavior_active = false;
+    }
     if (bml_write_stash_playable_install_report(report_path, result == 0 ? "installed" : "failed", error_code, error_message) != 0) {
         return -1;
     }
@@ -4373,13 +4588,10 @@ static int bml_run_stash_core_behavior_install(const char *report_path, const ch
             }
         }
     }
-    if (result == 0) {
-        for (size_t index = 0U; index < target_count; ++index) {
-            if (bml_install_stash_core_detour_target(&targets[index]) != 0) {
-                result = -1;
-                break;
-            }
-        }
+    if (result == 0 && bml_install_stash_detour_group(targets, target_count) != 0) {
+        bml_reset_stash_core_passthrough_state();
+        g_bml_stash_core_behavior_active = false;
+        result = -1;
     }
     if (result == 0 && self_test_requested && bml_run_stash_core_behavior_self_test(&self_test_loaded_count, &self_test_saved_rows, error_code, sizeof(error_code), error_message, sizeof(error_message)) != 0) {
         result = -1;

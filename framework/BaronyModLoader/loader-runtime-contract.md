@@ -264,7 +264,9 @@ Canonical path:
 <profile>/BaronyModLoader/reports/stash-hook-report.json
 ```
 
-The report follows `framework/BaronyModLoader/schema/stash-hook-report.schema.json`. It records the direct Stash hook backend (`id`, `mode`, `strategy`, `patchBytes`), summarizes ready/blocked/not-installed hook groups, and lists per-target readiness for each required Stash hook target. In the current backend mode (`analyze-only`) every target is inspected but no gameplay detour is installed, so Stash fails closed with `BML_STASH_HOOKS_NOT_INSTALLED`. This is intentional until the backend grows a real relocation-safe detour/trampoline installer and focused in-game tests pass. Source patches under `native/barony-modloader-runtime/patches/` remain semantic/reference artifacts only; they are not the v1 installed-executable runtime path.
+The report follows `framework/BaronyModLoader/schema/stash-hook-report.schema.json`. It records the direct Stash hook backend (`id`, `mode`, `strategy`, `patchBytes`), summarizes ready/blocked/not-installed or installed hook groups, and lists per-target readiness for each required Stash hook target. Current production Stash manifests load with `failClosed=false` only when the validated installed-binary hook can install the required production target set; unsupported builds, missing symbols, or missing required targets still fail closed before the report can claim Stash loaded.
+
+Historical diagnostic reports may retain `BML_STASH_HOOKS_NOT_INSTALLED`, but must label that evidence as non-current.
 
 ## Error contract
 

@@ -7,6 +7,7 @@
   "platform": "linux-x86_64",
   "gameVersionString": "v5.0.2",
   "executable": {
+    "pathHint": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
     "sha256": "da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade",
     "buildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a"
   },
@@ -184,6 +185,29 @@
       ]
     },
     {
+      "id": "language_get",
+      "kind": "function",
+      "mangledSymbol": "_ZN8Language3getEi",
+      "demangledLabel": "Language::get(int)",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
+      "id": "uid_to_entity",
+      "kind": "function",
+      "mangledSymbol": "_Z11uidToEntityi",
+      "demangledLabel": "uidToEntity(int)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
       "id": "new_item",
       "kind": "function",
       "mangledSymbol": "_Z7newItem8ItemType6StatusssjbP6list_t",
@@ -309,6 +333,18 @@
       ]
     },
     {
+      "id": "selected_entity",
+      "kind": "data",
+      "mangledSymbol": "selectedEntity",
+      "demangledLabel": "selectedEntity",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop"
+      ]
+    },
+    {
       "id": "shoparea",
       "kind": "data",
       "mangledSymbol": "shoparea",
@@ -330,6 +366,11 @@
       ]
     }
   ],
+  "notes": [
+    "hookTargets mirror required Stash gameplay capabilities for the linux-x86_64-direct-stash-detour backend; production manifests load with failClosed=false when the required target set is installed, while unsupported builds or missing symbols/targets still fail closed.",
+    "The prompt-scoped target set includes uidToEntity, Language::get, and selectedEntity so selected-entity and hover-tooltip prompts can be scoped to framework Stash access points.",
+    "Static readiness remains conservative: it proves 42 ready, 0 blocked, and 0 missing targets across 30 required symbols, not full player-facing scenario coverage."
+  ],
   "hookTargets": [
     {
       "id": "stash_void_chest_binding",
@@ -340,7 +381,9 @@
         "act_chest_lid",
         "entity_get_chest_inventory_list",
         "entity_add_item_to_void_chest_server",
-        "entity_remove_item_from_void_chest_server"
+        "entity_remove_item_from_void_chest_server",
+        "language_get",
+        "selected_entity"
       ],
       "installStrategy": "relocation-safe-detour-required",
       "installStatus": "not_installed",
@@ -375,9 +418,12 @@
         "assign_actions",
         "new_entity",
         "set_sprite_attributes",
+        "language_get",
+        "uid_to_entity",
         "map",
         "map_rng",
         "map_server_rng",
+        "selected_entity",
         "tile_entity_list"
       ],
       "installStrategy": "relocation-safe-detour-required",
@@ -393,9 +439,12 @@
         "assign_actions",
         "new_entity",
         "set_sprite_attributes",
+        "language_get",
+        "uid_to_entity",
         "map",
         "map_rng",
         "map_server_rng",
+        "selected_entity",
         "shoparea",
         "tile_entity_list"
       ],

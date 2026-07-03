@@ -12,15 +12,15 @@
     "manifestPath": "mods/stash/bml-package.json",
     "checksum": {
       "algorithm": "sha256",
-      "sha256": "08dffb68b2cdfac4647e7f5093741efde995eeb95bb8417950910b295eb728ac",
-      "size": 12754
+      "sha256": "131ba718f1e8f1fa3bc7e963fe90450b564bb71142e90cf6d0da354b53fb6161",
+      "size": 12131
     },
     "archive": {
       "path": "framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "7c6e1d7031646639acb33391a31f4444c52bf7a85efba592891ffd3d0639eb0a",
-        "size": 6982
+        "sha256": "5ecab954358b073adc15d04db2556cbef9c5640d15b174be637cbdc6a163c0ea",
+        "size": 6913
       },
       "status": "packed_fixture",
       "notes": "Deterministic archive produced by `python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg`."
@@ -41,8 +41,8 @@
       "placement_shop",
       "multiplayer_version_metadata"
     ],
-    "status": "installed_binary_hook_contract_recorded_fail_closed",
-    "notes": "The v1 runtime path is the BML-owned installed-binary hook/bootstrap contract. Stash remains fail-closed because the required behavior-changing gameplay detour set is not installed yet."
+    "status": "installed_binary_hook_production_loaded_pending_player_scenarios",
+    "notes": "The v1 runtime path is the BML-owned installed-binary hook/bootstrap contract. For validated jml.stash manifests, the production Stash bundle now loads by default; live evidence covers the lobby access point/prompt, fake-provider evidence covers generated-shop placement and shared inventory binding, and player-facing generated-shop, persistence, spell, save/resume, disabled, and multiplayer scenarios remain unverified."
   },
   "runtimeProvenance": {
     "runtimeStrategy": "installed-binary-hook",
@@ -64,8 +64,8 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "71c303dd79f1e44f3a0c721c3fa2f4dbedcead594dcb3a82a2e78242704b4fdd",
-        "size": 113768
+        "sha256": "d46f47f84becdf32cfb4ec30bbea5789341d3922ff4b60c2bafc6829493ceb4b",
+        "size": 122896
       },
       "status": "built_available_production_stash",
       "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install the production playable Stash bundle for validated jml.stash manifests, place the lobby access point at x=232/y=456 on Start Map, bind framework and spell Void Chests to the persistent stash inventory, install generated-shop placement, and detour uidToEntity plus Language::get so framework Stash access points show the scoped hover prompt \"Open stash\" instead of the vanilla \"Open chest\". The opt-in access/placement pass-through proof now covers eight targets: actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get."
@@ -74,11 +74,11 @@
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "9d85832737839a0c059633b9831f9a0318676e49a0fc85951b60ef5d0bd4d64b",
-        "size": 12908
+        "sha256": "c46bd7d0266780b7af170925ed83d79694d042638a2cb834da8455860fde8ab1",
+        "size": 13035
       },
       "status": "present",
-      "notes": "Pins Steam app/build, Linux platform, game version, executable hash/build id, symbol probes, and fail-closed Stash hook targets."
+      "notes": "Pins Steam app/build, Linux platform, game version, executable hash/build id, 30 symbol probes, and Stash hook target groups including uidToEntity and Language::get prompt-scoped targets."
     },
     "runtimeInfo": {
       "path": "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
@@ -90,8 +90,8 @@
       "status": "present",
       "notes": "Fixture declares installed-binary-hook policy and rejects partial Stash loads."
     },
-    "status": "provenance_recorded_fail_closed",
-    "notes": "Release provenance is now the installed Steam/Linux executable plus BML hook artifacts, not a patched Barony source build."
+    "status": "provenance_recorded_production_stash_loaded",
+    "notes": "Release provenance is the installed Steam/Linux executable plus BML hook artifacts. Historical fail-closed reports are retained only as diagnostic evidence from earlier opt-in probes; they are not the current top-level runtime status."
   },
   "barony": {
     "upstreamRepository": "https://github.com/TurningWheel/Barony",
@@ -103,8 +103,8 @@
         "5.x",
         "v5.0.2"
       ],
-      "status": "installed_steam_linux_target_recorded_gameplay_pending",
-      "notes": "The current release target is Steam/Linux app 371970 build 22630456. Playable Stash compatibility is still pending function detours and in-game verification."
+      "status": "installed_steam_linux_target_recorded_production_lobby_verified",
+      "notes": "The current release target is Steam/Linux app 371970 build 22630456. Live quickstart evidence verifies the production lobby Stash access point and prompt; real generated-shop placement, persistence, spell-created Void Chest behavior, save/resume, disabled behavior, and multiplayer mismatch rejection remain unverified."
     }
   },
   "patchSeries": {
@@ -115,8 +115,8 @@
         "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
         "checksum": {
           "algorithm": "sha256",
-          "sha256": "1d278ccfa3bf319acbfb7577eeec2b5a69770eb942de4b2e5689efb3a322d989",
-          "size": 14642
+          "sha256": "70eee60c27d806d5d52ad9ffcf90997d62ed798389451b00abd44b383cd06626",
+          "size": 15154
         },
         "appliesTo": "TurningWheel/Barony",
         "baseRevision": "semantic-reference-only",
@@ -125,15 +125,15 @@
           "multiplayer_version_metadata"
         ],
         "verificationStatus": "semantic_reference_only",
-        "notes": "Historical source patch retained as design reference; it is not the primary v1 runtime provenance path."
+        "notes": "Historical source patch retained as a design reference and checksummed semantic artifact; it is not applied, built, or required by the v1 installed-binary-hook runtime."
       },
       {
         "id": "bml-stash-runtime-capabilities",
         "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
         "checksum": {
           "algorithm": "sha256",
-          "sha256": "3f5438e84f83b0beb00d30c45bd0d2d9046a5c88ade4bf88907151a085a15348",
-          "size": 20186
+          "sha256": "422c8eb4de4e12243f2d611f5521c56bc83792203f95b4305dcdf54b7787704b",
+          "size": 20280
         },
         "appliesTo": "TurningWheel/Barony",
         "baseRevision": "semantic-reference-only",
@@ -147,7 +147,7 @@
           "multiplayer_version_metadata"
         ],
         "verificationStatus": "semantic_reference_only",
-        "notes": "Historical source-level Stash hook reference; gameplay release support must come through installed-executable hook targets."
+        "notes": "Historical source-level Stash hook reference retained as a checksummed semantic artifact; production gameplay release support comes through installed-executable hook targets."
       }
     ],
     "notes": "Patch files remain checksummed semantic/source references only. The primary v1 release provenance is runtimeProvenance.installed-binary-hook."
@@ -158,7 +158,7 @@
     "notes": "No patched/source-built Barony executable is claimed for this v1 release manifest. The installed Steam executable identity is recorded under runtimeProvenance.installedExecutable."
   },
   "verification": {
-    "status": "installed_hook_fail_closed_gameplay_pending",
+    "status": "production_loaded_live_lobby_pending_player_scenarios",
     "artifactVerification": {
       "status": "complete",
       "evidence": [
@@ -175,8 +175,8 @@
       "notes": "Release artifact provenance is present for the installed Steam/Linux hook path."
     },
     "installedHookVerification": {
-      "status": "fail_closed_pending_detours",
-      "failClosed": true,
+      "status": "production_loaded_with_historical_fail_closed_diagnostics",
+      "failClosed": false,
       "reports": [
         {
           "kind": "runtime-load",
@@ -205,50 +205,50 @@
         {
           "kind": "stash-detour-install",
           "path": "BaronyModLoader/reports/stash-detour-install-report.json",
-          "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 and validates an opt-in process-lifetime pass-through detour install for Entity::addItemToVoidChestServer while runtime-load-report still contains BML_STASH_HOOKS_NOT_INSTALLED for the incomplete Stash hook set."
+          "status": "historical_passed_fail_closed_diagnostic",
+          "notes": "Historical native hook smoke with BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1 validated an opt-in process-lifetime pass-through detour install for Entity::addItemToVoidChestServer; its BML_STASH_HOOKS_NOT_INSTALLED result is retained as non-current fail-closed diagnostic evidence."
         },
         {
           "kind": "stash-core-detour-install",
           "path": "BaronyModLoader/reports/stash-core-detour-install-report.json",
-          "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_INSTALL_CORE_PASSTHROUGH=1 and validates opt-in process-lifetime pass-through detour installs for Entity::getChestInventoryList, Entity::addItemToChest, Entity::getItemFromChest, Entity::addItemToVoidChestServer, Entity::removeItemFromVoidChestServer, Entity::closeChest, and Entity::closeChestServer while runtime-load-report still contains BML_STASH_HOOKS_NOT_INSTALLED for the incomplete Stash hook set."
+          "status": "historical_passed_fail_closed_diagnostic",
+          "notes": "Historical native hook smoke with BML_STASH_INSTALL_CORE_PASSTHROUGH=1 validated opt-in process-lifetime pass-through detour installs for Entity::getChestInventoryList, Entity::addItemToChest, Entity::getItemFromChest, Entity::addItemToVoidChestServer, Entity::removeItemFromVoidChestServer, Entity::closeChest, and Entity::closeChestServer; its BML_STASH_HOOKS_NOT_INSTALLED result is retained as non-current fail-closed diagnostic evidence."
         },
         {
           "kind": "stash-access-placement-detour-install",
           "path": "BaronyModLoader/reports/stash-access-placement-detour-install-report.json",
-          "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 and BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1, validates opt-in process-lifetime pass-through detour installs for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, and Language::get, and proves fake-provider call-through including scoped prompt replacement while runtime-load-report still contains BML_STASH_HOOKS_NOT_INSTALLED for the incomplete opt-in-only probe."
+          "status": "historical_passed_fail_closed_diagnostic",
+          "notes": "Historical native hook smoke with BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1 and BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 validated opt-in process-lifetime pass-through detour installs for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get, and proved fake-provider call-through including scoped prompt replacement. Current production Stash activation is no longer represented by this fail-closed diagnostic mode."
         },
         {
           "kind": "stash-access-placement-self-test",
           "path": "BaronyModLoader/reports/stash-access-placement-self-test-report.json",
-          "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_ACCESS_PLACEMENT_SELF_TEST=1 under the fake provider and validates trampoline call-through for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, and Language::get, including generateDungeonResult=7, the scoped \"Open stash\" prompt replacement, and at least one replacement call for every installed access/placement target."
+          "status": "historical_passed_fail_closed_diagnostic",
+          "notes": "Historical fake-provider access/placement self-test validated trampoline call-through for actChest, actChestLid, generateDungeon, assignActions, newEntity, setSpriteAttributes, uidToEntity, and Language::get, including generateDungeonResult=7, selected-entity and uidToEntity hover-tooltip scoped \"Open stash\" prompt replacement, and replacement coverage for every installed access/placement/prompt target."
         },
         {
           "kind": "stash-placement-discovery",
           "path": "BaronyModLoader/reports/stash-placement-discovery-report.json",
-          "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_PLACEMENT_DISCOVERY=1 plus the access/placement pass-through install and records non-mutating placement context only. A timed installed Steam/Linux probe observed assignActions on the global Start Map, 19 newEntity calls and 5 setSpriteAttributes calls inside assignActions, and no placed Stash sprites; this informs the next lobby-placement mutation boundary but does not claim playable Stash access."
+          "status": "historical_passed_fail_closed_diagnostic",
+          "notes": "Historical non-mutating placement discovery ran with BML_STASH_PLACEMENT_DISCOVERY=1 plus access/placement pass-through install. It observed Start Map assignActions context and no placed Stash sprites before production placement was implemented; it is retained as historical discovery, not current runtime status."
         },
         {
           "kind": "stash-core-behavior",
           "path": "BaronyModLoader/reports/stash-core-behavior-report.json",
-          "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 under the fake provider, validates state-backed load/add/remove/save over stats[0]->void_chest_inventory via BaronyModLoader/state/stash-inventory-v1.tsv, exercises generic Entity::addItemToChest and Entity::getItemFromChest mutation against the same bound list, and still leaves runtime-load-report failed with BML_STASH_HOOKS_NOT_INSTALLED for the incomplete in-game Stash hook set. A timed installed Steam/Linux probe with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1, BML_STASH_INSTALL_ACCESS_PLACEMENT_PASSTHROUGH=1, and no fake self-test also writes this report with all seven core inventory lifecycle target detours installed plus the access/placement install report with all six target detours installed, while runtime-load-report remains failed only with BML_STASH_HOOKS_NOT_INSTALLED."
+          "status": "historical_passed_fail_closed_diagnostic",
+          "notes": "Historical native hook smoke with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 under the fake provider validates state-backed load/add/remove/save over stats[0]->void_chest_inventory via BaronyModLoader/state/stash-inventory-v1.tsv and exercises generic Entity::addItemToChest and Entity::getItemFromChest mutation against the same bound list. Historical timed Steam/Linux probes also verified the seven-target core inventory lifecycle diagnostic path plus the eight-target access/placement/prompt diagnostic path; current production load evidence is represented by the playable bundle reports and live lobby verification."
         },
         {
           "kind": "stash-hook",
           "path": "BaronyModLoader/reports/stash-hook-report.json",
           "status": "current_loaded_for_validated_stash_manifest",
-          "notes": "Required Stash targets currently report with a conservative static/readiness split (40 ready, 0 blocked, 0 missing across the five Stash hook groups for Steam/Linux build 22630456). Production Stash activation is installed for validated jml.stash manifests; BML_STASH_DISABLE_PLAYABLE remains available for diagnostic probes."
+          "notes": "Required Stash targets currently report with a conservative static/readiness split (42 ready, 0 blocked, 0 missing across the five Stash hook groups for Steam/Linux build 22630456) and the live symbol probe resolves all 30 required symbols. Production Stash activation is installed for validated jml.stash manifests; BML_STASH_DISABLE_PLAYABLE remains available for diagnostic probes."
         }
       ],
-      "notes": "Current status is production playable for validated jml.stash manifests on the pinned Steam/Linux executable. Fake-provider and live quickstart evidence cover the lobby access point, generated-shop placement hook, shared stash inventory binding, metadata guard, and scoped Open stash prompt; broader persistence/multiplayer scenarios remain listed under builtGameBehavior until fully player-verified."
+      "notes": "Current status is production loaded for validated jml.stash manifests on the pinned Steam/Linux executable. Fake-provider evidence covers lobby and generated-shop placement hooks, shared stash inventory binding, metadata guard, and scoped Open stash prompt; live quickstart/in-game evidence covers the lobby access point and prompt. Real generated-shop placement, persistence across run boundaries, spell-created Void Chest interaction, save/resume, disabled behavior, and multiplayer mismatch rejection remain unverified."
     },
     "builtGameBehavior": {
-      "status": "production_lobby_verified_remaining_scenarios_pending",
+      "status": "production_lobby_verified_remaining_player_scenarios_pending",
       "requiredScenarios": [
         "runtime manifest acceptance",
         "persistent Void Chest inventory across death, new run, and process relaunch",
@@ -259,7 +259,7 @@
         "multiplayer package/runtime mismatch rejection",
         "disabled package leaves vanilla Void Chest behavior unmodified"
       ],
-      "notes": "Live quickstart=barbarian against the stock Steam/Linux executable plus LD_PRELOAD hook verified runtime-load status=loaded, all 29 required symbols resolved, and state/stash-diagnostics.jsonl recorded a lobby stash access point on Start Map at x=232.000/y=456.000. Jeremy then confirmed in-game that the placement/lid/prompt work all works great. Remaining scenarios are generated-shop player verification, persistence across run boundaries, save/resume, disabled behavior, and actual multiplayer mismatch rejection."
+      "notes": "Live quickstart=barbarian against the stock Steam/Linux executable plus LD_PRELOAD hook verified runtime-load status=loaded, all 30 required symbols resolved, and state/stash-diagnostics.jsonl recorded a lobby stash access point on Start Map at x=232.000/y=456.000. Jeremy then confirmed in-game that the placement/lid/prompt work all works great. Fake-provider self-test verifies generated-shop placement logic and shared inventory/spell binding, but real generated-shop placement, persistence across death/new-run/relaunch, save/resume, disabled behavior, and actual multiplayer mismatch rejection remain unverified."
     }
   },
   "rollback": {

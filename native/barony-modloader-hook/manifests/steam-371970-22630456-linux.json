@@ -367,9 +367,9 @@
     }
   ],
   "notes": [
-    "Manifest pins the verified local Steam/Linux executable identity for Barony Steam app 371970 build 22630456.",
-    "symbols enumerates required dlsym(RTLD_DEFAULT, mangledSymbol) probe targets only; resolved symbols do not mean gameplay hooks are installed.",
-    "hookTargets mirrors required Stash gameplay capabilities for the linux-x86_64-direct-stash-detour backend; current backend mode is analyze-only and intentionally fails closed until detour installation is implemented and verified."
+    "hookTargets mirror required Stash gameplay capabilities for the linux-x86_64-direct-stash-detour backend; production manifests load with failClosed=false when the required target set is installed, while unsupported builds or missing symbols/targets still fail closed.",
+    "The prompt-scoped target set includes uidToEntity, Language::get, and selectedEntity so selected-entity and hover-tooltip prompts can be scoped to framework Stash access points.",
+    "Static readiness remains conservative: it proves 42 ready, 0 blocked, and 0 missing targets across 30 required symbols, not full player-facing scenario coverage."
   ],
   "hookTargets": [
     {

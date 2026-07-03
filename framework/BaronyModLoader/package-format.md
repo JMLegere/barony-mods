@@ -457,7 +457,7 @@ Example shape:
       "placement_shop",
       "multiplayer_version_metadata"
     ],
-    "status": "installed_binary_hook_contract_recorded_fail_closed"
+    "status": "installed_binary_hook_production_loaded_pending_player_scenarios"
   },
   "runtimeProvenance": {
     "runtimeStrategy": "installed-binary-hook",
@@ -481,7 +481,7 @@ Example shape:
         "sha256": "hook-library-sha256",
         "size": 12345
       },
-      "status": "built_available_fail_closed"
+      "status": "built_available_production_stash"
     },
     "hookManifest": {
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
@@ -501,12 +501,12 @@ Example shape:
       },
       "status": "present"
     },
-    "status": "provenance_recorded_fail_closed"
+    "status": "provenance_recorded_production_stash_loaded"
   },
   "verification": {
     "packageArchiveInstallEnableDisable": "verified-by-cli-evidence",
     "runtimeManifestGeneration": "verified-by-cli-evidence",
-    "installedHookStashBehavior": "pending-gameplay-detours"
+    "installedHookStashBehavior": "production-loaded; live lobby verified; generated-shop/persistence/spell/save/disabled/multiplayer scenarios pending"
   },
   "rollback": {
     "disableCommand": "profile disable <profile-dir> --mod-id jml.stash",

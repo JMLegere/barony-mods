@@ -154,16 +154,17 @@ python framework/BaronyModLoader/app/barony_mod_loader.py launch \
 
 ## Runnable verification scenarios
 
-The current native hook smoke is Linux-only and proves injection/reporting and symbol-probe plumbing only: `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so /usr/bin/true` should load the hook and write `<profile>/BaronyModLoader/reports/runtime-load-report.json` when the BML environment points at a profile, runtime manifest, and hook manifest. It does not install gameplay detours or create the Stash chest in-game.
+The current Linux hook smoke is still Linux-only, but it now covers more than injection/reporting. With fake providers it verifies production Stash bundle installation, generated-shop placement logic, shared persistent-inventory binding, spell-binding hooks, multiplayer metadata/client guard reporting, scoped prompt replacement, and diagnostics. A live Steam/Linux quickstart plus Jeremy's in-game check verifies the production lobby access point, lid, and `Open stash` prompt on Start Map. Real generated-shop placement, persistence across death/new-run/relaunch, player-cast spell-created Void Chest interaction, save/resume behavior, disabled behavior, and actual multiplayer mismatch rejection remain unverified.
 
 The intended staged verification sequence is:
 
 1. **No-op hook load:** launch `/usr/bin/true` or the installed Steam/Linux executable with `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so`, a BML profile, and a runtime manifest; verify `BaronyModLoader/reports/runtime-load-report.json` is written.
-2. **Provenance success/failure:** verify matching Steam build/executable hash/version succeeds and mismatched provenance fails closed before gameplay hooks install.
-3. **Symbol probe:** resolve a harmless symbol/global for Steam/Linux build `22630456` and write diagnostics without mutating gameplay state.
-4. **Lobby/shop placement:** after gameplay hooks exist, verify Stash access points are created by the installed game process when Stash is active.
-5. **Inventory persistence:** after gameplay hooks exist, verify the shared Void Chest inventory survives save/resume, death/new-run, and relaunch boundaries.
-6. **Disabled/mismatch behavior:** verify no Stash hooks activate when Stash is disabled and incompatible runtime/package metadata blocks clearly.
+2. **Provenance success/failure:** verify matching Steam build/executable hash/version succeeds and mismatched provenance fails closed before a package can claim support for an unsupported executable.
+3. **Symbol/readiness probe:** resolve all 30 required Steam/Linux symbols and confirm the conservative static readiness report remains at 42 ready, 0 blocked, and 0 missing targets.
+4. **Production load smoke:** enable `jml.stash` in the runtime manifest and verify the production Stash bundle loads by default without reintroducing an experimental enable gate.
+5. **Fake-provider behavior:** run `BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1` only under the fake provider to verify lobby and generated-shop placement paths, shared inventory/spell binding, multiplayer metadata/client guard reporting, and prompt scoping.
+6. **Live lobby behavior:** run a Steam/Linux quickstart and verify the Start Map lobby access point, lid, and `Open stash` prompt; this is the only live player-facing scenario currently verified.
+7. **Remaining player-facing scenarios:** separately verify real generated-shop placement, persistent inventory across run boundaries, player-cast spell-created Void Chest interaction, save/resume behavior, disabled package behavior, and multiplayer mismatch rejection before claiming those scenarios.
 
 The previous `/tmp/barony-bml-build/barony` source-build smoke path is obsolete for v1 Steam-current support.
 
@@ -184,14 +185,14 @@ The principle is to borrow product shape and operational discipline, not arbitra
 
 Stash is the first reference mod and the first acceptance test for BaronyModLoader.
 
-The current Linux hook smoke does not implement the Stash chest, placement, persistence, or gameplay hooks. The target Stash behavior remains:
+The production Linux hook now implements the Stash bundle for validated `jml.stash` runtime manifests. Fake-provider evidence covers lobby and generated-shop chest/lid placement, shared inventory binding used by spell-created Void Chests, multiplayer metadata/client guard reporting, diagnostics, and scoped `Open stash` prompt replacement. Live evidence currently covers the Start Map lobby access point/lid/prompt only. The target Stash behavior remains:
 
 1. The Stash package declares a persistent named inventory mapped to Barony's existing `void_chest_inventory` concept.
 2. The engine runtime loads that inventory from Stash's profile storage namespace.
 3. Every Void Chest access route reads and writes the same persistent inventory, including spell-created Void Chests.
-4. A permanent Void Chest access point appears in the lobby.
-5. A permanent Void Chest access point appears in every shop.
-6. Saves and multiplayer sessions record enough framework/mod metadata to reject incompatible states safely.
+4. A permanent Void Chest access point appears in the lobby; this has live quickstart/in-game evidence.
+5. A permanent Void Chest access point appears in every shop; this has fake-provider generated-shop evidence but still needs real generated-shop gameplay verification.
+6. Saves and multiplayer sessions record enough framework/mod metadata to reject incompatible states safely; save/resume, disabled behavior, and actual multiplayer mismatch scenarios remain unverified.
 7. The loader app presents install, compatibility, launch, logs, and rollback information clearly to the user.
 
 If Stash cannot be described as a package plus narrow framework modules, the framework design is not yet good enough.

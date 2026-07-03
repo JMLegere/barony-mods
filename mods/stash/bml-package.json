@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "kind": "gameplay-mod",
   "summary": "Profile-persistent shared Void Chest inventory for Barony.",
-  "description": "Stash augments Barony's existing Void Chest system through BaronyModLoader's engine-owned capabilities. This package manifest lives at mods/stash/bml-package.json so packaging commands can operate on the Stash package directory. It requests only persistent storage, persistent inventory, Void Chest binding, lobby/shop placement, and multiplayer metadata modules; native behavior remains represented as reviewable source patch artifacts, not as a verified playable Barony build.",
+  "description": "Stash augments Barony's existing Void Chest system through BaronyModLoader's engine-owned capabilities. This package manifest lives at mods/stash/bml-package.json so packaging commands can operate on the Stash package directory. It requests only persistent storage, persistent inventory, Void Chest binding, lobby/shop placement, and multiplayer metadata modules; production gameplay behavior is provided by the paired installed-binary hook runtime, while retained source patch artifacts are semantic references only.",
   "license": "MIT",
   "authors": [
     {
@@ -196,22 +196,23 @@
       {
         "id": "bml-runtime-handshake",
         "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "pending-upstream-release-or-git-sha",
+        "baseRevision": "semantic-reference-only",
         "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
-        "required": true,
+        "required": false,
         "providesCapabilities": [
           "multiplayer_version_metadata"
         ],
-        "sha256": "1d278ccfa3bf319acbfb7577eeec2b5a69770eb942de4b2e5689efb3a322d989",
-        "size": 14642,
-        "reviewStance": "source patch adds BaronyModLoader runtime manifest discovery, runtime-info reporting, and load report plumbing without claiming Stash gameplay behavior is verified"
+        "sha256": "70eee60c27d806d5d52ad9ffcf90997d62ed798389451b00abd44b383cd06626",
+        "size": 15154,
+        "reviewStance": "Historical source patch retained as a semantic reference for runtime manifest/report plumbing; not applied, built, or required by the v1 installed-binary-hook runtime.",
+        "verificationStatus": "semantic_reference_only"
       },
       {
         "id": "bml-stash-runtime-capabilities",
         "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "pending-upstream-release-or-git-sha",
+        "baseRevision": "semantic-reference-only",
         "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
-        "required": true,
+        "required": false,
         "providesCapabilities": [
           "persistent_storage",
           "persistent_inventory",
@@ -220,22 +221,16 @@
           "placement_shop",
           "multiplayer_version_metadata"
         ],
-        "sha256": "3f5438e84f83b0beb00d30c45bd0d2d9046a5c88ade4bf88907151a085a15348",
-        "size": 20186,
-        "reviewStance": "source patch implements the capability-oriented Stash runtime hooks; built-game behavioral verification remains pending"
+        "sha256": "422c8eb4de4e12243f2d611f5521c56bc83792203f95b4305dcdf54b7787704b",
+        "size": 20280,
+        "reviewStance": "Historical source patch retained as a semantic reference for Stash capability hook design; production behavior is provided by the installed-binary hook runtime and this patch is not a release runtime artifact.",
+        "verificationStatus": "semantic_reference_only"
       }
     ],
-    "builds": [
-      {
-        "platform": "linux-x86_64",
-        "baronyRevision": "pending-patched-build-source-revision",
-        "runtimeVersion": "0.1.0",
-        "artifact": "native/release/linux-x86_64/barony",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-        "status": "placeholder_pending_built_game",
-        "notes": "No playable patched Barony binary has been verified for this package manifest yet."
-      }
-    ]
+    "builds": [],
+    "runtimeStrategy": "installed-binary-hook",
+    "runtimeAuthority": "native/barony-modloader-hook/",
+    "notes": "Stash requires the BML native runtime, but the retained source patches are semantic references only; no source-built Barony binary is an active release artifact."
   },
   "dependencies": [
     {
@@ -260,22 +255,7 @@
   ],
   "loadAfter": [],
   "loadBefore": [],
-  "migrations": [
-    {
-      "id": "stash-0.1.0-initial-state",
-      "from": null,
-      "to": "0.1.0",
-      "phase": "runtime-load",
-      "path": "migrations/0001-initial-void-chest-inventory.json",
-      "affects": [
-        "profile-storage",
-        "save-metadata",
-        "void_chest_inventory"
-      ],
-      "idempotent": true,
-      "rollback": "not-required-for-initial-install"
-    }
-  ],
+  "migrations": [],
   "checksums": {
     "algorithm": "sha256",
     "file": "checksums.json",
@@ -289,21 +269,15 @@
       },
       {
         "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
-        "sha256": "1d278ccfa3bf319acbfb7577eeec2b5a69770eb942de4b2e5689efb3a322d989",
-        "size": 14642,
-        "status": "source_patch_artifact_present"
+        "sha256": "70eee60c27d806d5d52ad9ffcf90997d62ed798389451b00abd44b383cd06626",
+        "size": 15154,
+        "status": "semantic_reference_artifact_present_not_runtime"
       },
       {
         "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
-        "sha256": "3f5438e84f83b0beb00d30c45bd0d2d9046a5c88ade4bf88907151a085a15348",
-        "size": 20186,
-        "status": "source_patch_artifact_present"
-      },
-      {
-        "path": "migrations/0001-initial-void-chest-inventory.json",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-        "size": 0,
-        "status": "placeholder_pending_package_materialization"
+        "sha256": "422c8eb4de4e12243f2d611f5521c56bc83792203f95b4305dcdf54b7787704b",
+        "size": 20280,
+        "status": "semantic_reference_artifact_present_not_runtime"
       }
     ]
   },
@@ -311,28 +285,22 @@
     "homepage": "https://github.com/JMLegere/Barony",
     "upstream": "https://github.com/TurningWheel/Barony",
     "repository": "https://github.com/JMLegere/Barony",
-    "revision": "pending-patched-build-source-revision",
-    "revisionStatus": "pending_patched_build",
+    "revision": "semantic-reference-only",
+    "revisionStatus": "semantic_reference_only",
     "patchSeries": "native/barony-modloader-runtime/patches/",
     "patchArtifacts": [
       "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
       "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch"
     ],
-    "transparency": "Native behavior is represented as small reviewable source patch artifacts. This manifest does not claim that a patched playable Barony build has been produced or behaviorally verified."
+    "transparency": "Source patches are retained as reviewable semantic references only. The active v1 runtime is the installed-binary hook under native/barony-modloader-hook/, not a patched playable Barony build."
   },
   "build": {
-    "reproducible": true,
-    "system": "documented-native-build",
-    "instructions": "native/barony-modloader-runtime/README.md",
-    "status": "pending_patched_build",
-    "outputs": [
-      {
-        "platform": "linux-x86_64",
-        "path": "native/release/linux-x86_64/barony",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-        "status": "placeholder_pending_built_game"
-      }
-    ]
+    "reproducible": false,
+    "system": "not-active-v1-runtime-path",
+    "instructions": "native/barony-modloader-hook/README.md",
+    "status": "not_applicable_installed_binary_hook",
+    "outputs": [],
+    "notes": "No source-built Barony executable is claimed by this package; release provenance records the installed Steam executable and BML hook library instead."
   },
   "runtimeReports": {
     "paths": {
