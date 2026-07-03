@@ -144,6 +144,14 @@ class Elf64Image:
 def byte_is_short_relative_branch(byte: int) -> bool:
     return 0x70 <= byte <= 0x7F
 
+def return_instruction_length(byte: int) -> int:
+    if byte in {0xC3, 0xCB}:
+        return 1
+    if byte in {0xC2, 0xCA}:
+        return 3
+    return 0
+
+
 
 def modrm_is_register_only(modrm: int) -> bool:
     return (modrm & 0xC0) == 0xC0
@@ -239,8 +247,13 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
         return None, "BML_DETOUR_PATCH_WINDOW_TOO_LARGE", "Detour decoder reached the bounded scan limit before finding a safe patch window."
 
     op = code[offset]
-    if op in {0xC2, 0xC3, 0xCA, 0xCB}:
-        return None, "BML_DETOUR_EARLY_RETURN_UNSUPPORTED", "Detour target returns before the absolute-jump patch window can be reserved."
+    return_length = return_instruction_length(op)
+    if return_length:
+        if offset + return_length > limit:
+            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a return instruction."
+        if offset + return_length < PATCH_BYTES:
+            return None, "BML_DETOUR_EARLY_RETURN_UNSUPPORTED", "Detour target returns before the absolute-jump patch window can be reserved."
+        return return_length, None, None
 
     if op in {0xE8, 0xE9}:
         if offset + 5 > limit:

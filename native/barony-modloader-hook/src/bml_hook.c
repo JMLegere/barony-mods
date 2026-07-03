@@ -713,6 +713,16 @@ static bool bml_byte_is_short_relative_branch(unsigned char byte) {
     return byte >= 0x70U && byte <= 0x7fU;
 }
 
+static size_t bml_return_instruction_length(unsigned char byte) {
+    if (byte == 0xc3U || byte == 0xcbU) {
+        return 1U;
+    }
+    if (byte == 0xc2U || byte == 0xcaU) {
+        return 3U;
+    }
+    return 0U;
+}
+
 
 static bool bml_modrm_is_register_only(unsigned char modrm) {
     return (modrm & 0xc0U) == 0xc0U;
@@ -832,10 +842,22 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return -1;
     }
 
-    if (op == 0xc2U || op == 0xc3U || op == 0xcaU || op == 0xcbU) {
-        *out_code = "BML_DETOUR_EARLY_RETURN_UNSUPPORTED";
-        *out_message = "Detour target returns before the absolute-jump patch window can be reserved.";
-        return -1;
+    {
+        const size_t return_length = bml_return_instruction_length(op);
+        if (return_length > 0U) {
+            if (offset + return_length > limit) {
+                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+                *out_message = "Detour target prologue ended in the middle of a return instruction.";
+                return -1;
+            }
+            if (offset + return_length < BML_DETOUR_PATCH_BYTES) {
+                *out_code = "BML_DETOUR_EARLY_RETURN_UNSUPPORTED";
+                *out_message = "Detour target returns before the absolute-jump patch window can be reserved.";
+                return -1;
+            }
+            *out_length = return_length;
+            return 0;
+        }
     }
 
     if (op == 0xe8U || op == 0xe9U) {
