@@ -367,13 +367,15 @@ assert core_install_report["backend"] == {
     "decoder": "fixture-safe-subset",
 }
 assert core_install_report["summary"] == {
-    "requested": 5,
-    "installed": 5,
+    "requested": 7,
+    "installed": 7,
     "failed": 0,
     "failClosed": True,
 }, core_install_report
 expected_targets = {
     "Entity::getChestInventoryList",
+    "Entity::addItemToChest",
+    "Entity::getItemFromChest",
     "Entity::addItemToVoidChestServer",
     "Entity::removeItemFromVoidChestServer",
     "Entity::closeChest",
@@ -452,6 +454,8 @@ rows = [line for line in state_path.read_text(encoding="utf-8").splitlines() if 
 assert rows == ["1 2 -1 3 12345 1", "2 3 0 4 67890 1"], rows
 expected_targets = {
     "Entity::getChestInventoryList": 1,
+    "Entity::addItemToChest": 1,
+    "Entity::getItemFromChest": 1,
     "Entity::addItemToVoidChestServer": 1,
     "Entity::removeItemFromVoidChestServer": 0,
     "Entity::closeChest": 1,

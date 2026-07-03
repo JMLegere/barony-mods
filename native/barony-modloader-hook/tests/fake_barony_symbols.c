@@ -176,6 +176,27 @@ bool bml_fake_remove_item_from_void_chest_server_impl(void *entity, int player, 
     return true;
 }
 
+void *bml_fake_add_item_to_chest_impl(void *entity, void *item, bool force_new_stack, void *specific_destination_stack) {
+    (void)specific_destination_stack;
+    return bml_fake_add_item_to_void_chest_server_impl(entity, 0, item, force_new_stack, NULL);
+}
+
+void *bml_fake_get_item_from_chest_impl(void *entity, void *item, int amount, bool get_info_only) {
+    (void)entity;
+    (void)amount;
+    BmlFakeItem *fake_item = (BmlFakeItem *)item;
+    if (fake_item == NULL) {
+        return NULL;
+    }
+    if (!get_info_only && fake_item->node != NULL) {
+        BmlFakeNode *node = fake_item->node;
+        fake_item->node = NULL;
+        node->deconstructor = NULL;
+        bml_fake_list_RemoveNode(node);
+    }
+    return fake_item;
+}
+
 int bml_fake_detour_target(void);
 
 __asm__(
@@ -381,12 +402,58 @@ __asm__(
     "  ret\n"
     ".size _ZN6Entity16closeChestServerEv, .-_ZN6Entity16closeChestServerEv\n");
 
+void bml_fake_addItemToChest(void) __asm__("_ZN6Entity14addItemToChestEP4ItembS1_");
+
+__asm__(
+    ".text\n"
+    ".globl _ZN6Entity14addItemToChestEP4ItembS1_\n"
+    ".type _ZN6Entity14addItemToChestEP4ItembS1_, @function\n"
+    "_ZN6Entity14addItemToChestEP4ItembS1_:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_add_item_to_chest_impl@PLT\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZN6Entity14addItemToChestEP4ItembS1_, .-_ZN6Entity14addItemToChestEP4ItembS1_\n");
+
+void bml_fake_getItemFromChest(void) __asm__("_ZN6Entity16getItemFromChestEP4Itemib");
+
+__asm__(
+    ".text\n"
+    ".globl _ZN6Entity16getItemFromChestEP4Itemib\n"
+    ".type _ZN6Entity16getItemFromChestEP4Itemib, @function\n"
+    "_ZN6Entity16getItemFromChestEP4Itemib:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_get_item_from_chest_impl@PLT\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZN6Entity16getItemFromChestEP4Itemib, .-_ZN6Entity16getItemFromChestEP4Itemib\n");
+
 #define BML_FAKE_FUNCTION(c_name, elf_name) \
     void c_name(void) __asm__(elf_name); \
     void c_name(void) {}
 
-BML_FAKE_FUNCTION(bml_fake_addItemToChest, "_ZN6Entity14addItemToChestEP4ItembS1_")
-BML_FAKE_FUNCTION(bml_fake_getItemFromChest, "_ZN6Entity16getItemFromChestEP4Itemib")
 BML_FAKE_FUNCTION(bml_fake_generateDungeon, "_Z15generateDungeonPcjSt5tupleIJiiiiEE")
 BML_FAKE_FUNCTION(bml_fake_assignActions, "_Z13assignActionsP5map_t")
 BML_FAKE_FUNCTION(bml_fake_setSpriteAttributes, "_Z19setSpriteAttributesP6EntityS0_S0_")

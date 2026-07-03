@@ -64,11 +64,11 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "6888722cf6ce1766ec4ddb0786e2f59ea6bbfa063b7a172eed4c77e47f010bf3",
-        "size": 74352
+        "sha256": "9266d7d1348aec408c21dcfa858306db125b343d95c0db9114d96e2eea1b1c86",
+        "size": 78920
       },
       "status": "built_available_fail_closed",
-      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install opt-in pass-through detours for Entity::addItemToVoidChestServer and the core Void Chest lifecycle set via BML_STASH_INSTALL_CORE_PASSTHROUGH=1, run the fake-provider-only experimental state-backed core lifecycle self-test via BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 plus BML_STASH_CORE_BEHAVIOR_SELF_TEST=1, and still fail closed because the behavior-changing in-game Stash gameplay hook set is incomplete."
+      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test, classify decoder-safe Stash target prologues, install opt-in pass-through detours for Entity::addItemToVoidChestServer and the seven-target core inventory lifecycle set via BML_STASH_INSTALL_CORE_PASSTHROUGH=1, run the fake-provider-only experimental state-backed core lifecycle self-test via BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 plus BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 including generic chest add/get mutation, and still fail closed because the behavior-changing in-game Stash gameplay hook set is incomplete."
     },
     "hookManifest": {
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
@@ -212,13 +212,13 @@
           "kind": "stash-core-detour-install",
           "path": "BaronyModLoader/reports/stash-core-detour-install-report.json",
           "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_INSTALL_CORE_PASSTHROUGH=1 and validates opt-in process-lifetime pass-through detour installs for Entity::getChestInventoryList, Entity::addItemToVoidChestServer, Entity::removeItemFromVoidChestServer, Entity::closeChest, and Entity::closeChestServer while runtime-load-report still contains BML_STASH_HOOKS_NOT_INSTALLED for the incomplete Stash hook set."
+          "notes": "The native hook smoke runs with BML_STASH_INSTALL_CORE_PASSTHROUGH=1 and validates opt-in process-lifetime pass-through detour installs for Entity::getChestInventoryList, Entity::addItemToChest, Entity::getItemFromChest, Entity::addItemToVoidChestServer, Entity::removeItemFromVoidChestServer, Entity::closeChest, and Entity::closeChestServer while runtime-load-report still contains BML_STASH_HOOKS_NOT_INSTALLED for the incomplete Stash hook set."
         },
         {
           "kind": "stash-core-behavior",
           "path": "BaronyModLoader/reports/stash-core-behavior-report.json",
           "status": "passed_fail_closed",
-          "notes": "The native hook smoke runs with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 under the fake provider, validates state-backed load/add/save over stats[0]->void_chest_inventory via BaronyModLoader/state/stash-inventory-v1.tsv, and still leaves runtime-load-report failed with BML_STASH_HOOKS_NOT_INSTALLED for the incomplete in-game Stash hook set."
+          "notes": "The native hook smoke runs with BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1 and BML_STASH_CORE_BEHAVIOR_SELF_TEST=1 under the fake provider, validates state-backed load/add/remove/save over stats[0]->void_chest_inventory via BaronyModLoader/state/stash-inventory-v1.tsv, exercises generic Entity::addItemToChest and Entity::getItemFromChest mutation against the same bound list, and still leaves runtime-load-report failed with BML_STASH_HOOKS_NOT_INSTALLED for the incomplete in-game Stash hook set."
         },
         {
           "kind": "stash-hook",
