@@ -172,8 +172,45 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
         if offset + 2 > limit:
             return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended after a REX prefix."
         next_op = code[offset + 1]
+        rex_w = (op & 0x08) != 0
         if 0x50 <= next_op <= 0x5F:
             return 2, None, None
+        if 0xB8 <= next_op <= 0xBF:
+            length = 10 if rex_w else 6
+            if offset + length > limit:
+                message = (
+                    "Detour target prologue ended in the middle of a supported REX.W movabs immediate instruction."
+                    if rex_w
+                    else "Detour target prologue ended in the middle of a supported REX mov immediate instruction."
+                )
+                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", message
+            return length, None, None
+        if next_op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B}:
+            if offset + 3 > limit:
+                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX register instruction."
+            modrm = code[offset + 2]
+            if not modrm_is_register_only(modrm):
+                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED"
+                return None, code_id, "Detour target prologue uses REX-prefixed memory addressing that this substrate does not relocate."
+            return 3, None, None
+        if next_op == 0x83:
+            if offset + 4 > limit:
+                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX add/sub immediate instruction."
+            modrm = code[offset + 2]
+            reg_opcode = (modrm >> 3) & 0x07
+            if not modrm_is_register_only(modrm) or reg_opcode not in {0, 5}:
+                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
+                return None, code_id, "Detour target prologue uses an unsupported REX immediate arithmetic form."
+            return 4, None, None
+        if next_op == 0x81:
+            if offset + 7 > limit:
+                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX imm32 arithmetic form."
+            modrm = code[offset + 2]
+            reg_opcode = (modrm >> 3) & 0x07
+            if not modrm_is_register_only(modrm) or reg_opcode not in {0, 5}:
+                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
+                return None, code_id, "Detour target prologue uses an unsupported REX imm32 arithmetic form."
+            return 7, None, None
 
     if op == 0x90 or 0x50 <= op <= 0x57 or 0x58 <= op <= 0x5F:
         return 1, None, None
@@ -182,6 +219,15 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
         if offset + 5 > limit:
             return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported mov immediate instruction."
         return 5, None, None
+
+    if op in {0x31, 0x39, 0x3B, 0x85}:
+        if offset + 2 > limit:
+            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported register ALU instruction."
+        modrm = code[offset + 1]
+        if not modrm_is_register_only(modrm):
+            code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED"
+            return None, code_id, "Detour target prologue uses memory addressing that this substrate does not relocate."
+        return 2, None, None
 
     if op in {0x89, 0x8B}:
         if offset + 2 > limit:
@@ -201,42 +247,6 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
             code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
             return None, code_id, "Detour target prologue uses an unsupported immediate arithmetic form."
         return 3, None, None
-
-    if op == 0x48:
-        if offset + 2 > limit:
-            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended after a REX.W prefix."
-        next_op = code[offset + 1]
-        if 0xB8 <= next_op <= 0xBF:
-            if offset + 10 > limit:
-                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported movabs immediate instruction."
-            return 10, None, None
-        if next_op in {0x89, 0x8B}:
-            if offset + 3 > limit:
-                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX.W register mov instruction."
-            modrm = code[offset + 2]
-            if not modrm_is_register_only(modrm):
-                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED"
-                return None, code_id, "Detour target prologue uses REX.W memory addressing that this substrate does not relocate."
-            return 3, None, None
-        if next_op == 0x83:
-            if offset + 4 > limit:
-                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX.W add/sub immediate instruction."
-            modrm = code[offset + 2]
-            reg_opcode = (modrm >> 3) & 0x07
-            if not modrm_is_register_only(modrm) or reg_opcode not in {0, 5}:
-                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
-                return None, code_id, "Detour target prologue uses an unsupported REX.W immediate arithmetic form."
-            return 4, None, None
-        if next_op == 0x81:
-            if offset + 7 > limit:
-                return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported REX.W add/sub imm32 instruction."
-            modrm = code[offset + 2]
-            reg_opcode = (modrm >> 3) & 0x07
-            if not modrm_is_register_only(modrm) or reg_opcode not in {0, 5}:
-                code_id = "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" if modrm_uses_rip_relative(modrm) else "BML_DETOUR_UNSUPPORTED_INSTRUCTION"
-                return None, code_id, "Detour target prologue uses an unsupported REX.W imm32 arithmetic form."
-            return 7, None, None
-
     return None, "BML_DETOUR_UNSUPPORTED_INSTRUCTION", "Detour target prologue contains an instruction outside the conservative fixture-safe decoder subset."
 
 

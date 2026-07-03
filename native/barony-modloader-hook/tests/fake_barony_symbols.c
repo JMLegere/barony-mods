@@ -75,6 +75,28 @@ __asm__(
     "  ret\n"
     ".size _ZN6Entity24addItemToVoidChestServerEiP4ItembS1_, .-_ZN6Entity24addItemToVoidChestServerEiP4ItembS1_\n");
 
+void bml_fake_newEntity(void) __asm__("_Z9newEntityijP6list_tS0_");
+
+__asm__(
+    ".text\n"
+    ".globl _Z9newEntityijP6list_tS0_\n"
+    ".type _Z9newEntityijP6list_tS0_, @function\n"
+    "_Z9newEntityijP6list_tS0_:\n"
+    "  push %r14\n"
+    "  mov %rdx, %r14\n"
+    "  push %r13\n"
+    "  mov %esi, %r13d\n"
+    "  push %r12\n"
+    "  push %rbp\n"
+    "  mov %edi, %ebp\n"
+    "  mov $56, %edi\n"
+    "  pop %rbp\n"
+    "  pop %r12\n"
+    "  pop %r13\n"
+    "  pop %r14\n"
+    "  ret\n"
+    ".size _Z9newEntityijP6list_tS0_, .-_Z9newEntityijP6list_tS0_\n");
+
 #define BML_FAKE_FUNCTION(c_name, elf_name) \
     void c_name(void) __asm__(elf_name); \
     void c_name(void) {}
@@ -88,7 +110,6 @@ BML_FAKE_FUNCTION(bml_fake_closeChest, "_ZN6Entity10closeChestEv")
 BML_FAKE_FUNCTION(bml_fake_closeChestServer, "_ZN6Entity16closeChestServerEv")
 BML_FAKE_FUNCTION(bml_fake_generateDungeon, "_Z15generateDungeonPcjSt5tupleIJiiiiEE")
 BML_FAKE_FUNCTION(bml_fake_assignActions, "_Z13assignActionsP5map_t")
-BML_FAKE_FUNCTION(bml_fake_newEntity, "_Z9newEntityijP6list_tS0_")
 BML_FAKE_FUNCTION(bml_fake_setSpriteAttributes, "_Z19setSpriteAttributesP6EntityS0_S0_")
 BML_FAKE_FUNCTION(bml_fake_newItem, "_Z7newItem8ItemType6StatusssjbP6list_t")
 BML_FAKE_FUNCTION(bml_fake_list_FreeAll, "_Z12list_FreeAllP6list_t")

@@ -733,6 +733,9 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
 
     if (op >= 0x40U && op <= 0x4fU) {
         unsigned char next;
+        unsigned char modrm;
+        unsigned char reg_opcode;
+        const bool rex_w = (op & 0x08U) != 0U;
         if (offset + 2U > limit) {
             *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
             *out_message = "Detour target prologue ended after a REX prefix.";
@@ -741,6 +744,63 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         next = code[offset + 1U];
         if (next >= 0x50U && next <= 0x5fU) {
             *out_length = 2U;
+            return 0;
+        }
+        if (next >= 0xb8U && next <= 0xbfU) {
+            const size_t length = rex_w ? 10U : 6U;
+            if (offset + length > limit) {
+                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+                *out_message = rex_w ? "Detour target prologue ended in the middle of a supported REX.W movabs immediate instruction." : "Detour target prologue ended in the middle of a supported REX mov immediate instruction.";
+                return -1;
+            }
+            *out_length = length;
+            return 0;
+        }
+        if (next == 0x31U || next == 0x39U || next == 0x3bU || next == 0x85U || next == 0x89U || next == 0x8bU) {
+            if (offset + 3U > limit) {
+                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+                *out_message = "Detour target prologue ended in the middle of a supported REX register instruction.";
+                return -1;
+            }
+            modrm = code[offset + 2U];
+            if (!bml_modrm_is_register_only(modrm)) {
+                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
+                *out_message = "Detour target prologue uses REX-prefixed memory addressing that this substrate does not relocate.";
+                return -1;
+            }
+            *out_length = 3U;
+            return 0;
+        }
+        if (next == 0x83U) {
+            if (offset + 4U > limit) {
+                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+                *out_message = "Detour target prologue ended in the middle of a supported REX add/sub immediate instruction.";
+                return -1;
+            }
+            modrm = code[offset + 2U];
+            reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
+            if (!bml_modrm_is_register_only(modrm) || (reg_opcode != 0U && reg_opcode != 5U)) {
+                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
+                *out_message = "Detour target prologue uses an unsupported REX immediate arithmetic form.";
+                return -1;
+            }
+            *out_length = 4U;
+            return 0;
+        }
+        if (next == 0x81U) {
+            if (offset + 7U > limit) {
+                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+                *out_message = "Detour target prologue ended in the middle of a supported REX imm32 arithmetic form.";
+                return -1;
+            }
+            modrm = code[offset + 2U];
+            reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
+            if (!bml_modrm_is_register_only(modrm) || (reg_opcode != 0U && reg_opcode != 5U)) {
+                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
+                *out_message = "Detour target prologue uses an unsupported REX imm32 arithmetic form.";
+                return -1;
+            }
+            *out_length = 7U;
             return 0;
         }
     }
@@ -757,6 +817,21 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
             return -1;
         }
         *out_length = 5U;
+        return 0;
+    }
+
+    if (op == 0x31U || op == 0x39U || op == 0x3bU || op == 0x85U) {
+        if (offset + 2U > limit) {
+            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+            *out_message = "Detour target prologue ended in the middle of a supported register ALU instruction.";
+            return -1;
+        }
+        if (!bml_modrm_is_register_only(code[offset + 1U])) {
+            *out_code = bml_modrm_uses_rip_relative(code[offset + 1U]) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
+            *out_message = "Detour target prologue uses memory addressing that this substrate does not relocate.";
+            return -1;
+        }
+        *out_length = 2U;
         return 0;
     }
 
@@ -794,73 +869,6 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return 0;
     }
 
-    if (op == 0x48U) {
-        unsigned char next;
-        unsigned char modrm;
-        unsigned char reg_opcode;
-        if (offset + 2U > limit) {
-            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-            *out_message = "Detour target prologue ended after a REX.W prefix.";
-            return -1;
-        }
-        next = code[offset + 1U];
-        if (next >= 0xb8U && next <= 0xbfU) {
-            if (offset + 10U > limit) {
-                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-                *out_message = "Detour target prologue ended in the middle of a supported movabs immediate instruction.";
-                return -1;
-            }
-            *out_length = 10U;
-            return 0;
-        }
-        if (next == 0x89U || next == 0x8bU) {
-            if (offset + 3U > limit) {
-                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-                *out_message = "Detour target prologue ended in the middle of a supported REX.W register mov instruction.";
-                return -1;
-            }
-            modrm = code[offset + 2U];
-            if (!bml_modrm_is_register_only(modrm)) {
-                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_MEMORY_OPERAND_UNSUPPORTED";
-                *out_message = "Detour target prologue uses REX.W memory addressing that this substrate does not relocate.";
-                return -1;
-            }
-            *out_length = 3U;
-            return 0;
-        }
-        if (next == 0x83U) {
-            if (offset + 4U > limit) {
-                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-                *out_message = "Detour target prologue ended in the middle of a supported REX.W add/sub immediate instruction.";
-                return -1;
-            }
-            modrm = code[offset + 2U];
-            reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
-            if (!bml_modrm_is_register_only(modrm) || (reg_opcode != 0U && reg_opcode != 5U)) {
-                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
-                *out_message = "Detour target prologue uses an unsupported REX.W immediate arithmetic form.";
-                return -1;
-            }
-            *out_length = 4U;
-            return 0;
-        }
-        if (next == 0x81U) {
-            if (offset + 7U > limit) {
-                *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
-                *out_message = "Detour target prologue ended in the middle of a supported REX.W add/sub imm32 instruction.";
-                return -1;
-            }
-            modrm = code[offset + 2U];
-            reg_opcode = (unsigned char)((modrm >> 3U) & 0x07U);
-            if (!bml_modrm_is_register_only(modrm) || (reg_opcode != 0U && reg_opcode != 5U)) {
-                *out_code = bml_modrm_uses_rip_relative(modrm) ? "BML_DETOUR_RIP_RELATIVE_RELOCATION_REQUIRED" : "BML_DETOUR_UNSUPPORTED_INSTRUCTION";
-                *out_message = "Detour target prologue uses an unsupported REX.W imm32 arithmetic form.";
-                return -1;
-            }
-            *out_length = 7U;
-            return 0;
-        }
-    }
 
     return -1;
 }
