@@ -221,6 +221,27 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
             return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported near conditional branch instruction."
         return 6, None, None
 
+    if op == 0x0F and offset + 1 < limit and code[offset + 1] in {0x1F, 0xB6, 0xB7}:
+        return decode_modrm_copyable_length(
+            code,
+            offset,
+            limit,
+            2,
+            "Detour target prologue ended in the middle of a supported two-byte ModRM instruction.",
+        )
+
+    if op == 0x66:
+        if offset + 3 > limit:
+            return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported operand-size-prefixed instruction."
+        if code[offset + 1] == 0x0F and code[offset + 2] in {0x1F, 0xEF}:
+            return decode_modrm_copyable_length(
+                code,
+                offset,
+                limit,
+                3,
+                "Detour target prologue ended in the middle of a supported operand-size-prefixed ModRM instruction.",
+            )
+
     if 0x40 <= op <= 0x4F:
         if offset + 2 > limit:
             return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended after a REX prefix."
@@ -238,7 +259,7 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
                 )
                 return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", message
             return length, None, None
-        if next_op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B}:
+        if next_op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B, 0x8D}:
             return decode_modrm_copyable_length(
                 code,
                 offset,
@@ -273,7 +294,7 @@ def decode_supported_instruction(code: bytes, offset: int, limit: int) -> tuple[
             return None, "BML_DETOUR_TRUNCATED_INSTRUCTION", "Detour target prologue ended in the middle of a supported mov immediate instruction."
         return 5, None, None
 
-    if op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B}:
+    if op in {0x31, 0x39, 0x3B, 0x85, 0x89, 0x8B, 0x8D}:
         return decode_modrm_copyable_length(
             code,
             offset,

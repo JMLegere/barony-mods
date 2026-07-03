@@ -64,11 +64,11 @@
       "path": "native/barony-modloader-hook/build/libbarony_bml.so",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "ff3d3f649e19a2952cddb2da73698399d7cfdef201d6d0327627cea278e1020e",
+        "sha256": "bc4b5fba8f775d5a7af7ddf04044b10cdcc9d3ef8df3c4c90a464e375ccd8ac6",
         "size": 51672
       },
       "status": "built_available_fail_closed",
-      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test with relocated short conditional branch call-through, classify decoder-safe Stash target prologues including REX-prefixed callee-saved push/register-move windows, non-RIP-memory ModRM windows, and relative-control-flow windows, and pass an opt-in fake-symbol Entity::addItemToVoidChestServer detour call-through self-test, but Stash gameplay targets remain fail-closed until Stash detours are installed and verified in game."
+      "notes": "The hook library can load, report, pass the fake-symbol absolute-jump detour self-test with relocated short conditional branch call-through, classify decoder-safe Stash target prologues including REX-prefixed callee-saved push/register-move windows, non-RIP-memory ModRM windows, relative-control-flow windows, movzx/multi-byte NOP, pxor, and lea prologue instructions, and pass an opt-in fake-symbol Entity::addItemToVoidChestServer detour call-through self-test, but Stash gameplay targets remain fail-closed until Stash detours are installed and verified in game."
     },
     "hookManifest": {
       "path": "native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
@@ -206,7 +206,7 @@
           "kind": "stash-hook",
           "path": "BaronyModLoader/reports/stash-hook-report.json",
           "status": "current_fail_closed",
-          "notes": "Required Stash targets currently report not_installed with a conservative static/readiness split (27 ready, 7 blocked, 0 missing for Steam/Linux build 22630456) and failClosed=true until function detours are implemented."
+          "notes": "Required Stash targets currently report not_installed with a conservative static/readiness split (30 ready, 4 blocked, 0 missing for Steam/Linux build 22630456) and failClosed=true until function detours are implemented."
         }
       ],
       "notes": "Current status is intentionally non-playable: Stash activation must fail closed with BML_STASH_HOOKS_NOT_INSTALLED or equivalent target-level detour-unavailable codes."

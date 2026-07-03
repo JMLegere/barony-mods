@@ -822,6 +822,21 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return 0;
     }
 
+    if (op == 0x0fU && offset + 1U < limit && (code[offset + 1U] == 0x1fU || code[offset + 1U] == 0xb6U || code[offset + 1U] == 0xb7U)) {
+        return bml_decode_modrm_copyable_length(code, offset, limit, 2U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported two-byte ModRM instruction.");
+    }
+
+    if (op == 0x66U) {
+        if (offset + 3U > limit) {
+            *out_code = "BML_DETOUR_TRUNCATED_INSTRUCTION";
+            *out_message = "Detour target prologue ended in the middle of a supported operand-size-prefixed instruction.";
+            return -1;
+        }
+        if (code[offset + 1U] == 0x0fU && (code[offset + 2U] == 0x1fU || code[offset + 2U] == 0xefU)) {
+            return bml_decode_modrm_copyable_length(code, offset, limit, 3U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported operand-size-prefixed ModRM instruction.");
+        }
+    }
+
     if (op >= 0x40U && op <= 0x4fU) {
         unsigned char next;
         unsigned char modrm;
@@ -847,7 +862,7 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
             *out_length = length;
             return 0;
         }
-        if (next == 0x31U || next == 0x39U || next == 0x3bU || next == 0x85U || next == 0x89U || next == 0x8bU) {
+        if (next == 0x31U || next == 0x39U || next == 0x3bU || next == 0x85U || next == 0x89U || next == 0x8bU || next == 0x8dU) {
             return bml_decode_modrm_copyable_length(code, offset, limit, 2U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported REX ModRM instruction.");
         }
         if (next == 0x83U) {
@@ -899,7 +914,7 @@ static int bml_decode_supported_x86_64_instruction(const unsigned char *code, si
         return 0;
     }
 
-    if (op == 0x31U || op == 0x39U || op == 0x3bU || op == 0x85U || op == 0x89U || op == 0x8bU) {
+    if (op == 0x31U || op == 0x39U || op == 0x3bU || op == 0x85U || op == 0x89U || op == 0x8bU || op == 0x8dU) {
         return bml_decode_modrm_copyable_length(code, offset, limit, 1U, out_length, out_code, out_message, "Detour target prologue ended in the middle of a supported ModRM instruction.");
     }
 
