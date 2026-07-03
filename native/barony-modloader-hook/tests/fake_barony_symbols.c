@@ -600,6 +600,9 @@ __asm__(
 
 static BmlFakeList bml_fake_tile_entity_list_storage = { NULL, NULL };
 static BmlFakeList bml_fake_map_entity_list_storage = { NULL, NULL };
+static bool bml_fake_shoparea_storage[64U * 48U] = {
+    [8U + 8U * 48U] = true,
+};
 void *bml_fake_TileEntityList __asm__("TileEntityList") = &bml_fake_tile_entity_list_storage;
 
 void bml_fake_assign_actions_impl(void *map_argument) {
@@ -692,10 +695,22 @@ BmlFakeMapPrefix bml_fake_map __asm__("map") = {
     &bml_fake_map_entity_list_storage,
     NULL,
 };
+BmlFakeMapPrefix bml_fake_shop_map __asm__("bml_fake_shop_map") = {
+    "fake-shop",
+    "bml-fake",
+    64U,
+    48U,
+    0U,
+    {0},
+    NULL,
+    {0},
+    &bml_fake_map_entity_list_storage,
+    NULL,
+};
 void *bml_fake_assign_actions_map __asm__("bml_fake_assign_actions_map") = &bml_fake_map;
 int bml_fake_map_rng __asm__("map_rng") = 1;
 int bml_fake_map_server_rng __asm__("map_server_rng") = 1;
 int bml_fake_multiplayer __asm__("multiplayer") = 1;
 int bml_fake_clientnum __asm__("clientnum") = 1;
 int bml_fake_openedChest __asm__("openedChest") = 1;
-int bml_fake_shoparea __asm__("shoparea") = 1;
+bool *bml_fake_shoparea __asm__("shoparea") = bml_fake_shoparea_storage;

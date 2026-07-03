@@ -632,7 +632,7 @@ assert playable_install_report["test"] == "stash-playable-install", playable_ins
 assert playable_install_report["status"] == "installed", playable_install_report
 calls = playable_install_report["calls"]
 assert calls["assignActions"] > 0, calls
-assert calls["newEntity"] >= 2, calls
+assert calls["newEntity"] >= 4, calls
 assert calls["setSprite"] == 0, calls
 
 lobby = playable_install_report["lobbyPlacement"]
@@ -648,7 +648,31 @@ if "chestBehavior" in lobby:
     assert "actChest" in str(lobby["chestBehavior"]), lobby
 if "lidBehavior" in lobby:
     assert "actChestLid" in str(lobby["lidBehavior"]), lobby
-print(f"experimental playable stash fake-provider lobby placement ok: {playable_install_report_path}")
+
+shop = playable_install_report["shopPlacement"]
+assert shop["attempted"] == 1, shop
+assert shop["succeeded"] == 1, shop
+assert shop["failed"] == 0, shop
+assert shop["chestPlaced"] is True, shop
+assert shop["lidPlaced"] is True, shop
+
+spell = playable_install_report["spellBinding"]
+assert spell["voidChestInventoryHookInstalled"] is True, spell
+assert spell["sharedStatsInventoryBound"] is True, spell
+assert "player-cast spell UI flow" in spell["claimBoundary"], spell
+
+metadata = playable_install_report["multiplayerMetadata"]
+assert metadata["guardInstalled"] is True, metadata
+assert metadata["multiplayer"] == 1, metadata
+assert metadata["clientnum"] == 1, metadata
+assert metadata["clientBlocked"] is False, metadata
+assert "multiplayer_version_metadata" in metadata["runtimeMetadata"], metadata
+
+last = playable_install_report["lastPlaced"]
+for key in ("lobbyChest", "lobbyLid", "shopChest", "shopLid"):
+    assert isinstance(last[key], str) and last[key].startswith("0x"), last
+assert playable_install_report["error"] is None, playable_install_report
+print(f"experimental playable stash fake-provider lobby/shop/spell/metadata ok: {playable_install_report_path}")
 PY
 
 BML_PROFILE_DIR="$NO_STASH_PROFILE_DIR" \

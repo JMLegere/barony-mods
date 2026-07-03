@@ -82,6 +82,8 @@
 #define BML_STASH_PLACEMENT_ANCHOR_OFFSET_X 32.0
 #define BML_STASH_PLACEMENT_LID_OFFSET_Y (-3.0)
 #define BML_STASH_PLACEMENT_LID_OFFSET_Z (-2.75)
+#define BML_STASH_MULTIPLAYER_CLIENT 2
+#define BML_STASH_MULTIPLAYER_DIRECTCLIENT 4
 #define BML_STASH_SPRITE_LOBBY_CHEST 1791
 #define BML_STASH_SPRITE_LOBBY_LID 1790
 #define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
@@ -2141,6 +2143,16 @@ static int g_bml_stash_playable_lobby_placements_attempted = 0;
 static int g_bml_stash_playable_lobby_placements_succeeded = 0;
 static int g_bml_stash_playable_lobby_placements_failed = 0;
 static int g_bml_stash_playable_lobby_already_placed_count = 0;
+static int g_bml_stash_playable_shop_placements_attempted = 0;
+static int g_bml_stash_playable_shop_placements_succeeded = 0;
+static int g_bml_stash_playable_shop_placements_failed = 0;
+static int g_bml_stash_playable_shop_already_placed_count = 0;
+static void *g_bml_stash_playable_last_placed_shop_chest = NULL;
+static void *g_bml_stash_playable_last_placed_shop_lid = NULL;
+static void *g_bml_stash_playable_last_shop_map = NULL;
+static int g_bml_stash_playable_multiplayer_value = 0;
+static int g_bml_stash_playable_clientnum_value = 0;
+static bool g_bml_stash_playable_multiplayer_client_blocked = false;
 static void *g_bml_stash_playable_last_placed_chest = NULL;
 static void *g_bml_stash_playable_last_placed_lid = NULL;
 static BmlStashPlacementNewEntitySample g_bml_stash_placement_new_entity_samples[BML_STASH_PLACEMENT_DISCOVERY_SAMPLE_LIMIT];
@@ -2785,12 +2797,18 @@ static void bml_stash_act_chest_lid_replacement(void *entity) {
     }
 }
 
+static bool bml_stash_playable_try_place_shop_chest_and_lid(void *map_argument);
+static void *bml_stash_playable_get_map_symbol(void);
 static int bml_stash_generate_dungeon_replacement(char *levelset, uint32_t seed, uint64_t tuple_low, uint64_t tuple_high) {
+    int result = 0;
     ++g_bml_stash_generate_dungeon_replacement_calls;
     if (g_bml_stash_generate_dungeon_original != NULL) {
-        return g_bml_stash_generate_dungeon_original(levelset, seed, tuple_low, tuple_high);
+        result = g_bml_stash_generate_dungeon_original(levelset, seed, tuple_low, tuple_high);
     }
-    return 0;
+    if (g_bml_stash_playable_active) {
+        (void)bml_stash_playable_try_place_shop_chest_and_lid(bml_stash_playable_get_map_symbol());
+    }
+    return result;
 }
 static void *bml_stash_playable_get_map_symbol(void);
 static BmlBaronyList *bml_stash_playable_get_map_entity_list(void *map_argument) {
@@ -2819,7 +2837,25 @@ static bool bml_stash_playable_is_start_map_name(const char *name) {
     }
     return false;
 }
-static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument) {
+static bool bml_stash_playable_read_int_symbol(const char *name, int *value_out) {
+    void *symbol = dlsym(RTLD_DEFAULT, name);
+    if (symbol == NULL || value_out == NULL) {
+        return false;
+    }
+    memcpy(value_out, symbol, sizeof(*value_out));
+    return true;
+}
+static bool bml_stash_playable_is_multiplayer_client(void) {
+    int multiplayer_value = 0;
+    int clientnum_value = 0;
+    (void)bml_stash_playable_read_int_symbol("multiplayer", &multiplayer_value);
+    (void)bml_stash_playable_read_int_symbol("clientnum", &clientnum_value);
+    g_bml_stash_playable_multiplayer_value = multiplayer_value;
+    g_bml_stash_playable_clientnum_value = clientnum_value;
+    g_bml_stash_playable_multiplayer_client_blocked = multiplayer_value == BML_STASH_MULTIPLAYER_CLIENT || multiplayer_value == BML_STASH_MULTIPLAYER_DIRECTCLIENT;
+    return g_bml_stash_playable_multiplayer_client_blocked;
+}
+static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double chest_x, double chest_y, double chest_yaw, void **chest_out, void **lid_out) {
     typedef BmlBaronyNode *(*BmlListAddNodeFirstFunction)(BmlBaronyList *list);
     typedef void (*BmlEmptyDeconstructorFunction)(void *data);
     BmlBaronyList *entity_list;
@@ -2836,26 +2872,23 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     void *empty_deconstructor_address;
     int32_t chest_uid;
     int32_t lid_uid;
-    double chest_x;
-    double chest_y;
-    double chest_z;
-    double chest_yaw;
-    double lid_x;
-    double lid_y;
-    double lid_z;
+    double chest_z = 6.0;
+    double lid_x = chest_x;
+    double lid_y = chest_y + BML_STASH_PLACEMENT_LID_OFFSET_Y;
+    double lid_z = chest_z + BML_STASH_PLACEMENT_LID_OFFSET_Z;
 
-    if (!g_bml_stash_playable_active) {
+    if (chest_out != NULL) {
+        *chest_out = NULL;
+    }
+    if (lid_out != NULL) {
+        *lid_out = NULL;
+    }
+    if (!g_bml_stash_playable_active || bml_stash_playable_is_multiplayer_client()) {
         return false;
     }
-    if (g_bml_stash_playable_lobby_placements_succeeded > 0 || g_bml_stash_playable_last_placed_chest != NULL) {
-        g_bml_stash_playable_lobby_already_placed_count += 1;
-        return false;
-    }
-    g_bml_stash_playable_lobby_placements_attempted += 1;
 
     entity_list = bml_stash_playable_get_map_entity_list(map_argument);
     if (entity_list == NULL) {
-        g_bml_stash_playable_lobby_placements_failed += 1;
         return false;
     }
 
@@ -2872,23 +2905,10 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     act_chest_fn = dlsym(RTLD_DEFAULT, "_Z8actChestP6Entity");
     act_chest_lid_fn = dlsym(RTLD_DEFAULT, "_Z11actChestLidP6Entity");
     if (act_chest_fn == NULL || act_chest_lid_fn == NULL) {
-        g_bml_stash_playable_lobby_placements_failed += 1;
         return false;
     }
     memcpy(&act_chest_fn_storage, &act_chest_fn, sizeof(act_chest_fn_storage));
     memcpy(&act_chest_lid_fn_storage, &act_chest_lid_fn, sizeof(act_chest_lid_fn_storage));
-
-    if (g_bml_stash_assign_actions_original != NULL) {
-        g_bml_stash_assign_actions_original(map_argument);
-    }
-
-    chest_x = BML_STASH_PLACEMENT_ANCHOR_OFFSET_X;
-    chest_y = 0.0;
-    chest_z = 6.0;
-    chest_yaw = 0.0;
-    lid_x = chest_x;
-    lid_y = chest_y + BML_STASH_PLACEMENT_LID_OFFSET_Y;
-    lid_z = chest_z + BML_STASH_PLACEMENT_LID_OFFSET_Z;
 
     if (g_bml_stash_new_entity_original != NULL) {
         ++g_bml_stash_playable_new_entity_calls;
@@ -2952,14 +2972,82 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
                 node->deconstructor = empty_deconstructor;
             }
         }
+        if (chest_out != NULL) {
+            *chest_out = chest;
+        }
+        if (lid_out != NULL) {
+            *lid_out = lid;
+        }
+        return true;
+    }
 
+    return false;
+}
+static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument) {
+    void *chest = NULL;
+    void *lid = NULL;
+    if (!g_bml_stash_playable_active) {
+        return false;
+    }
+    if (g_bml_stash_playable_lobby_placements_succeeded > 0 || g_bml_stash_playable_last_placed_chest != NULL) {
+        g_bml_stash_playable_lobby_already_placed_count += 1;
+        return false;
+    }
+    g_bml_stash_playable_lobby_placements_attempted += 1;
+    if (g_bml_stash_assign_actions_original != NULL) {
+        g_bml_stash_assign_actions_original(map_argument);
+    }
+    if (bml_stash_playable_place_chest_and_lid_at(map_argument, BML_STASH_PLACEMENT_ANCHOR_OFFSET_X, 0.0, 0.0, &chest, &lid)) {
         g_bml_stash_playable_last_placed_chest = chest;
         g_bml_stash_playable_last_placed_lid = lid;
         g_bml_stash_playable_lobby_placements_succeeded += 1;
         return true;
     }
-
     g_bml_stash_playable_lobby_placements_failed += 1;
+    return false;
+}
+static bool bml_stash_playable_try_place_shop_chest_and_lid(void *map_argument) {
+    BmlStashPlacementMapPrefix *map_prefix = (BmlStashPlacementMapPrefix *)map_argument;
+    void *shoparea_symbol;
+    bool *shoparea = NULL;
+    unsigned int x;
+    unsigned int y;
+    void *chest = NULL;
+    void *lid = NULL;
+    if (!g_bml_stash_playable_active) {
+        return false;
+    }
+    if (g_bml_stash_playable_last_shop_map == map_argument && g_bml_stash_playable_last_placed_shop_chest != NULL) {
+        g_bml_stash_playable_shop_already_placed_count += 1;
+        return false;
+    }
+    if (map_prefix == NULL || map_prefix->width == 0U || map_prefix->height == 0U) {
+        return false;
+    }
+    shoparea_symbol = dlsym(RTLD_DEFAULT, "shoparea");
+    if (shoparea_symbol == NULL) {
+        return false;
+    }
+    memcpy(&shoparea, shoparea_symbol, sizeof(shoparea));
+    if (shoparea == NULL) {
+        return false;
+    }
+    for (x = 0U; x < map_prefix->width; ++x) {
+        for (y = 0U; y < map_prefix->height; ++y) {
+            if (shoparea[y + x * map_prefix->height]) {
+                g_bml_stash_playable_shop_placements_attempted += 1;
+                if (bml_stash_playable_place_chest_and_lid_at(map_argument, (double)x * 16.0 + 8.0, (double)y * 16.0 + 8.0, 0.0, &chest, &lid)) {
+                    g_bml_stash_playable_last_placed_shop_chest = chest;
+                    g_bml_stash_playable_last_placed_shop_lid = lid;
+                    g_bml_stash_playable_last_shop_map = map_argument;
+                    g_bml_stash_playable_shop_placements_succeeded += 1;
+                    return true;
+                }
+                g_bml_stash_playable_shop_placements_failed += 1;
+                return false;
+            }
+        }
+    }
     return false;
 }
 
@@ -2982,6 +3070,11 @@ static void bml_stash_assign_actions_replacement(void *map) {
         }
         if (is_eligible) {
             (void)bml_stash_playable_try_place_lobby_chest_and_lid(map);
+        } else {
+            if (g_bml_stash_assign_actions_original != NULL) {
+                g_bml_stash_assign_actions_original(map);
+            }
+            (void)bml_stash_playable_try_place_shop_chest_and_lid(map);
         }
     } else {
         if (g_bml_stash_assign_actions_original != NULL) {
@@ -3782,20 +3875,36 @@ static int bml_write_stash_playable_install_report(const char *report_path, cons
     }
     fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"stash-playable-install\",\n  \"status\": ", file);
     bml_json_write_escaped(file, status);
-    fputs(",\n  \"experimental\": true,\n  \"claimBoundary\": \"playable-lobby-lifecycle-only\",\n  \"lobbyPlacement\": {\n    \"attempted\": ", file);
+    fputs(",\n  \"experimental\": true,\n  \"claimBoundary\": \"playable-lobby-shop-spell-metadata-lifecycle-only\",\n  \"lobbyPlacement\": {\n    \"attempted\": ", file);
     fprintf(file, "%d", g_bml_stash_playable_lobby_placements_attempted);
-    fprintf(file, ",\n    \"succeeded\": %d,\n    \"failed\": %d,\n    \"alreadyPlaced\": %d,\n    \"chestPlaced\": %s,\n    \"lidPlaced\": %s\n  },\n  \"calls\": {\n    \"assignActions\": %d,\n    \"newEntity\": %d,\n    \"setSprite\": %d\n  },\n  \"lastPlaced\": {\n    \"chest\": ",
+    fprintf(file, ",\n    \"succeeded\": %d,\n    \"failed\": %d,\n    \"alreadyPlaced\": %d,\n    \"chestPlaced\": %s,\n    \"lidPlaced\": %s\n  },\n  \"shopPlacement\": {\n    \"attempted\": %d,\n    \"succeeded\": %d,\n    \"failed\": %d,\n    \"alreadyPlaced\": %d,\n    \"chestPlaced\": %s,\n    \"lidPlaced\": %s\n  },\n  \"spellBinding\": {\n    \"voidChestInventoryHookInstalled\": %s,\n    \"sharedStatsInventoryBound\": %s,\n    \"claimBoundary\": \"spell-created Void Chests use Entity::getChestInventoryList and chestVoidState; fake-provider tests verify the shared inventory binding, not a player-cast spell UI flow\"\n  },\n  \"multiplayerMetadata\": {\n    \"guardInstalled\": true,\n    \"multiplayer\": %d,\n    \"clientnum\": %d,\n    \"clientBlocked\": %s,\n    \"runtimeMetadata\": \"runtime=barony-bml-runtime-stash;runtime_version=0.1.0;inventory_schema=stash-inventory-v1;capabilities=persistent_storage,persistent_inventory,void_chest_binding,placement_lobby,placement_shop,multiplayer_version_metadata\"\n  },\n  \"calls\": {\n    \"assignActions\": %d,\n    \"generateDungeon\": %d,\n    \"newEntity\": %d,\n    \"setSprite\": %d\n  },\n  \"lastPlaced\": {\n    \"lobbyChest\": ",
             g_bml_stash_playable_lobby_placements_succeeded,
             g_bml_stash_playable_lobby_placements_failed,
             g_bml_stash_playable_lobby_already_placed_count,
             g_bml_stash_playable_last_placed_chest != NULL ? "true" : "false",
             g_bml_stash_playable_last_placed_lid != NULL ? "true" : "false",
+            g_bml_stash_playable_shop_placements_attempted,
+            g_bml_stash_playable_shop_placements_succeeded,
+            g_bml_stash_playable_shop_placements_failed,
+            g_bml_stash_playable_shop_already_placed_count,
+            g_bml_stash_playable_last_placed_shop_chest != NULL ? "true" : "false",
+            g_bml_stash_playable_last_placed_shop_lid != NULL ? "true" : "false",
+            g_bml_stash_get_inventory_replacement_calls > 0 || g_bml_stash_core_behavior_active ? "true" : "false",
+            g_bml_stash_core_behavior_inventory != NULL ? "true" : "false",
+            g_bml_stash_playable_multiplayer_value,
+            g_bml_stash_playable_clientnum_value,
+            g_bml_stash_playable_multiplayer_client_blocked ? "true" : "false",
             g_bml_stash_playable_assign_actions_calls,
+            g_bml_stash_generate_dungeon_replacement_calls,
             g_bml_stash_playable_new_entity_calls,
             g_bml_stash_playable_set_sprite_calls);
     bml_write_address_or_null(file, g_bml_stash_playable_last_placed_chest);
-    fputs(", \"lid\": ", file);
+    fputs(", \"lobbyLid\": ", file);
     bml_write_address_or_null(file, g_bml_stash_playable_last_placed_lid);
+    fputs(", \"shopChest\": ", file);
+    bml_write_address_or_null(file, g_bml_stash_playable_last_placed_shop_chest);
+    fputs(", \"shopLid\": ", file);
+    bml_write_address_or_null(file, g_bml_stash_playable_last_placed_shop_lid);
     fputs("\n  },\n  \"error\": ", file);
     if (bml_has_value(error_code) || bml_has_value(error_message)) {
         fputs("{\"code\": ", file);
@@ -3857,6 +3966,16 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
     g_bml_stash_playable_lobby_already_placed_count = 0;
     g_bml_stash_playable_last_placed_chest = NULL;
     g_bml_stash_playable_last_placed_lid = NULL;
+    g_bml_stash_playable_shop_placements_attempted = 0;
+    g_bml_stash_playable_shop_placements_succeeded = 0;
+    g_bml_stash_playable_shop_placements_failed = 0;
+    g_bml_stash_playable_shop_already_placed_count = 0;
+    g_bml_stash_playable_last_placed_shop_chest = NULL;
+    g_bml_stash_playable_last_placed_shop_lid = NULL;
+    g_bml_stash_playable_last_shop_map = NULL;
+    g_bml_stash_playable_multiplayer_value = 0;
+    g_bml_stash_playable_clientnum_value = 0;
+    g_bml_stash_playable_multiplayer_client_blocked = false;
 
     bml_reset_stash_core_passthrough_state();
     bml_reset_stash_access_placement_state();
@@ -3908,13 +4027,22 @@ static int bml_run_stash_playable_install(const char *report_path, const char *p
         g_bml_stash_playable_hooks_installed = true;
     }
     if (result == 0 && self_test_requested) {
+        void *fake_shop_map = dlsym(RTLD_DEFAULT, "bml_fake_shop_map");
         bml_stash_assign_actions_replacement(bml_stash_playable_get_map_symbol());
+        if (fake_shop_map != NULL) {
+            bml_stash_assign_actions_replacement(fake_shop_map);
+        }
         if (g_bml_stash_playable_lobby_placements_succeeded < 1) {
             result = -1;
             bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_SELF_TEST_FAILED");
             bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable install self-test did not place the lobby chest and lid.");
+        } else if (fake_shop_map != NULL && g_bml_stash_playable_shop_placements_succeeded < 1) {
+            result = -1;
+            bml_copy_string(error_code, sizeof(error_code), "BML_STASH_PLAYABLE_SHOP_SELF_TEST_FAILED");
+            bml_copy_string(error_message, sizeof(error_message), "Experimental Stash playable install self-test did not place a generated-shop chest and lid.");
         }
     }
+    (void)bml_stash_playable_is_multiplayer_client();
 
     if (bml_write_stash_playable_install_report(report_path, result == 0 ? "installed" : "failed", error_code, error_message) != 0) {
         return -1;
