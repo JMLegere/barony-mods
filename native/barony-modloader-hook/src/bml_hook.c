@@ -1080,9 +1080,8 @@ static int bml_relative_target_offset(const unsigned char *code, size_t offset, 
 
 static int bml_resolve_relocated_destination(const unsigned char *target_bytes, const BmlPatchInstruction *instructions, size_t instruction_count, size_t patch_size, const unsigned char *trampoline, int64_t target_offset, const void **out_destination, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
     if (target_offset < 0) {
-        bml_copy_string(error_code, error_code_size, "BML_DETOUR_RELATIVE_CONTROL_FLOW_UNSUPPORTED");
-        bml_copy_string(error_message, error_message_size, "Detour target prologue branches before the copied patch window; this conservative relocator does not support that shape.");
-        return -1;
+        *out_destination = (const void *)((uintptr_t)target_bytes + (uintptr_t)target_offset);
+        return 0;
     }
     if ((uint64_t)target_offset < (uint64_t)patch_size) {
         for (size_t index = 0U; index < instruction_count; ++index) {

@@ -21,7 +21,7 @@ make -C native/barony-modloader-hook test
 make -C native/barony-modloader-hook static-readiness
 ```
 
-The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates temporary profile/runtime manifests, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, Stash hook, generic detour self-test, opt-in Stash target detour self-test, opt-in Stash add-item pass-through install, opt-in Stash core pass-through install, and experimental fake-provider state-backed core behavior reports with Python. It does not launch Barony or prove in-game Stash behavior. The `static-readiness` target runs `tools/analyze_stash_targets.py` against the local Steam/Linux executable and reports static prologue readiness only.
+The test target builds `build/libbarony_bml.so` plus a fake Barony symbol provider, creates temporary profile/runtime manifests, preloads both libraries into `/usr/bin/true`, and validates the JSON runtime load, symbol probe, Stash hook, generic detour self-test, opt-in Stash target detour self-test, opt-in Stash add-item pass-through install, opt-in Stash core pass-through install, and experimental fake-provider state-backed core behavior reports with Python. The fake provider includes a backward relative branch fixture matching the installed `Entity::addItemToChest` thunk shape. It does not launch Barony or prove in-game Stash behavior.
 
 Manual smoke shape:
 
@@ -34,7 +34,7 @@ LD_PRELOAD=/path/to/native/barony-modloader-hook/build/libbarony_bml.so \
 /usr/bin/true
 ```
 
-Set `BML_DETOUR_SELF_TEST=1` with the fake symbol provider preloaded to write `BaronyModLoader/reports/detour-self-test-report.json`. Set `BML_STASH_DETOUR_SELF_TEST=1` to verify the exact `Entity::addItemToVoidChestServer` fake-symbol detour and trampoline call-through. Set `BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1` to install the process-lifetime add-item pass-through report. Set `BML_STASH_INSTALL_CORE_PASSTHROUGH=1` to install and report the seven-target core inventory lifecycle pass-through set. Set `BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1` with `BML_STASH_CORE_BEHAVIOR_SELF_TEST=1` under the fake provider to validate state-backed load/add/remove/save over `stats[0]->void_chest_inventory`, including generic `addItemToChest` and `getItemFromChest` mutations. These opt-in paths are still fail-closed reports, not playable in-game Stash verification.
+Set `BML_DETOUR_SELF_TEST=1` with the fake symbol provider preloaded to write `BaronyModLoader/reports/detour-self-test-report.json`. Set `BML_STASH_DETOUR_SELF_TEST=1` to verify the exact `Entity::addItemToVoidChestServer` fake-symbol detour and trampoline call-through. Set `BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH=1` to install the process-lifetime add-item pass-through report. Set `BML_STASH_INSTALL_CORE_PASSTHROUGH=1` to install and report the seven-target core inventory lifecycle pass-through set. Set `BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR=1` with `BML_STASH_CORE_BEHAVIOR_SELF_TEST=1` under the fake provider to validate state-backed load/add/remove/save over `stats[0]->void_chest_inventory`, including generic `addItemToChest` and `getItemFromChest` mutations. A timed installed Steam/Linux probe without the fake self-test can verify the seven detours install in the real executable and still fail closed with `BML_STASH_HOOKS_NOT_INSTALLED`. These opt-in paths are still fail-closed reports, not playable in-game Stash verification.
 
 Current non-goals:
 
