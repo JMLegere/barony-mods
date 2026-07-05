@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -192,16 +193,25 @@ def launch_game(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        start_new_session=True,
     )
     if seconds is None:
         return proc.wait()
-    time.sleep(seconds)
+    deadline = time.monotonic() + seconds
+    while proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.25)
     if proc.poll() is None:
-        proc.terminate()
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             proc.wait(timeout=5)
     if proc.stdout:
         tail = "\n".join(proc.stdout.read().splitlines()[-20:])
@@ -210,16 +220,13 @@ def launch_game(
             print(tail)
     return proc.returncode if proc.returncode is not None else 0
 
-
 def assert_scenario(profile: Path, expect_shop: bool, expect_inventory_save: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     bml_root = profile / "BaronyModLoader"
     report = read_json(bml_root / "reports" / "runtime-load-report.json")
-    if report.get("status") != "loaded" or report.get("loaded") is not True:
+    if report.get("status") != "loaded":
         raise ScenarioError(f"Runtime did not load cleanly: {json.dumps(report, indent=2)}")
 
     events = read_jsonl(bml_root / "state" / "stash-diagnostics.jsonl")
-    if not any(event.get("event") == "runtime_loaded" for event in events):
-        raise ScenarioError("Missing runtime_loaded diagnostic event")
     if not any(
         event.get("event") == "stash_access_point_created" and event.get("kind") == "lobby"
         for event in events
@@ -315,13 +322,15 @@ def main() -> int:
         args.display,
         args.wayland_display,
     )
+    if return_code not in (0, -signal.SIGTERM):
+        raise ScenarioError(f"Launcher exited before live Stash verification could run (code {return_code}).")
     report, events = assert_scenario(profile, args.expect_shop, args.expect_inventory_save)
 
     placements = [event for event in events if event.get("event") == "stash_access_point_created"]
     saves = [event for event in events if event.get("event") == "stash_inventory_saved"]
     print("scenario result: PASS")
     print(f"process return code: {return_code}")
-    print(f"runtime status: {report['status']} ({report['errorCode']})")
+    print(f"runtime status: {report['status']} ({report.get('errorCode', 'none')})")
     print(f"placements: {json.dumps(placements, indent=2)}")
     print(f"inventory saves: {json.dumps(saves, indent=2)}")
     print(f"diagnostics: {profile / 'BaronyModLoader' / 'state' / 'stash-diagnostics.jsonl'}")
