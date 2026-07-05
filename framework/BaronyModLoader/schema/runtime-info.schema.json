@@ -100,7 +100,8 @@
         "void_chest_binding",
         "placement_lobby",
         "placement_shop",
-        "multiplayer_version_metadata"
+        "multiplayer_version_metadata",
+        "runtime_load_smoke"
       ]
     },
     "capabilityRequest": {
@@ -180,7 +181,8 @@
         "runtimeStrategy": { "type": "string", "minLength": 1 },
         "requiresValidatedManifest": { "type": "boolean" },
         "rejectsUnknownRequiredCapabilities": { "type": "boolean" },
-        "partialStashLoadAllowed": { "type": "boolean" }
+        "partialStashLoadAllowed": { "type": "boolean" },
+        "windowsSupportLevel": { "type": "string", "enum": ["noop-runtime-load", "stash-runtime-fail-closed", "stash-runtime-supported"] }
       }
     }
   }

@@ -35,7 +35,7 @@
     },
     "capabilityId": {
       "type": "string",
-      "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata"]
+      "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata", "runtime_load_smoke"]
     },
     "capability": {
       "type": "object",

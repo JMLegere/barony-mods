@@ -1,0 +1,36 @@
+{
+  "formatVersion": "0.1.0",
+  "id": "jml.windows_smoke",
+  "name": "Windows Loader Smoke Test",
+  "version": "0.1.0",
+  "kind": "runtime-support",
+  "summary": "No-op package used to validate Windows runtime load plumbing.",
+  "authors": [
+    { "name": "BaronyModLoader" }
+  ],
+  "layout": {
+    "contentRoot": "content/",
+    "assetRoot": "assets/",
+    "nativeRoot": "native/",
+    "migrationRoot": "migrations/"
+  },
+  "barony": {
+    "supportedGameVersions": ["5.x"],
+    "upstreamRepository": "https://github.com/TurningWheel/Barony"
+  },
+  "framework": {
+    "id": "BaronyModLoader",
+    "minimumAppVersion": "0.1.0",
+    "packageSchema": "bml-package@0.1.0",
+    "runtimeContract": "bml-runtime-contract@0.1.0"
+  },
+  "engine": {
+    "runtimeContract": "bml-runtime-contract@0.1.0",
+    "minimumRuntimeVersion": "0.1.0",
+    "capabilities": [
+      { "id": "runtime_load_smoke", "version": "0.1.0", "required": true }
+    ]
+  },
+  "content": { "entries": [] },
+  "modules": {}
+}

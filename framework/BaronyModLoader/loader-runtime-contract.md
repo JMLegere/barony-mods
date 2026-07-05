@@ -2,13 +2,13 @@
 
 BaronyModLoader is a standalone app paired with a small Barony engine runtime/framework patch. The app owns package installation, profile activation, dependency resolution, validation, launch, and logs. The engine runtime owns safe gameplay hooks and authoritative game-state behavior.
 
-This contract keeps those responsibilities separate so mods remain clean packages instead of hidden executable forks.
+This contract keeps those responsibilities separate so mods remain clean, platform-agnostic capability packages instead of hidden executable forks.
 
 ## Contract principles
 
 - The app never edits gameplay state directly while Barony is running.
 - The engine runtime never scans arbitrary package folders for behavior.
-- Packages declare requested capabilities; the app resolves them; the engine confirms or rejects them.
+- Packages declare abstract requested capabilities; the app resolves them against registered runtimes; the engine confirms or rejects them.
 - Runtime manifests are generated per profile/launch and treated as read-only input by the engine.
 - Engine-owned hooks are narrow, data-driven, and capability-gated.
 - Failures are reported before gameplay when possible and are explicit when discovered at runtime.
@@ -41,7 +41,7 @@ The engine runtime is the paired Barony patch/framework layer. It is responsible
 
 ### Packages
 
-Packages are immutable input artifacts. They contain manifests, content/assets, native provenance, migration descriptors, and checksums. They do not execute directly.
+Packages are immutable input artifacts. They contain manifests, content/assets, abstract capability requests, optional source/reference metadata, migration descriptors, and checksums. They do not execute directly and they do not select platform/store/build-specific hook binaries.
 
 ## Launch flow
 
@@ -75,7 +75,7 @@ Activation is profile-scoped. Enabling a mod for one profile must not mutate ano
 3. Verify `formatVersion` compatibility.
 4. Verify package checksums and optional signatures.
 5. Resolve dependencies, conflicts, load order, and exclusive capability ownership.
-6. Evaluate native requirements against available Barony runtime builds.
+6. Match abstract runtime requirements and capability requests against registered Barony runtime builds for the selected platform/store/build.
 7. Determine required migrations for package/profile/save metadata.
 8. Apply app-owned pre-activation migrations.
 9. Write `active-mods.json` for the profile.
@@ -153,13 +153,15 @@ The runtime manifest should include only resolved, validated package data. It sh
 
 The app and engine runtime both participate in capability negotiation.
 
+Package manifests are platform-agnostic at this layer. They say what capabilities a mod needs; runtime registration metadata says which platform/store/build-specific framework runtime can provide those capabilities for a launch.
+
 ### App-side negotiation
 
 The app compares package requests to metadata from registered BML hook runtimes:
 
 ```json
 {
-  "runtimeId": "barony-bml-hook",
+  "runtimeId": "barony-bml-runtime-stash",
   "runtimeStrategy": "installed-binary-hook",
   "runtimeVersion": "0.1.0",
   "storefront": "steam",
@@ -198,11 +200,12 @@ Optional capabilities may be disabled only if the manifest describes a safe fall
 
 ## Engine runtime reports
 
-The Linux installed-binary hook now has three distinct report layers. They must not be collapsed into one success claim:
+Current runtime report evidence includes Linux installed-binary hook reports and a Windows no-op diagnostic runtime/package. These layers must not be collapsed into one success claim:
 
-1. `runtime-load-report.json` proves that the BML hook loaded, read the runtime/hook manifests, and accepted or rejected the launch.
-2. `symbol-probe-report.json` proves that required Barony symbols from the installed executable were resolved with `dlsym(RTLD_DEFAULT, mangledSymbol)`.
+1. `runtime-load-report.json` proves that a BML runtime loaded, read the runtime/hook manifests, and accepted or rejected the launch.
+2. `symbol-probe-report.json` proves that required Barony symbols from the installed executable were resolved with `dlsym(RTLD_DEFAULT, mangledSymbol)` on Linux installed-binary hook targets.
 3. `stash-hook-report.json` proves whether required Stash gameplay hook targets were actually installed.
+4. The Windows no-op smoke runtime/package proves framework registration, runtime selection, manifest parsing, and report writing on Windows only. Runtime-load smoke diagnostic packages request only the reserved `runtime_load_smoke` capability, with `jml.windows_smoke` as the reference fixture. Runtimes with `windowsSupportLevel: noop-runtime-load` reject packages that request non-smoke capabilities with `BML_RUNTIME_NOOP_PACKAGE_UNSUPPORTED`. This is diagnostic plumbing, not a gameplay capability runtime, and it must not be treated as Windows Stash support.
 
 Resolved Barony symbols are necessary but not sufficient for Stash gameplay. A successful symbol probe means the installed process exposes the expected functions/data for Steam app `371970`, build `22630456`, game `v5.0.2`, executable SHA-256 `da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade`, ELF build id `58089d84bce3afb48d5b19df032f7aa89d81b69a`. It does not mean the hook runtime has patched callsites, installed detours, placed access points, or redirected Void Chest inventory.
 
@@ -216,13 +219,15 @@ Canonical path:
 
 The report follows `framework/BaronyModLoader/schema/runtime-load-report.schema.json`. Top-level `status` is either `loaded` or `failed`. For an active required mod such as Stash, `loaded` is allowed only after launch inputs, executable provenance, required symbol probes, and required hook targets all pass. If the symbol probe fails or required Stash hook targets remain uninstalled, the load report must fail closed and must not include `jml.stash` as a loaded mod.
 
-Current Stash-safe failure shape:
+A Windows no-op diagnostic package/runtime may report success only for runtime-load smoke diagnostic packages that request just `runtime_load_smoke`; `jml.windows_smoke` is the reference fixture. It must not list `jml.stash` as loaded, advertise Stash gameplay capabilities, or imply that Windows Void Chest binding, placement, persistence, or multiplayer Stash hooks are implemented.
+
+Failure shape when required Stash hook validation fails:
 
 ```json
 {
   "contract": { "id": "bml-runtime-contract", "version": "0.1.0" },
   "runtime": {
-    "id": "barony-bml-hook",
+    "id": "barony-bml-runtime-stash",
     "version": "0.1.0",
     "strategy": "installed-binary-hook",
     "gameRevision": "steam-371970-22630456",
@@ -236,7 +241,7 @@ Current Stash-safe failure shape:
     {
       "code": "BML_STASH_HOOKS_NOT_INSTALLED",
       "severity": "fatal",
-      "message": "Direct Stash hook backend did not install all required gameplay hooks; Stash is intentionally failed closed.",
+      "message": "Direct Stash hook backend did not install all required gameplay hooks for this launch; Stash is blocked for safety.",
       "action": "block-launch"
     }
   ],
@@ -264,7 +269,7 @@ Canonical path:
 <profile>/BaronyModLoader/reports/stash-hook-report.json
 ```
 
-The report follows `framework/BaronyModLoader/schema/stash-hook-report.schema.json`. It records the direct Stash hook backend (`id`, `mode`, `strategy`, `patchBytes`), summarizes ready/blocked/not-installed hook groups, and lists per-target readiness for each required Stash hook target. In the current backend mode (`analyze-only`) every target is inspected but no gameplay detour is installed, so Stash fails closed with `BML_STASH_HOOKS_NOT_INSTALLED`. This is intentional until the backend grows a real relocation-safe detour/trampoline installer and focused in-game tests pass. Source patches under `native/barony-modloader-runtime/patches/` remain semantic/reference artifacts only; they are not the v1 installed-executable runtime path.
+The report follows `framework/BaronyModLoader/schema/stash-hook-report.schema.json`. It records the direct Stash hook backend (`id`, `mode`, `strategy`, `patchBytes`), summarizes ready/blocked/not-installed hook groups, and lists per-target readiness for each required Stash hook target. For validated Steam/Linux Stash launches, the native hook installs the production playable bundle by default and reports the accepted hook targets. If required targets are missing or blocked, Stash fails closed with `BML_STASH_HOOKS_NOT_INSTALLED`. Source patches under `native/barony-modloader-runtime/patches/` remain semantic/reference artifacts only; they are not the v1 installed-executable runtime path.
 
 ## Error contract
 
@@ -440,6 +445,7 @@ The app should support at least these launch modes:
 - `vanilla`: launch discovered Barony without a runtime manifest or hook environment.
 - `modded-profile`: launch the installed Barony executable with a selected BML hook runtime and generated runtime manifest.
 - `validate-only`: generate reports without launching gameplay.
+- `diagnostic-smoke`: launch a registered no-op runtime/package path such as `jml.windows_smoke` with only `runtime_load_smoke` to validate framework registration, manifest, and report plumbing without enabling gameplay capabilities.
 - `runtime-info`: read BML hook/runtime release metadata and verify it against the installed executable.
 
 The `vanilla` path is important: BaronyModLoader should be a clean manager, not a one-way fork installer.

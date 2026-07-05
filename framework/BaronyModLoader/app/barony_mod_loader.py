@@ -15,10 +15,12 @@ import json
 import os
 import platform
 import re
+import struct
 import shutil
 import tempfile
 import zipfile
 import subprocess
+import uuid
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -35,13 +37,38 @@ PACKAGE_MANIFEST_NAME = "bml-package.json"
 PACKAGE_INSTALL_DIRECTORIES = ("content", "assets", "native", "migrations")
 DETERMINISTIC_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 STEAM_BARONY_APP_ID = "371970"
-STEAM_BARONY_EXECUTABLE = "barony.x86_64"
+STEAM_BARONY_EXECUTABLES = {
+    "linux": "barony.x86_64",
+    "windows": "barony.exe",
+}
 STEAM_LIBRARY_RELATIVE_INSTALL = Path("common") / "Barony"
 STEAM_MANIFEST_NAME = f"appmanifest_{STEAM_BARONY_APP_ID}.acf"
 RUNTIME_STRATEGY_INSTALLED_HOOK = "installed-binary-hook"
 SUPPORTED_RUNTIME_STRATEGIES = (RUNTIME_STRATEGY_INSTALLED_HOOK,)
 
 DEFAULT_RUNTIME_REGISTRY_PATH = Path.home() / ".local" / "share" / APP_ID / "runtime-registry.json"
+
+PE_MACHINE_NAMES = {
+    0x014C: "i386",
+    0x8664: "x86_64",
+    0x01C0: "arm",
+    0x01C4: "armv7",
+    0xAA64: "arm64",
+}
+PE_SUBSYSTEM_NAMES = {
+    1: "native",
+    2: "windows-gui",
+    3: "windows-cui",
+    5: "os2-cui",
+    7: "posix-cui",
+    9: "windows-ce-gui",
+    10: "efi-application",
+    11: "efi-boot-service-driver",
+    12: "efi-runtime-driver",
+    13: "efi-rom",
+    14: "xbox",
+    16: "windows-boot-application",
+}
 
 CANONICAL_STASH_CAPABILITIES = (
     "persistent_storage",
@@ -51,6 +78,27 @@ CANONICAL_STASH_CAPABILITIES = (
     "placement_shop",
     "multiplayer_version_metadata",
 )
+DIAGNOSTIC_CAPABILITIES = (
+    "runtime_load_smoke",
+)
+KNOWN_CAPABILITIES = CANONICAL_STASH_CAPABILITIES + DIAGNOSTIC_CAPABILITIES
+
+PACKAGE_PLATFORM_RUNTIME_KEYS = {
+    "platform",
+    "platforms",
+    "storefront",
+    "steam",
+    "steamAppId",
+    "steamBuildId",
+    "installedExecutable",
+    "steamExecutable",
+    "executable",
+    "artifact",
+    "hookTargets",
+    "runtimeStrategy",
+    "gameRevision",
+}
+PACKAGE_NATIVE_LEGACY_KEYS = {"patches", "builds", "libraries"}
 
 OUTDATED_CAPABILITY_ALIASES = {
     "persistent_named_inventories": ("persistent_inventory",),
@@ -121,17 +169,106 @@ def write_json_file(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, handle, indent=2, sort_keys=False)
         handle.write("\n")
 
+def current_os_name() -> str:
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith(("win32", "cygwin", "msys")):
+        return "windows"
+    return sys.platform or "unknown"
+
+
+def normalized_machine_name(machine: str | None) -> str:
+    normalized = (machine or "unknown").strip().lower()
+    if normalized in {"amd64", "x86_64", "x64"}:
+        return "x86_64"
+    if normalized in {"i386", "i686", "x86"}:
+        return "x86"
+    if normalized in {"aarch64", "arm64"}:
+        return "arm64"
+    return normalized or "unknown"
+
+
+def process_bitness() -> int:
+    return struct.calcsize("P") * 8
+
+
+def executable_bitness(provenance: dict[str, Any]) -> int | None:
+    pe = provenance.get("pe")
+    bitness = pe.get("bitness") if isinstance(pe, dict) else None
+    return int(bitness) if isinstance(bitness, int) else None
+
+
+def steam_barony_executable_name(platform_id: str | None = None) -> str:
+    os_name = platform_id.split("-", 1)[0] if platform_id else current_os_name()
+    return STEAM_BARONY_EXECUTABLES.get(os_name, STEAM_BARONY_EXECUTABLES["linux"])
+
+
+def windows_steam_roots() -> list[Path]:
+    roots: list[Path] = []
+    try:
+        import winreg
+    except ImportError:
+        winreg = None
+    if winreg is not None:
+        registry_locations = (
+            (winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", ("SteamPath", "InstallPath")),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", ("InstallPath", "SteamPath")),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", ("InstallPath", "SteamPath")),
+        )
+        for hive, key_name, value_names in registry_locations:
+            try:
+                with winreg.OpenKey(hive, key_name) as key:
+                    for value_name in value_names:
+                        try:
+                            value, _value_type = winreg.QueryValueEx(key, value_name)
+                        except OSError:
+                            continue
+                        if isinstance(value, str) and value:
+                            roots.append(Path(value))
+            except OSError:
+                continue
+    for env_name in ("ProgramFiles(x86)", "ProgramFiles"):
+        value = os.environ.get(env_name)
+        if value:
+            roots.append(Path(value) / "Steam")
+    roots.extend((Path("C:/Program Files (x86)/Steam"), Path("C:/Program Files/Steam")))
+    return roots
+
+
+def parse_steam_libraryfolders(path: Path) -> list[Path]:
+    libraryfolders = path / "libraryfolders.vdf"
+    if not libraryfolders.exists():
+        return []
+    paths: list[Path] = []
+    pattern = re.compile(r'^\s*"path"\s+"([^"]+)"\s*$')
+    with libraryfolders.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            match = pattern.match(line)
+            if match:
+                raw_path = match.group(1).replace("\\\\", "\\")
+                if raw_path:
+                    paths.append(Path(raw_path) / "steamapps")
+    return paths
+
+
 def steam_manifest_candidates() -> list[Path]:
     home = Path.home()
-    candidates = [
-        home / ".local/share/Steam/steamapps" / STEAM_MANIFEST_NAME,
-        home / ".steam/steam/steamapps" / STEAM_MANIFEST_NAME,
-        home / ".var/app/com.valvesoftware.Steam/data/Steam/steamapps" / STEAM_MANIFEST_NAME,
-        home / "snap/steam/common/.local/share/Steam/steamapps" / STEAM_MANIFEST_NAME,
+    steamapps_candidates = [
+        home / ".local/share/Steam/steamapps",
+        home / ".steam/steam/steamapps",
+        home / ".var/app/com.valvesoftware.Steam/data/Steam/steamapps",
+        home / "snap/steam/common/.local/share/Steam/steamapps",
     ]
+    steamapps_candidates.extend(root / "steamapps" for root in windows_steam_roots())
+    for steamapps in tuple(steamapps_candidates):
+        steamapps_candidates.extend(parse_steam_libraryfolders(steamapps))
+
     seen: set[Path] = set()
     unique: list[Path] = []
-    for candidate in candidates:
+    for steamapps in steamapps_candidates:
+        candidate = steamapps / STEAM_MANIFEST_NAME
         resolved = candidate.expanduser()
         key = resolved.resolve() if resolved.exists() else resolved.absolute()
         if key not in seen:
@@ -164,6 +301,7 @@ def detect_steam_install(manifest_arg: str | None = None, install_arg: str | Non
     result = ValidationResult("Steam Barony install")
     manifest_path: Path | None = None
     manifest: dict[str, str] = {}
+    host_platform_id = current_platform_id()
 
     if manifest_arg:
         manifest_path = Path(manifest_arg).expanduser()
@@ -192,7 +330,7 @@ def detect_steam_install(manifest_arg: str | None = None, install_arg: str | Non
         install_path = Path.home() / ".local/share/Steam/steamapps" / STEAM_LIBRARY_RELATIVE_INSTALL
 
     install_path = install_path.resolve() if install_path.exists() else install_path.absolute()
-    executable = install_path / STEAM_BARONY_EXECUTABLE
+    executable = install_path / steam_barony_executable_name(host_platform_id)
 
     if not install_path.exists():
         result.add("BML_STEAM_INSTALL_MISSING", "fatal", "Steam Barony install directory was not found.", path=str(install_path))
@@ -208,6 +346,9 @@ def detect_steam_install(manifest_arg: str | None = None, install_arg: str | Non
             provenance = executable_provenance(executable)
         except OSError as exc:
             result.add("BML_STEAM_EXECUTABLE_PROVENANCE_FAILED", "error", f"Could not inspect Steam executable provenance: {exc}", path=str(executable))
+    platform_id = executable_platform_id(provenance, host_platform_id)
+    launcher_process_bitness = process_bitness()
+    target_executable_bitness = executable_bitness(provenance)
 
     payload = {
         "source": "steam",
@@ -217,9 +358,12 @@ def detect_steam_install(manifest_arg: str | None = None, install_arg: str | Non
         "manifestPath": str(manifest_path.resolve()) if manifest_path and manifest_path.exists() else None,
         "installPath": str(install_path),
         "executable": str(executable),
+        "platform": platform_id,
+        "hostPlatform": host_platform_id,
         "executableSha256": provenance.get("sha256"),
         "executableBuildId": provenance.get("buildId"),
         "gameVersionString": provenance.get("gameVersionString"),
+        "provenance": provenance,
         "assetsRoot": str(install_path),
         "compatibility": {
             "stockExecutablePatched": False,
@@ -228,6 +372,10 @@ def detect_steam_install(manifest_arg: str | None = None, install_arg: str | Non
             "requiresBmlHookRuntime": True,
             "runtimeUsesInstalledExecutable": True,
             "runtimeUsesSteamAssets": True,
+            "hostPlatformMatchesExecutable": host_platform_id == platform_id,
+            "launcherProcessBitness": launcher_process_bitness,
+            "targetExecutableBitness": target_executable_bitness,
+            "launcherProcessMatchesExecutable": target_executable_bitness is None or launcher_process_bitness == target_executable_bitness,
         },
     }
     return payload, result
@@ -361,6 +509,52 @@ def package_capability_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]
 
 def package_required_capabilities(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return [entry for entry in package_capability_entries(manifest) if entry.get("required", True)]
+
+
+def is_windows_noop_smoke_package(manifest: dict[str, Any]) -> bool:
+    required_ids = {
+        entry["id"]
+        for entry in package_required_capabilities(manifest)
+        if isinstance(entry.get("id"), str)
+    }
+    return required_ids == {"runtime_load_smoke"}
+
+
+def apply_package_launch_overrides(env: dict[str, str], manifest: dict[str, Any]) -> None:
+    if is_windows_noop_smoke_package(manifest):
+        env["BML_VALIDATE_INJECTION_ONLY"] = "1"
+
+
+def validate_platform_agnostic_package_metadata(result: ValidationResult, value: Any, path: tuple[str, ...] = ()) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = (*path, str(key))
+            dotted = ".".join(child_path)
+            if path == ("native",) and key in PACKAGE_NATIVE_LEGACY_KEYS:
+                result.add(
+                    "BML_PACKAGE_NATIVE_LEGACY_FIELD_FORBIDDEN",
+                    "error",
+                    "Package manifests must use native.runtimeRequirements and native.sourceReferences; platform/build patches are release or semantic-reference metadata outside the runtime authority path.",
+                    field=dotted,
+                )
+            elif path == ("build",) and key == "outputs":
+                result.add(
+                    "BML_PACKAGE_BUILD_OUTPUTS_FORBIDDEN",
+                    "error",
+                    "Package manifests must not declare platform-specific build outputs; release manifests or runtime registrations own build artifacts.",
+                    field=dotted,
+                )
+            elif key in PACKAGE_PLATFORM_RUNTIME_KEYS or (key == "hook" and path[:2] != ("modules", "placements")):
+                result.add(
+                    "BML_PACKAGE_PLATFORM_METADATA_FORBIDDEN",
+                    "error",
+                    "Package manifests must stay platform-agnostic; platform, store, executable, hook, and runtime artifact metadata belongs in runtime registration or release manifests.",
+                    field=dotted,
+                )
+            validate_platform_agnostic_package_metadata(result, child, child_path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            validate_platform_agnostic_package_metadata(result, child, (*path, str(index)))
 
 
 def validate_required_string(
@@ -533,7 +727,7 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
     manifest = loaded.manifest
     result = ValidationResult(f"package {loaded.manifest_path}")
 
-    for key in ("formatVersion", "id", "name", "version", "kind"):
+    for key in ("formatVersion", "id", "name", "version", "kind", "summary"):
         validate_required_string(
             result,
             manifest,
@@ -541,6 +735,23 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
             "BML_PACKAGE_FIELD_MISSING",
             semver=key in {"formatVersion", "version"},
         )
+    authors = manifest.get("authors")
+    if not isinstance(authors, list) or not authors:
+        result.add("BML_PACKAGE_FIELD_MISSING", "error", "Package must declare at least one author.", field="authors")
+    layout = manifest.get("layout")
+    if not isinstance(layout, dict):
+        result.add("BML_PACKAGE_FIELD_MISSING", "error", "Package must declare a layout object.", field="layout")
+    barony = manifest.get("barony")
+    if not isinstance(barony, dict):
+        result.add("BML_PACKAGE_FIELD_MISSING", "error", "Package must declare a barony compatibility object.", field="barony")
+    elif not isinstance(barony.get("supportedGameVersions"), list) or not barony.get("supportedGameVersions"):
+        result.add("BML_PACKAGE_FIELD_MISSING", "error", "barony.supportedGameVersions must be a non-empty list.", field="barony.supportedGameVersions")
+    elif not isinstance(barony.get("upstreamRepository"), str) or not barony.get("upstreamRepository").strip():
+        result.add("BML_PACKAGE_FIELD_MISSING", "error", "barony.upstreamRepository must identify the upstream Barony project.", field="barony.upstreamRepository")
+    framework = manifest.get("framework")
+    if not isinstance(framework, dict):
+        result.add("BML_PACKAGE_FIELD_MISSING", "error", "Package must declare a framework compatibility object.", field="framework")
+
 
     package_id = manifest.get("id")
     if isinstance(package_id, str) and package_id and not PACKAGE_ID_RE.match(package_id):
@@ -575,38 +786,77 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
 
     required_capabilities = package_required_capabilities(manifest)
     required_ids = {entry["id"] for entry in required_capabilities if isinstance(entry.get("id"), str)}
-    for required_id in required_ids:
-        if required_id not in CANONICAL_STASH_CAPABILITIES and required_id not in OUTDATED_CAPABILITY_ALIASES:
+    declared_ids = {entry.get("id") for entry in package_capability_entries(manifest) if isinstance(entry.get("id"), str)}
+    validate_platform_agnostic_package_metadata(result, manifest)
+    for capability_id in sorted(declared_ids):
+        if capability_id not in KNOWN_CAPABILITIES and capability_id not in OUTDATED_CAPABILITY_ALIASES:
             result.add(
                 "BML_PACKAGE_CAPABILITY_UNKNOWN",
                 "error",
-                f"Unknown required capability id {required_id!r} for v0 BaronyModLoader.",
-                capability=required_id,
-                allowed=list(CANONICAL_STASH_CAPABILITIES),
+                f"Unknown capability id {capability_id!r} for v0 BaronyModLoader.",
+                capability=capability_id,
+                allowed=list(KNOWN_CAPABILITIES),
             )
 
-    missing = [capability for capability in CANONICAL_STASH_CAPABILITIES if capability not in required_ids]
-    if missing:
+    smoke_package = is_windows_noop_smoke_package(manifest)
+    if smoke_package:
+        if required_ids != {"runtime_load_smoke"} or declared_ids != {"runtime_load_smoke"}:
+            result.add(
+                "BML_PACKAGE_DIAGNOSTIC_CAPABILITY_INVALID",
+                "error",
+                "Windows no-op smoke packages must declare only the runtime_load_smoke capability.",
+                declaredCapabilities=sorted(declared_ids),
+                requiredCapabilities=sorted(required_ids),
+                expected=["runtime_load_smoke"],
+            )
+    elif "runtime_load_smoke" in declared_ids:
         result.add(
-            "BML_PACKAGE_CAPABILITY_REQUIRED_MISSING",
+            "BML_PACKAGE_DIAGNOSTIC_CAPABILITY_RESERVED",
             "error",
-            "Package is missing required canonical v0 Stash capability ids.",
-            missing=missing,
-            required=list(CANONICAL_STASH_CAPABILITIES),
-            present=sorted(engine_cap_ids),
+            "The runtime_load_smoke capability must be the package's only declared capability when used.",
+            capability="runtime_load_smoke",
         )
 
+    if manifest.get("id") == "jml.stash" or manifest.get("name") == "Stash":
+        missing = [capability for capability in CANONICAL_STASH_CAPABILITIES if capability not in required_ids]
+        if missing:
+            result.add(
+                "BML_PACKAGE_CAPABILITY_REQUIRED_MISSING",
+                "error",
+                "Stash must declare every canonical v0 Stash capability id.",
+                missing=missing,
+                required=list(CANONICAL_STASH_CAPABILITIES),
+                present=sorted(engine_cap_ids),
+            )
+
     native = manifest.get("native")
-    if isinstance(native, dict):
-        patches = native.get("patches")
-        if isinstance(patches, list):
-            for patch_index, patch in enumerate(patches):
-                if isinstance(patch, dict):
-                    validate_capability_name_list(
-                        result,
-                        patch.get("providesCapabilities"),
-                        f"native.patches[{patch_index}].providesCapabilities",
-                    )
+    if native is not None and not isinstance(native, dict):
+        result.add("BML_PACKAGE_NATIVE_INVALID", "error", "native must be an object when declared.", field="native")
+    elif isinstance(native, dict):
+        if native.get("required") not in {True, False}:
+            result.add("BML_PACKAGE_NATIVE_REQUIRED_INVALID", "error", "native.required must be a boolean.", field="native.required")
+        if native.get("mode") != "paired-engine-runtime":
+            result.add("BML_PACKAGE_NATIVE_MODE_INVALID", "error", "native.mode must be paired-engine-runtime.", field="native.mode")
+        plugins = native.get("plugins")
+        if not isinstance(plugins, list) or plugins:
+            result.add("BML_PACKAGE_NATIVE_PLUGINS_INVALID", "error", "native.plugins must be an empty array; packages do not load arbitrary native plugins.", field="native.plugins")
+        runtime_requirements = native.get("runtimeRequirements")
+        if not isinstance(runtime_requirements, dict):
+            result.add(
+                "BML_PACKAGE_RUNTIME_REQUIREMENTS_MISSING",
+                "error",
+                "native packages must declare native.runtimeRequirements instead of platform-specific runtime builds.",
+                field="native.runtimeRequirements",
+            )
+        else:
+            if runtime_requirements.get("owner") != APP_ID:
+                result.add("BML_PACKAGE_RUNTIME_REQUIREMENTS_OWNER_INVALID", "error", "native.runtimeRequirements.owner must be BaronyModLoader.", field="native.runtimeRequirements.owner")
+            if runtime_requirements.get("runtimeContract") != RUNTIME_CONTRACT:
+                result.add("BML_PACKAGE_RUNTIME_REQUIREMENTS_CONTRACT_INVALID", "error", f"native.runtimeRequirements.runtimeContract must be {RUNTIME_CONTRACT}.", field="native.runtimeRequirements.runtimeContract")
+            if runtime_requirements.get("requiresBmlRuntime") is not True:
+                result.add("BML_PACKAGE_RUNTIME_REQUIREMENTS_RUNTIME_INVALID", "error", "native.runtimeRequirements.requiresBmlRuntime must be true for native-required packages.", field="native.runtimeRequirements.requiresBmlRuntime")
+            if runtime_requirements.get("mutatesExecutableOnDisk") is not False:
+                result.add("BML_PACKAGE_RUNTIME_REQUIREMENTS_MUTATION_INVALID", "error", "native.runtimeRequirements.mutatesExecutableOnDisk must be false.", field="native.runtimeRequirements.mutatesExecutableOnDisk")
 
     runtime_reports = manifest.get("runtimeReports")
     if isinstance(runtime_reports, dict):
@@ -650,6 +900,250 @@ def load_runtime_info(path_arg: str) -> tuple[dict[str, Any] | None, Path, Valid
         result.add("BML_RUNTIME_INFO_INVALID", "fatal", "Runtime info root must be a JSON object.")
         return None, path, result
     return payload, path.resolve(), result
+
+
+def validate_hook_manifest_supported(path: Path | None) -> ValidationResult:
+    result = ValidationResult("hook manifest support")
+    if path is None or not path.exists() or not path.is_file():
+        return result
+    try:
+        payload = parse_json_file(path)
+    except json.JSONDecodeError as exc:
+        result.add("BML_HOOK_MANIFEST_PARSE_FAILED", "fatal", "Hook manifest is not valid JSON.", path=str(path), line=exc.lineno, column=exc.colno, error=exc.msg)
+        return result
+    except OSError as exc:
+        result.add("BML_HOOK_MANIFEST_READ_FAILED", "fatal", f"Could not read hook manifest: {exc}", path=str(path))
+        return result
+    if not isinstance(payload, dict):
+        result.add("BML_HOOK_MANIFEST_INVALID", "fatal", "Hook manifest root must be a JSON object.", path=str(path))
+        return result
+    hook = payload.get("hook")
+    if not isinstance(hook, dict):
+        result.add("BML_HOOK_MANIFEST_HOOK_MISSING", "fatal", "Hook manifest must include a hook object.", path=str(path))
+        return result
+    hook_implemented = hook.get("implemented")
+    entrypoint = hook.get("entrypoint")
+    if entrypoint != "bml_hook_init":
+        result.add(
+            "BML_HOOK_MANIFEST_ENTRYPOINT_UNSUPPORTED",
+            "fatal",
+            "Hook manifest must pin hook.entrypoint to bml_hook_init.",
+            path=str(path),
+            entrypoint=entrypoint,
+        )
+    if payload.get("status") == "unsupported" or payload.get("failClosed") is True or hook_implemented is False:
+        result.add(
+            "BML_HOOK_MANIFEST_UNSUPPORTED",
+            "fatal",
+            "Hook manifest is marked unsupported/fail-closed and cannot be registered or launched.",
+            path=str(path),
+            status=payload.get("status"),
+            failClosed=payload.get("failClosed"),
+            hookImplemented=hook_implemented,
+        )
+    return result
+
+
+def validate_hook_manifest_target(
+    path: Path | None,
+    platform_id: str,
+    steam_app_id: str,
+    steam_build_id: str,
+    steam_executable_sha256: str | None,
+) -> ValidationResult:
+    result = ValidationResult("hook manifest target")
+    if path is None or not path.exists() or not path.is_file():
+        return result
+    try:
+        payload = parse_json_file(path)
+    except (json.JSONDecodeError, OSError):
+        return result
+    if not isinstance(payload, dict):
+        return result
+
+    expected_fields = {
+        "runtimeStrategy": RUNTIME_STRATEGY_INSTALLED_HOOK,
+        "storefront": "steam",
+        "steamAppId": steam_app_id,
+        "steamBuildId": steam_build_id,
+        "platform": platform_id,
+    }
+    for field, expected in expected_fields.items():
+        actual = payload.get(field)
+        if actual != expected:
+            result.add(
+                "BML_HOOK_MANIFEST_TARGET_MISMATCH",
+                "fatal",
+                "Hook manifest target does not match the runtime being registered or launched.",
+                path=str(path),
+                field=field,
+                expected=expected,
+                actual=actual,
+            )
+    executable = payload.get("executable")
+    manifest_sha = executable.get("sha256") if isinstance(executable, dict) else None
+    if not isinstance(manifest_sha, str) or not manifest_sha:
+        result.add("BML_HOOK_MANIFEST_EXECUTABLE_SHA_MISSING", "fatal", "Hook manifest must pin executable.sha256.", path=str(path))
+    elif steam_executable_sha256 and manifest_sha.lower() != steam_executable_sha256.lower():
+        result.add(
+            "BML_HOOK_MANIFEST_EXECUTABLE_SHA_MISMATCH",
+            "fatal",
+            "Hook manifest executable SHA does not match the registered Steam executable.",
+            path=str(path),
+            expected=steam_executable_sha256,
+            actual=manifest_sha,
+        )
+    return result
+
+
+def validate_hook_library_matches_manifest(hook_manifest: Path | None, hook_library: Path | None) -> ValidationResult:
+    result = ValidationResult("hook library manifest binding")
+    if hook_manifest is None or hook_library is None or not hook_manifest.exists() or not hook_manifest.is_file():
+        return result
+    try:
+        payload = parse_json_file(hook_manifest)
+    except (json.JSONDecodeError, OSError):
+        return result
+    hook = payload.get("hook") if isinstance(payload, dict) else None
+    library_name = hook.get("libraryName") if isinstance(hook, dict) else None
+    if not isinstance(library_name, str) or not library_name:
+        result.add("BML_HOOK_MANIFEST_LIBRARY_NAME_MISSING", "fatal", "Hook manifest must pin hook.libraryName.", path=str(hook_manifest))
+    elif hook_library.name != library_name:
+        result.add(
+            "BML_HOOK_LIBRARY_MANIFEST_NAME_MISMATCH",
+            "fatal",
+            "Hook library filename does not match hook manifest libraryName.",
+            hookManifest=str(hook_manifest),
+            hookLibrary=str(hook_library),
+            expectedLibraryName=library_name,
+            actualLibraryName=hook_library.name,
+        )
+    hook_implemented = hook.get("implemented") if isinstance(hook, dict) else None
+    hook_sha256 = hook.get("sha256") if isinstance(hook, dict) else None
+    manifest_platform = payload.get("platform")
+    manifest_requires_hash = hook_implemented is True or (isinstance(manifest_platform, str) and manifest_platform.startswith("windows-") and payload.get("status") != "unsupported" and payload.get("failClosed") is not True)
+    if manifest_requires_hash and (not isinstance(hook_sha256, str) or not hook_sha256):
+        result.add(
+            "BML_HOOK_MANIFEST_LIBRARY_SHA_MISSING",
+            "fatal",
+            "Supported hook manifest must pin hook.sha256.",
+            hookManifest=str(hook_manifest),
+            hookLibrary=str(hook_library),
+        )
+    elif isinstance(hook_sha256, str) and hook_sha256 and not re.fullmatch(r"[0-9a-fA-F]{64}", hook_sha256):
+        result.add(
+            "BML_HOOK_MANIFEST_LIBRARY_SHA_INVALID",
+            "fatal",
+            "Hook manifest hook.sha256 must be a 64-character hex SHA-256 digest.",
+            hookManifest=str(hook_manifest),
+            hookLibrary=str(hook_library),
+            sha256=hook_sha256,
+        )
+    elif isinstance(hook_sha256, str) and hook_sha256:
+        actual_sha256 = file_sha256(hook_library)
+        if actual_sha256.lower() != hook_sha256.lower():
+            result.add(
+                "BML_HOOK_LIBRARY_SHA_MISMATCH",
+                "fatal",
+                "Hook library checksum does not match hook manifest sha256.",
+                hookManifest=str(hook_manifest),
+                hookLibrary=str(hook_library),
+                expectedSha256=hook_sha256,
+                actualSha256=actual_sha256,
+            )
+    return result
+
+
+def validate_hook_library_exports_entrypoint(hook_manifest: Path | None, hook_library: Path | None) -> ValidationResult:
+    result = ValidationResult("hook library entrypoint")
+    if hook_manifest is None or hook_library is None or not hook_manifest.exists() or not hook_manifest.is_file() or not hook_library.exists() or not hook_library.is_file():
+        return result
+    try:
+        payload = parse_json_file(hook_manifest)
+    except (json.JSONDecodeError, OSError):
+        return result
+    hook = payload.get("hook") if isinstance(payload, dict) else None
+    entrypoint = hook.get("entrypoint") if isinstance(hook, dict) else None
+    if not isinstance(entrypoint, str) or not entrypoint:
+        return result
+    pe = inspect_pe_file(hook_library)
+    if pe is None:
+        if hook_library.suffix.lower() == ".dll":
+            result.add("BML_HOOK_LIBRARY_NOT_PE", "fatal", "Windows hook library must be a PE DLL exporting the manifest entrypoint.", hookLibrary=str(hook_library))
+        return result
+    exports = pe.get("exports") if isinstance(pe, dict) else None
+    names = exports.get("names") if isinstance(exports, dict) else None
+    export_names = {entry.get("name") for entry in names if isinstance(entry, dict)} if isinstance(names, list) else set()
+    if entrypoint not in export_names:
+        result.add(
+            "BML_HOOK_LIBRARY_ENTRYPOINT_MISSING",
+            "fatal",
+            "Hook library does not export the entrypoint pinned by the hook manifest.",
+            hookManifest=str(hook_manifest),
+            hookLibrary=str(hook_library),
+            entrypoint=entrypoint,
+        )
+    return result
+
+
+def validate_hook_library_platform(hook_library: Path | None, platform_id: str) -> ValidationResult:
+    result = ValidationResult("hook library platform")
+    if hook_library is None or not hook_library.exists() or not hook_library.is_file():
+        return result
+    pe = inspect_pe_file(hook_library)
+    if pe is None:
+        return result
+    machine = pe.get("machine") if isinstance(pe, dict) else None
+    machine_name = machine.get("name") if isinstance(machine, dict) else None
+    if isinstance(machine_name, str) and machine_name:
+        hook_platform = f"windows-{normalized_machine_name(machine_name)}"
+        if platform_id.startswith("windows-") and hook_platform != platform_id:
+            result.add(
+                "BML_HOOK_LIBRARY_PLATFORM_MISMATCH",
+                "fatal",
+                "Hook library platform does not match the registered executable platform.",
+                hookLibrary=str(hook_library),
+                hookPlatform=hook_platform,
+                executablePlatform=platform_id,
+            )
+    return result
+
+
+def validate_launcher_helper(helper: Path | None, platform_id: str) -> ValidationResult:
+    result = ValidationResult("launcher helper")
+    if not platform_id.startswith("windows-"):
+        return result
+    if helper is None:
+        result.add(
+            "BML_RUNTIME_LAUNCHER_HELPER_MISSING",
+            "fatal",
+            "Windows installed-hook runtime registration requires a launcher helper artifact.",
+        )
+        return result
+    if not helper.exists():
+        result.add("BML_RUNTIME_LAUNCHER_HELPER_NOT_FOUND", "fatal", f"Launcher helper not found: {helper}")
+        return result
+    if not helper.is_file():
+        result.add("BML_RUNTIME_LAUNCHER_HELPER_NOT_FILE", "fatal", f"Launcher helper path is not a file: {helper}")
+        return result
+    pe = inspect_pe_file(helper)
+    if pe is None:
+        result.add("BML_RUNTIME_LAUNCHER_HELPER_NOT_PE", "fatal", "Windows launcher helper must be a PE executable.", launcherHelper=str(helper))
+        return result
+    machine = pe.get("machine") if isinstance(pe, dict) else None
+    machine_name = machine.get("name") if isinstance(machine, dict) else None
+    if isinstance(machine_name, str) and machine_name:
+        helper_platform = f"windows-{normalized_machine_name(machine_name)}"
+        if helper_platform != platform_id:
+            result.add(
+                "BML_RUNTIME_LAUNCHER_HELPER_PLATFORM_MISMATCH",
+                "fatal",
+                "Launcher helper platform must match the registered executable platform.",
+                launcherHelper=str(helper),
+                helperPlatform=helper_platform,
+                executablePlatform=platform_id,
+            )
+    return result
 
 
 def runtime_contract_versions(runtime_info: dict[str, Any]) -> set[tuple[str, str]]:
@@ -698,6 +1192,20 @@ def runtime_capabilities(runtime_info: dict[str, Any]) -> dict[str, str | None]:
                 capabilities[cap_id] = version
     return capabilities
 
+def validate_runtime_policy(result: ValidationResult, runtime_info: dict[str, Any]) -> None:
+    policy = runtime_info.get("policy")
+    if not isinstance(policy, dict):
+        return
+    if "windowsSupportLevel" in policy and policy.get("windowsSupportLevel") not in {"noop-runtime-load", "stash-runtime-fail-closed", "stash-runtime-supported"}:
+        result.add(
+            "BML_RUNTIME_WINDOWS_SUPPORT_LEVEL_UNSUPPORTED",
+            "fatal",
+            "Runtime policy.windowsSupportLevel is not recognized.",
+            windowsSupportLevel=policy.get("windowsSupportLevel"),
+        )
+
+
+
 
 def validate_runtime_info(runtime_info: dict[str, Any], package: LoadedPackage) -> ValidationResult:
     result = ValidationResult("runtime compatibility")
@@ -728,8 +1236,26 @@ def validate_runtime_info(runtime_info: dict[str, Any], package: LoadedPackage) 
         )
 
     available = runtime_capabilities(runtime_info)
+    validate_runtime_policy(result, runtime_info)
+
     if not available:
         result.add("BML_RUNTIME_CAPABILITIES_MISSING", "fatal", "Runtime info must declare a capabilities list or object.")
+    policy = runtime_info.get("policy")
+    if isinstance(policy, dict) and policy.get("windowsSupportLevel") == "noop-runtime-load" and not is_windows_noop_smoke_package(package.manifest):
+        result.add(
+            "BML_RUNTIME_NOOP_PACKAGE_UNSUPPORTED",
+            "fatal",
+            "Windows no-op runtime may only be used with a framework-declared Windows smoke package.",
+            packageId=package.manifest.get("id"),
+        )
+    if isinstance(policy, dict) and policy.get("windowsSupportLevel") == "stash-runtime-fail-closed":
+        result.add(
+            "BML_WINDOWS_STASH_RUNTIME_UNSUPPORTED",
+            "fatal",
+            "Windows Stash runtime is still fail-closed until required gameplay hooks are implemented.",
+            packageId=package.manifest.get("id"),
+            runtimeId=runtime_info.get("runtimeId"),
+        )
 
     for cap_id in sorted(available):
         replacement = OUTDATED_CAPABILITY_ALIASES.get(cap_id)
@@ -878,7 +1404,7 @@ def validate_runtime_report_capabilities(result: ValidationResult, raw: Any, sou
         result.add("BML_RUNTIME_REPORT_CAPABILITIES_INVALID", "error", f"Capabilities must be an array or object when present: {source}", source=source)
         return capabilities
 
-    canonical = set(CANONICAL_STASH_CAPABILITIES)
+    canonical = set(KNOWN_CAPABILITIES)
     for cap_id in capabilities:
         replacement = OUTDATED_CAPABILITY_ALIASES.get(cap_id)
         if replacement:
@@ -1109,25 +1635,259 @@ def detect_game_version_string(path: Path) -> str | None:
     return None
 
 
-def executable_provenance(path: Path) -> dict[str, str | None]:
-    return {
+def pe_read_at(handle: Any, offset: int, size: int) -> bytes:
+    if offset < 0 or size < 0:
+        return b""
+    handle.seek(offset)
+    return handle.read(size)
+
+
+def pe_unpack_from(fmt: str, data: bytes, offset: int = 0) -> tuple[Any, ...]:
+    size = struct.calcsize(fmt)
+    if len(data) < offset + size:
+        raise ValueError("truncated PE structure")
+    return struct.unpack_from(fmt, data, offset)
+
+
+def pe_c_string(handle: Any, file_offset: int, max_length: int = 4096) -> str | None:
+    data = pe_read_at(handle, file_offset, max_length)
+    if not data:
+        return None
+    return data.split(b"\0", 1)[0].decode("utf-8", errors="replace")
+
+
+def pe_rva_to_offset(rva: int, sections: list[dict[str, Any]], size_of_headers: int) -> int | None:
+    if rva < size_of_headers:
+        return rva
+    for section in sections:
+        virtual_address = int(section["virtualAddress"])
+        span = max(int(section["virtualSize"]), int(section["rawSize"]))
+        if span and virtual_address <= rva < virtual_address + span:
+            return int(section["rawPointer"]) + (rva - virtual_address)
+    return None
+
+
+def pe_rva_c_string(handle: Any, rva: int, sections: list[dict[str, Any]], size_of_headers: int) -> str | None:
+    file_offset = pe_rva_to_offset(rva, sections, size_of_headers)
+    if file_offset is None:
+        return None
+    return pe_c_string(handle, file_offset)
+
+
+def pe_data_directory(optional_header: bytes, index: int, is_pe32_plus: bool, number_of_rva_and_sizes: int) -> tuple[int, int]:
+    if index >= number_of_rva_and_sizes:
+        return 0, 0
+    directory_base = 112 if is_pe32_plus else 96
+    offset = directory_base + index * 8
+    if len(optional_header) < offset + 8:
+        return 0, 0
+    return pe_unpack_from("<II", optional_header, offset)
+
+
+def inspect_pe_file(path: Path) -> dict[str, Any] | None:
+    try:
+        with path.open("rb") as handle:
+            dos_header = pe_read_at(handle, 0, 64)
+            if len(dos_header) < 64 or dos_header[:2] != b"MZ":
+                return None
+            pe_offset = int(pe_unpack_from("<I", dos_header, 0x3C)[0])
+            if pe_read_at(handle, pe_offset, 4) != b"PE\0\0":
+                return {"error": "MZ header did not point to a PE signature", "dosHeader": "MZ", "peOffset": pe_offset}
+
+            coff = pe_read_at(handle, pe_offset + 4, 20)
+            machine, section_count, timestamp, symbol_table, symbol_count, optional_size, characteristics = pe_unpack_from("<HHIIIHH", coff)
+            optional_header = pe_read_at(handle, pe_offset + 24, optional_size)
+            if len(optional_header) < optional_size:
+                return {"error": "Truncated PE optional header", "dosHeader": "MZ", "peOffset": pe_offset}
+
+            optional_magic = int(pe_unpack_from("<H", optional_header, 0)[0])
+            is_pe32_plus = optional_magic == 0x20B
+            bitness = 64 if is_pe32_plus else 32 if optional_magic == 0x10B else None
+            image_base = int(pe_unpack_from("<Q" if is_pe32_plus else "<I", optional_header, 24 if is_pe32_plus else 28)[0])
+            entry_point = int(pe_unpack_from("<I", optional_header, 16)[0])
+            size_of_image = int(pe_unpack_from("<I", optional_header, 56)[0])
+            size_of_headers = int(pe_unpack_from("<I", optional_header, 60)[0])
+            subsystem = int(pe_unpack_from("<H", optional_header, 68)[0])
+            rva_count_offset = 108 if is_pe32_plus else 92
+            number_of_rva_and_sizes = int(pe_unpack_from("<I", optional_header, rva_count_offset)[0]) if len(optional_header) >= rva_count_offset + 4 else 0
+
+            sections: list[dict[str, Any]] = []
+            section_table = pe_offset + 24 + optional_size
+            for index in range(section_count):
+                header = pe_read_at(handle, section_table + index * 40, 40)
+                if len(header) < 40:
+                    return {"error": "Truncated PE section table", "dosHeader": "MZ", "peOffset": pe_offset, "sections": sections}
+                raw_name, virtual_size, virtual_address, raw_size, raw_pointer, _reloc_pointer, _line_pointer, _reloc_count, _line_count, section_characteristics = pe_unpack_from("<8sIIIIIIHHI", header)
+                name = raw_name.split(b"\0", 1)[0].decode("ascii", errors="replace")
+                sections.append(
+                    {
+                        "name": name,
+                        "virtualAddress": int(virtual_address),
+                        "virtualSize": int(virtual_size),
+                        "rawSize": int(raw_size),
+                        "rawPointer": int(raw_pointer),
+                        "characteristics": f"0x{int(section_characteristics):08x}",
+                    }
+                )
+
+            pe: dict[str, Any] = {
+                "dosHeader": "MZ",
+                "peSignature": "PE",
+                "peOffset": pe_offset,
+                "machine": {
+                    "value": f"0x{int(machine):04x}",
+                    "name": PE_MACHINE_NAMES.get(int(machine), "unknown"),
+                },
+                "bitness": bitness,
+                "coff": {
+                    "timeDateStamp": int(timestamp),
+                    "numberOfSections": int(section_count),
+                    "pointerToSymbolTable": int(symbol_table),
+                    "numberOfSymbols": int(symbol_count),
+                    "characteristics": f"0x{int(characteristics):04x}",
+                },
+                "optionalHeader": {
+                    "magic": f"0x{optional_magic:04x}",
+                    "format": "PE32+" if is_pe32_plus else "PE32" if optional_magic == 0x10B else "unknown",
+                },
+                "imageBase": image_base,
+                "addressOfEntryPoint": entry_point,
+                "sizeOfImage": size_of_image,
+                "subsystem": {
+                    "value": subsystem,
+                    "name": PE_SUBSYSTEM_NAMES.get(subsystem, "unknown"),
+                },
+                "sections": sections,
+            }
+
+            export_rva, export_size = pe_data_directory(optional_header, 0, is_pe32_plus, number_of_rva_and_sizes)
+            export_offset = pe_rva_to_offset(export_rva, sections, size_of_headers) if export_rva else None
+            if export_offset is not None:
+                export_directory = pe_read_at(handle, export_offset, 40)
+                if len(export_directory) >= 40:
+                    (
+                        _export_characteristics,
+                        export_timestamp,
+                        major_version,
+                        minor_version,
+                        dll_name_rva,
+                        ordinal_base,
+                        function_count,
+                        name_count,
+                        function_table_rva,
+                        name_table_rva,
+                        ordinal_table_rva,
+                    ) = pe_unpack_from("<IIHHIIIIIII", export_directory)
+                    exports: dict[str, Any] = {
+                        "rva": int(export_rva),
+                        "size": int(export_size),
+                        "timeDateStamp": int(export_timestamp),
+                        "majorVersion": int(major_version),
+                        "minorVersion": int(minor_version),
+                        "dllName": pe_rva_c_string(handle, int(dll_name_rva), sections, size_of_headers),
+                        "ordinalBase": int(ordinal_base),
+                        "numberOfFunctions": int(function_count),
+                        "numberOfNames": int(name_count),
+                        "names": [],
+                    }
+                    max_names = min(int(name_count), 4096)
+                    for index in range(max_names):
+                        name_ptr_offset = pe_rva_to_offset(int(name_table_rva) + index * 4, sections, size_of_headers)
+                        ordinal_offset = pe_rva_to_offset(int(ordinal_table_rva) + index * 2, sections, size_of_headers)
+                        if name_ptr_offset is None or ordinal_offset is None:
+                            continue
+                        name_rva = int(pe_unpack_from("<I", pe_read_at(handle, name_ptr_offset, 4))[0])
+                        ordinal_index = int(pe_unpack_from("<H", pe_read_at(handle, ordinal_offset, 2))[0])
+                        function_rva = None
+                        if ordinal_index < int(function_count):
+                            function_offset = pe_rva_to_offset(int(function_table_rva) + ordinal_index * 4, sections, size_of_headers)
+                            if function_offset is not None:
+                                function_rva = int(pe_unpack_from("<I", pe_read_at(handle, function_offset, 4))[0])
+                        exports["names"].append(
+                            {
+                                "name": pe_rva_c_string(handle, name_rva, sections, size_of_headers),
+                                "nameRva": name_rva,
+                                "ordinal": int(ordinal_base) + ordinal_index,
+                                "functionRva": function_rva,
+                            }
+                        )
+                    if int(name_count) > max_names:
+                        exports["truncated"] = True
+                    pe["exports"] = exports
+
+            debug_rva, debug_size = pe_data_directory(optional_header, 6, is_pe32_plus, number_of_rva_and_sizes)
+            debug_offset = pe_rva_to_offset(debug_rva, sections, size_of_headers) if debug_rva else None
+            if debug_offset is not None and debug_size:
+                debug_entries: list[dict[str, Any]] = []
+                for index in range(min(int(debug_size) // 28, 64)):
+                    entry_data = pe_read_at(handle, debug_offset + index * 28, 28)
+                    if len(entry_data) < 28:
+                        break
+                    characteristics, debug_timestamp, major, minor, debug_type, size_of_data, address_of_raw_data, pointer_to_raw_data = pe_unpack_from("<IIHHIIII", entry_data)
+                    entry: dict[str, Any] = {
+                        "type": int(debug_type),
+                        "typeName": "codeview" if int(debug_type) == 2 else "unknown",
+                        "timeDateStamp": int(debug_timestamp),
+                        "majorVersion": int(major),
+                        "minorVersion": int(minor),
+                        "characteristics": f"0x{int(characteristics):08x}",
+                        "sizeOfData": int(size_of_data),
+                        "addressOfRawData": int(address_of_raw_data),
+                        "pointerToRawData": int(pointer_to_raw_data),
+                    }
+                    if int(debug_type) == 2 and int(pointer_to_raw_data) and int(size_of_data):
+                        codeview = pe_read_at(handle, int(pointer_to_raw_data), min(int(size_of_data), 4096))
+                        if codeview.startswith(b"RSDS") and len(codeview) >= 24:
+                            pdb_path = codeview[24:].split(b"\0", 1)[0].decode("utf-8", errors="replace")
+                            entry["codeView"] = {
+                                "signature": "RSDS",
+                                "guid": str(uuid.UUID(bytes_le=codeview[4:20])),
+                                "age": int(pe_unpack_from("<I", codeview, 20)[0]),
+                                "pdbPath": pdb_path or None,
+                            }
+                        elif codeview.startswith(b"NB10") and len(codeview) >= 16:
+                            _offset, pdb_signature, age = pe_unpack_from("<III", codeview, 4)
+                            pdb_path = codeview[16:].split(b"\0", 1)[0].decode("utf-8", errors="replace")
+                            entry["codeView"] = {
+                                "signature": "NB10",
+                                "timestamp": int(pdb_signature),
+                                "age": int(age),
+                                "pdbPath": pdb_path or None,
+                            }
+                    debug_entries.append(entry)
+                if debug_entries:
+                    pe["debug"] = debug_entries
+
+            return pe
+    except (OSError, ValueError, struct.error) as exc:
+        return {"error": str(exc)}
+
+
+def executable_provenance(path: Path) -> dict[str, Any]:
+    provenance: dict[str, Any] = {
         "sha256": file_sha256(path),
         "buildId": executable_build_id(path),
         "gameVersionString": detect_game_version_string(path),
     }
+    pe = inspect_pe_file(path)
+    if pe is not None:
+        provenance["pe"] = pe
+    return provenance
 
 
 def current_platform_id() -> str:
-    machine = platform.machine() or "unknown"
-    if sys.platform.startswith("linux"):
-        os_name = "linux"
-    elif sys.platform == "darwin":
-        os_name = "macos"
-    elif sys.platform.startswith(("win32", "cygwin", "msys")):
-        os_name = "windows"
-    else:
-        os_name = sys.platform or "unknown"
-    return f"{os_name}-{machine}"
+    return f"{current_os_name()}-{normalized_machine_name(platform.machine())}"
+
+
+def executable_platform_id(provenance: dict[str, Any], fallback_platform: str) -> str:
+    os_name = fallback_platform.split("-", 1)[0] if "-" in fallback_platform else current_os_name()
+    if os_name == "windows":
+        pe = provenance.get("pe")
+        machine = pe.get("machine") if isinstance(pe, dict) else None
+        machine_name = machine.get("name") if isinstance(machine, dict) else None
+        if isinstance(machine_name, str) and machine_name and machine_name != "unknown":
+            return f"{os_name}-{normalized_machine_name(machine_name)}"
+    return fallback_platform
 
 
 def runtime_info_platform_ids(runtime_info: dict[str, Any]) -> list[str]:
@@ -1190,6 +1950,7 @@ def validate_runtime_info_metadata(runtime_info: dict[str, Any]) -> ValidationRe
     available = runtime_capabilities(runtime_info)
     if not available:
         result.add("BML_RUNTIME_CAPABILITIES_MISSING", "fatal", "Runtime info must declare a capabilities list or object.")
+    validate_runtime_policy(result, runtime_info)
     for cap_id in sorted(available):
         replacement = OUTDATED_CAPABILITY_ALIASES.get(cap_id)
         if replacement:
@@ -1247,7 +2008,6 @@ def runtime_registry_capability_entries(runtime_info: dict[str, Any]) -> list[di
         for cap_id, version in sorted(runtime_capabilities(runtime_info).items())
     ]
 
-
 def command_runtime_register(args: argparse.Namespace) -> int:
     registry_path = runtime_registry_path(args.registry)
     combined = ValidationResult("runtime registration")
@@ -1256,20 +2016,37 @@ def command_runtime_register(args: argparse.Namespace) -> int:
     if strategy not in SUPPORTED_RUNTIME_STRATEGIES:
         combined.add("BML_RUNTIME_STRATEGY_UNSUPPORTED", "fatal", f"Unsupported runtime strategy: {strategy}")
 
-    platform_id = args.platform or current_platform_id()
-    combined.extend(validate_registered_runtime_host_platform(platform_id))
+    host_platform_id = current_platform_id()
+    platform_id = args.platform or host_platform_id
 
     steam_executable_arg = args.steam_executable or args.executable
     steam_executable = Path(steam_executable_arg).expanduser().resolve() if steam_executable_arg else None
     hook_library = Path(args.hook_library).expanduser().resolve() if args.hook_library else None
     hook_manifest = Path(args.hook_manifest).expanduser().resolve() if args.hook_manifest else None
+    launcher_helper = Path(args.launcher_helper).expanduser().resolve() if args.launcher_helper else None
+    steam_provenance: dict[str, Any] | None = None
 
     if steam_executable is None:
-        combined.add("BML_RUNTIME_STEAM_EXECUTABLE_MISSING", "fatal", "Installed executable path is required for installed-binary-hook registration.", hint="Pass --steam-executable /path/to/barony.x86_64")
+        combined.add("BML_RUNTIME_STEAM_EXECUTABLE_MISSING", "fatal", "Installed executable path is required for installed-binary-hook registration.", hint=f"Pass --steam-executable /path/to/{steam_barony_executable_name(platform_id)}")
     elif not steam_executable.exists():
         combined.add("BML_RUNTIME_STEAM_EXECUTABLE_NOT_FOUND", "fatal", f"Installed executable not found: {steam_executable}")
     elif not steam_executable.is_file():
         combined.add("BML_RUNTIME_STEAM_EXECUTABLE_NOT_FILE", "fatal", f"Installed executable path is not a file: {steam_executable}")
+    else:
+        steam_provenance = executable_provenance(steam_executable)
+        executable_platform = executable_platform_id(steam_provenance, platform_id)
+        if args.platform is None:
+            platform_id = executable_platform
+        if executable_platform != platform_id:
+            combined.add(
+                "BML_RUNTIME_STEAM_EXECUTABLE_PLATFORM_MISMATCH",
+                "fatal",
+                "Registered runtime platform must match the installed executable platform.",
+                registeredPlatform=platform_id,
+                executablePlatform=executable_platform,
+            )
+    combined.extend(validate_launcher_helper(launcher_helper, platform_id))
+    combined.extend(validate_registered_runtime_host_platform(platform_id))
 
     if hook_library is None:
         combined.add("BML_RUNTIME_HOOK_LIBRARY_MISSING", "fatal", "Hook library path is required for installed-binary-hook registration.", hint="Pass --hook-library native/barony-modloader-hook/build/libbarony_bml.so")
@@ -1284,6 +2061,21 @@ def command_runtime_register(args: argparse.Namespace) -> int:
         combined.add("BML_RUNTIME_HOOK_MANIFEST_NOT_FOUND", "fatal", f"Hook manifest not found: {hook_manifest}")
     elif not hook_manifest.is_file():
         combined.add("BML_RUNTIME_HOOK_MANIFEST_NOT_FILE", "fatal", f"Hook manifest path is not a file: {hook_manifest}")
+    else:
+        combined.extend(validate_hook_manifest_supported(hook_manifest))
+        if steam_provenance is not None:
+            combined.extend(
+                validate_hook_manifest_target(
+                    hook_manifest,
+                    platform_id,
+                    args.steam_app_id,
+                    args.steam_build_id,
+                    steam_provenance.get("sha256"),
+                )
+            )
+        combined.extend(validate_hook_library_matches_manifest(hook_manifest, hook_library))
+        combined.extend(validate_hook_library_platform(hook_library, platform_id))
+        combined.extend(validate_hook_library_exports_entrypoint(hook_manifest, hook_library))
 
     runtime_info, runtime_info_path, runtime_load_result = load_runtime_info(args.runtime_info)
     combined.extend(runtime_load_result)
@@ -1307,7 +2099,7 @@ def command_runtime_register(args: argparse.Namespace) -> int:
         print_report(combined, heading="Runtime registration")
         return 1
 
-    steam_provenance = executable_provenance(steam_executable)
+    assert steam_provenance is not None
     now = utc_now()
     registration = {
         "id": runtime_id,
@@ -1332,6 +2124,15 @@ def command_runtime_register(args: argparse.Namespace) -> int:
         "capabilities": runtime_registry_capability_entries(runtime_info),
         "registeredAt": now,
     }
+    if launcher_helper is not None:
+        launcher_provenance = executable_provenance(launcher_helper)
+        registration.update(
+            {
+                "launcherHelper": str(launcher_helper),
+                "launcherHelperSha256": launcher_provenance["sha256"],
+                "launcherHelperBitness": executable_bitness(launcher_provenance),
+            }
+        )
 
     existing = [entry for entry in registry.get("runtimes", []) if not (isinstance(entry, dict) and entry.get("id") == runtime_id)]
     registry.update(
@@ -1922,6 +2723,49 @@ def load_profile(profile_dir_arg: str) -> tuple[dict[str, Any] | None, Path, Val
     return payload, profile_dir, result
 
 
+def launch_adapter_plan(platform_id: str | None = None, runtime_registration: dict[str, Any] | None = None) -> dict[str, Any]:
+    resolved_platform = platform_id or current_platform_id()
+    if resolved_platform.startswith("windows-"):
+        launcher_helper = runtime_registration.get("launcherHelper") if isinstance(runtime_registration, dict) else None
+        if isinstance(launcher_helper, str) and launcher_helper:
+            return {
+                "platform": resolved_platform,
+                "adapterMode": "windows-launcher-helper",
+                "adapterStatus": "available",
+                "injectionImplemented": True,
+                "launcherHelper": launcher_helper,
+                "message": "Windows launch uses the registered launcher helper and manifest/env contract.",
+            }
+        return {
+            "platform": resolved_platform,
+            "adapterMode": "windows-unimplemented",
+            "adapterStatus": "unsupported",
+            "injectionImplemented": False,
+            "message": "Windows launch injection requires a registered launcher helper.",
+        }
+    if resolved_platform.startswith("linux-"):
+        return {
+            "platform": resolved_platform,
+            "adapterMode": "installed-binary-hook",
+            "adapterStatus": "available",
+            "injectionImplemented": True,
+        }
+    if resolved_platform.startswith("macos-"):
+        return {
+            "platform": resolved_platform,
+            "adapterMode": "macos-unverified",
+            "adapterStatus": "unsupported",
+            "injectionImplemented": False,
+            "message": "macOS launch injection is not implemented or validated; dry-run planning is supported only.",
+        }
+    return {
+        "platform": resolved_platform,
+        "adapterMode": "unsupported-platform",
+        "adapterStatus": "unsupported",
+        "injectionImplemented": False,
+    }
+
+
 def build_runtime_manifest(
     profile: dict[str, Any],
     profile_dir: Path,
@@ -1947,14 +2791,24 @@ def build_runtime_manifest(
         }
         for entry in package_required_capabilities(package.manifest)
     ]
+    adapter_plan = launch_adapter_plan(
+        runtime_registration.get("platform") if isinstance(runtime_registration, dict) and isinstance(runtime_registration.get("platform"), str) else None,
+        runtime_registration,
+    )
+    launcher_helper = runtime_registration.get("launcherHelper") if isinstance(runtime_registration, dict) else None
+    launch_executable = launcher_helper if isinstance(launcher_helper, str) and str(adapter_plan["platform"]).startswith("windows-") else str(runtime_executable) if runtime_executable else None
     launch_payload: dict[str, Any] = {
         "profileId": profile_id,
         "gameInstallId": game_install_id,
         "gameSource": profile_runtime.get("gameSource", "manual") if isinstance(profile_runtime, dict) else "manual",
         "baronyExecutable": str(Path(barony_executable).expanduser().absolute()) if barony_executable else None,
-        "launchExecutable": str(runtime_executable) if runtime_executable else None,
+        "launchExecutable": launch_executable,
+        "targetExecutable": str(runtime_executable) if runtime_executable else None,
         "bmlRuntimeExecutable": None,
         "runtimeStrategy": runtime_strategy,
+        "adapterMode": adapter_plan["adapterMode"],
+        "adapterStatus": adapter_plan["adapterStatus"],
+        "adapter": adapter_plan,
         "createdAt": utc_now(),
         "runtime": {
             "runtimeId": runtime_info.get("runtimeId"),
@@ -1976,6 +2830,9 @@ def build_runtime_manifest(
                 "hookLibrarySha256": runtime_registration.get("hookLibrarySha256"),
                 "hookManifest": runtime_registration.get("hookManifest"),
                 "hookManifestSha256": runtime_registration.get("hookManifestSha256"),
+                "launcherHelper": runtime_registration.get("launcherHelper"),
+                "launcherHelperSha256": runtime_registration.get("launcherHelperSha256"),
+                "launcherHelperBitness": runtime_registration.get("launcherHelperBitness"),
             }
         )
     return {
@@ -2099,6 +2956,23 @@ def validate_profile_steam_install(profile: dict[str, Any]) -> ValidationResult:
         result.add("BML_STEAM_EXECUTABLE_BUILD_ID_MISMATCH", "fatal", "Detected Steam executable build id no longer matches the profile.", profileBuildId=steam.get("executableBuildId"), detectedBuildId=detected.get("executableBuildId"))
     if detected.get("gameVersionString") and steam.get("gameVersionString") and detected.get("gameVersionString") != steam.get("gameVersionString"):
         result.add("BML_STEAM_GAME_VERSION_MISMATCH", "fatal", "Detected Steam executable version string no longer matches the profile.", profileVersion=steam.get("gameVersionString"), detectedVersion=detected.get("gameVersionString"))
+    compatibility = detected.get("compatibility")
+    if isinstance(compatibility, dict) and compatibility.get("hostPlatformMatchesExecutable") is False:
+        result.add(
+            "BML_STEAM_HOST_PLATFORM_MISMATCH",
+            "fatal",
+            "Current host platform does not match the Steam executable platform; cross-architecture Windows launch is not validated.",
+            hostPlatform=detected.get("hostPlatform"),
+            executablePlatform=detected.get("platform"),
+        )
+    if isinstance(compatibility, dict) and compatibility.get("launcherProcessMatchesExecutable") is False:
+        result.add(
+            "BML_STEAM_LAUNCHER_BITNESS_MISMATCH",
+            "warning",
+            "Current CLI process bitness does not match the Steam executable bitness; Windows launch requires a registered same-bitness launcher helper.",
+            launcherProcessBitness=compatibility.get("launcherProcessBitness"),
+            targetExecutableBitness=compatibility.get("targetExecutableBitness"),
+        )
     return result
 
 
@@ -2153,6 +3027,22 @@ def validate_registered_runtime(
         "BML_REGISTERED_RUNTIME_HOOK_MANIFEST_NOT_FILE",
         "hook manifest",
     )
+    result.extend(validate_hook_manifest_supported(hook_manifest))
+    result.extend(
+        validate_hook_manifest_target(
+            hook_manifest,
+            str(registered_platform),
+            str(runtime.get("steamAppId") or ""),
+            str(runtime.get("steamBuildId") or ""),
+            runtime.get("steamExecutableSha256") if isinstance(runtime.get("steamExecutableSha256"), str) else None,
+        )
+    )
+    result.extend(validate_hook_library_matches_manifest(hook_manifest, hook_library))
+    result.extend(validate_hook_library_platform(hook_library, str(registered_platform)))
+    result.extend(validate_hook_library_exports_entrypoint(hook_manifest, hook_library))
+    launcher_helper_value = runtime.get("launcherHelper")
+    launcher_helper = Path(str(launcher_helper_value)).expanduser().resolve() if isinstance(launcher_helper_value, str) and launcher_helper_value else None
+    result.extend(validate_launcher_helper(launcher_helper, str(registered_platform)))
 
     runtime_info_path = registered_file(
         "runtimeInfo",
@@ -2182,6 +3072,8 @@ def validate_registered_runtime(
     compare_sha(steam_executable, "steamExecutableSha256", "BML_REGISTERED_RUNTIME_STEAM_EXECUTABLE", "Steam executable")
     compare_sha(hook_library, "hookLibrarySha256", "BML_REGISTERED_RUNTIME_HOOK_LIBRARY", "hook library")
     compare_sha(hook_manifest, "hookManifestSha256", "BML_REGISTERED_RUNTIME_HOOK_MANIFEST", "hook manifest")
+    if launcher_helper is not None or str(registered_platform).startswith("windows-"):
+        compare_sha(launcher_helper, "launcherHelperSha256", "BML_REGISTERED_RUNTIME_LAUNCHER_HELPER", "launcher helper")
 
     if steam_executable is not None and steam_executable.exists() and steam_executable.is_file():
         expected_build_id = runtime.get("steamExecutableBuildId")
@@ -2253,10 +3145,17 @@ def launch_working_directory(profile: dict[str, Any], executable: Path) -> Path:
 
 def launch_environment(profile: dict[str, Any], profile_dir: Path, manifest_path: Path, runtime: dict[str, Any] | None = None) -> dict[str, str]:
     env = dict(os.environ)
+    if current_os_name() == "windows":
+        env.pop("LD_PRELOAD", None)
+        env.pop("DYLD_INSERT_LIBRARIES", None)
+        env.pop("LD_LIBRARY_PATH", None)
     env["BML_PROFILE_DIR"] = str(profile_dir)
     env["BML_RUNTIME_MANIFEST"] = str(manifest_path)
     if isinstance(runtime, dict):
         env["BML_RUNTIME_STRATEGY"] = str(runtime.get("runtimeStrategy") or "")
+        target_executable = runtime.get("steamExecutable")
+        if isinstance(target_executable, str) and target_executable:
+            env["BML_TARGET_EXECUTABLE"] = target_executable
         hook_manifest = runtime.get("hookManifest")
         if isinstance(hook_manifest, str) and hook_manifest:
             env["BML_HOOK_MANIFEST"] = hook_manifest
@@ -2269,12 +3168,15 @@ def launch_environment(profile: dict[str, Any], profile_dir: Path, manifest_path
             elif sys.platform == "darwin":
                 old_insert_libraries = env.get("DYLD_INSERT_LIBRARIES")
                 env["DYLD_INSERT_LIBRARIES"] = hook_library if not old_insert_libraries else f"{hook_library}:{old_insert_libraries}"
+        launcher_helper = runtime.get("launcherHelper")
+        if isinstance(launcher_helper, str) and launcher_helper:
+            env["BML_LAUNCHER_HELPER"] = launcher_helper
     steam = profile_steam_install(profile)
     if steam:
         env["SteamAppId"] = str(steam.get("appId") or STEAM_BARONY_APP_ID)
         env["SteamGameId"] = str(steam.get("appId") or STEAM_BARONY_APP_ID)
         install_path = steam.get("installPath")
-        if isinstance(install_path, str) and install_path:
+        if sys.platform.startswith("linux") and isinstance(install_path, str) and install_path:
             old_library_path = env.get("LD_LIBRARY_PATH")
             env["LD_LIBRARY_PATH"] = install_path if not old_library_path else f"{install_path}:{old_library_path}"
     return env
@@ -2371,18 +3273,30 @@ def command_launch(args: argparse.Namespace) -> int:
 
     manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, package, runtime_info, out_path, runtime_executable, selected_runtime)
     barony_args = normalize_barony_args(args.barony_args)
-    command = [
-        str(runtime_executable),
-        *barony_args,
-    ]
+    launcher_helper = selected_runtime.get("launcherHelper") if str(selected_runtime.get("platform") or "").startswith("windows-") else None
+    if isinstance(launcher_helper, str) and launcher_helper:
+        command = [launcher_helper, *barony_args]
+    else:
+        command = [str(runtime_executable), *barony_args]
     cwd = launch_working_directory(profile, runtime_executable)
     env = launch_environment(profile, profile_dir, out_path, selected_runtime)
+    apply_package_launch_overrides(env, package.manifest)
     launch_log = bml_profile_root(profile_dir) / "logs" / "launcher-runtime.log"
+    adapter_plan = launch_adapter_plan(selected_runtime.get("platform") if isinstance(selected_runtime.get("platform"), str) else None, selected_runtime)
+    environment_keys = ["SteamAppId", "SteamGameId", "BML_PROFILE_DIR", "BML_RUNTIME_MANIFEST", "BML_RUNTIME_STRATEGY", "BML_HOOK_MANIFEST", "BML_HOOK_LIBRARY", "BML_LAUNCHER_HELPER", "BML_TARGET_EXECUTABLE", "BML_VALIDATE_INJECTION_ONLY"]
+    if not str(adapter_plan["platform"]).startswith("windows-"):
+        environment_keys.extend(["LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH"])
 
     launch_payload = {
         "status": "dry-run" if args.dry_run else "launching",
         "registry": str(registry_path),
         "runtime": selected_runtime.get("id"),
+        "adapterMode": adapter_plan["adapterMode"],
+        "adapterStatus": adapter_plan["adapterStatus"],
+        "adapter": adapter_plan,
+        "launcherHelper": selected_runtime.get("launcherHelper"),
+        "launcherHelperSha256": selected_runtime.get("launcherHelperSha256"),
+        "launcherHelperBitness": selected_runtime.get("launcherHelperBitness"),
         "runtimeInfo": str(runtime_info_path),
         "runtimeManifest": str(out_path),
         "activeMods": str(active_mods_path),
@@ -2390,7 +3304,7 @@ def command_launch(args: argparse.Namespace) -> int:
         "command": command,
         "environment": {
             key: env[key]
-            for key in ("SteamAppId", "SteamGameId", "BML_PROFILE_DIR", "BML_RUNTIME_MANIFEST", "BML_RUNTIME_STRATEGY", "BML_HOOK_MANIFEST", "BML_HOOK_LIBRARY", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH")
+            for key in environment_keys
             if key in env
         },
         "launchLog": str(launch_log),
@@ -2398,6 +3312,19 @@ def command_launch(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(json.dumps(launch_payload, indent=2))
         return 0
+    if adapter_plan["adapterStatus"] == "unsupported":
+        failure = ValidationResult("launch execution")
+        failure.add(
+            "BML_LAUNCH_ADAPTER_UNSUPPORTED",
+            "fatal",
+            "Selected launch adapter is not implemented or validated for this platform.",
+            adapterMode=adapter_plan["adapterMode"],
+            platform=adapter_plan["platform"],
+        )
+        print_report(failure, heading="Launch execution")
+        write_launcher_failure(profile_dir, failure)
+        return 1
+
 
     try:
         with launch_log.open("w", encoding="utf-8") as log_handle:
@@ -2465,8 +3392,9 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_register.add_argument("--id", help="Stable runtime id. Defaults to a runtime/build/platform-derived id.")
     runtime_register.add_argument("--runtime-strategy", choices=SUPPORTED_RUNTIME_STRATEGIES, default=RUNTIME_STRATEGY_INSTALLED_HOOK, help="Runtime integration strategy. v1 supports installed-binary-hook.")
     runtime_register.add_argument("--executable", help="Deprecated alias for --steam-executable.")
-    runtime_register.add_argument("--steam-executable", help="Installed Barony executable path to launch, e.g. barony.x86_64.")
+    runtime_register.add_argument("--steam-executable", help="Installed Barony executable path to launch, e.g. barony.x86_64 on Linux or barony.exe on Windows.")
     runtime_register.add_argument("--hook-library", help="BML hook library injected into the installed executable, e.g. native/barony-modloader-hook/build/libbarony_bml.so.")
+    runtime_register.add_argument("--launcher-helper", help="Windows launcher helper executable used to start/inject into the installed game with matching target bitness.")
     runtime_register.add_argument("--hook-manifest", help="Build-specific hook manifest describing the symbol map and hook capabilities.")
     runtime_register.add_argument("--runtime-info", required=True, help="Runtime-info JSON path for this hook runtime.")
     runtime_register.add_argument("--steam-app-id", default=STEAM_BARONY_APP_ID, help="Steam app id this runtime targets.")

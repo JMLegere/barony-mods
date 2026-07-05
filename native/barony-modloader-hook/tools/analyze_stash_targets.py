@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Static Stash hook target readiness analyzer for installed Barony ELF builds.
+"""Static Stash hook target readiness analyzer for installed Barony builds.
 
-This tool mirrors the native hook's conservative x86_64 patch-window decoder so
-we can audit installed-executable target prologues without launching Barony.
-It does not prove gameplay behavior and does not install detours.
+This tool mirrors the native hook's conservative x86_64 patch-window decoder for
+ELF builds so we can audit installed-executable target prologues without launching
+Barony. PE/Windows manifests are reported as unresolved until they provide exact
+per-build RVAs or byte signatures. The tool never proves gameplay behavior and
+does not install detours.
 """
 
 from __future__ import annotations
@@ -141,6 +143,145 @@ class Elf64Image:
         return None
 
 
+class PeImage:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.data = path.read_bytes()
+        self.sections: list[dict[str, Any]] = []
+        self.code_view: dict[str, Any] | None = None
+        self.runtime_function_starts: set[int] = set()
+        self._parse()
+
+    def _parse(self) -> None:
+        data = self.data
+        if len(data) < 0x40 or data[:2] != b"MZ":
+            raise ValueError(f"{self.path} is not a PE file")
+        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+        if pe_offset + 24 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+            raise ValueError(f"{self.path} has no PE signature")
+        section_count = struct.unpack_from("<H", data, pe_offset + 6)[0]
+        optional_size = struct.unpack_from("<H", data, pe_offset + 20)[0]
+        optional_offset = pe_offset + 24
+        if optional_offset + optional_size <= len(data):
+            magic = struct.unpack_from("<H", data, optional_offset)[0]
+            data_directory_offset = optional_offset + (0x70 if magic == 0x20B else 0x60)
+            debug_directory_offset = data_directory_offset + 6 * 8
+            if debug_directory_offset + 8 <= optional_offset + optional_size:
+                debug_rva, debug_size = struct.unpack_from("<II", data, debug_directory_offset)
+            else:
+                debug_rva, debug_size = 0, 0
+        else:
+            debug_rva, debug_size = 0, 0
+        section_offset = pe_offset + 24 + optional_size
+        for index in range(section_count):
+            offset = section_offset + index * 40
+            if offset + 40 > len(data):
+                break
+            name = read_c_string(data[offset : offset + 8], 0)
+            virtual_size, virtual_address, raw_size, raw_pointer = struct.unpack_from("<IIII", data, offset + 8)
+            characteristics = struct.unpack_from("<I", data, offset + 36)[0]
+            self.sections.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "virtualSize": virtual_size,
+                    "virtualAddress": virtual_address,
+                    "rawSize": raw_size,
+                    "rawPointer": raw_pointer,
+                    "characteristics": characteristics,
+                }
+            )
+        self._parse_runtime_function_starts()
+        if debug_rva and debug_size:
+            self.code_view = self._parse_code_view(debug_rva, debug_size)
+
+    def bytes_at_rva(self, rva: int, size: int) -> bytes | None:
+        for section in self.sections:
+            start = int(section["virtualAddress"])
+            mapped_size = max(int(section["virtualSize"]), int(section["rawSize"]))
+            if start <= rva < start + mapped_size:
+                offset = int(section["rawPointer"]) + (rva - start)
+                if offset < 0 or offset >= len(self.data):
+                    return None
+                return self.data[offset : offset + size]
+        return None
+
+    def section_for_rva(self, rva: int) -> dict[str, Any] | None:
+        for section in self.sections:
+            start = int(section["virtualAddress"])
+            mapped_size = max(int(section["virtualSize"]), int(section["rawSize"]))
+            if start <= rva < start + mapped_size:
+                return section
+        return None
+
+    def is_data_section_rva(self, rva: int) -> bool:
+        section = self.section_for_rva(rva)
+        if section is None:
+            return False
+        characteristics = int(section["characteristics"])
+        is_writable = (characteristics & 0x80000000) != 0
+        is_executable = (characteristics & 0x20000000) != 0
+        return is_writable and not is_executable
+
+    def _format_guid(self, guid_bytes: bytes) -> str:
+        if len(guid_bytes) != 16:
+            return ""
+        part1, part2, part3 = struct.unpack_from("<IHH", guid_bytes, 0)
+        tail = guid_bytes[8:]
+        return f"{part1:08x}-{part2:04x}-{part3:04x}-{tail[0]:02x}{tail[1]:02x}-{tail[2:].hex()}"
+
+    def _parse_code_view(self, debug_rva: int, debug_size: int) -> dict[str, Any] | None:
+        directory_bytes = self.bytes_at_rva(debug_rva, debug_size)
+        if not directory_bytes:
+            return None
+        for offset in range(0, len(directory_bytes) - 27, 28):
+            _characteristics, _timestamp, _major, _minor, debug_type, size_of_data, address_of_raw_data, pointer_to_raw_data = struct.unpack_from("<IIHHIIII", directory_bytes, offset)
+            if debug_type != 2 or size_of_data < 24:
+                continue
+            raw_offset = pointer_to_raw_data or self._rva_to_offset(address_of_raw_data)
+            if raw_offset is None or raw_offset < 0 or raw_offset + size_of_data > len(self.data):
+                continue
+            blob = self.data[raw_offset : raw_offset + size_of_data]
+            if blob[:4] != b"RSDS":
+                continue
+            guid = self._format_guid(blob[4:20])
+            age = struct.unpack_from("<I", blob, 20)[0]
+            pdb_path = read_c_string(blob, 24)
+            pdb_name = pdb_path.replace("\\", "/").rsplit("/", 1)[-1]
+            return {
+                "signature": "RSDS",
+                "guid": guid,
+                "age": age,
+                "pdbPath": pdb_path,
+                "symbolServerKey": f"{pdb_name}/{guid.replace('-', '').upper()}{age:x}/{pdb_name}",
+            }
+        return None
+
+    def _rva_to_offset(self, rva: int) -> int | None:
+        for section in self.sections:
+            start = int(section["virtualAddress"])
+            mapped_size = max(int(section["virtualSize"]), int(section["rawSize"]))
+            if start <= rva < start + mapped_size:
+                return int(section["rawPointer"]) + (rva - start)
+        return None
+
+    def _parse_runtime_function_starts(self) -> None:
+        pdata = next((section for section in self.sections if section["name"] == ".pdata"), None)
+        if pdata is None:
+            return
+        offset = int(pdata["rawPointer"])
+        size = int(pdata["rawSize"])
+        if offset < 0 or offset + size > len(self.data):
+            return
+        directory = self.data[offset : offset + size]
+        for entry_offset in range(0, len(directory) - 11, 12):
+            begin_rva = struct.unpack_from("<I", directory, entry_offset)[0]
+            if begin_rva:
+                self.runtime_function_starts.add(begin_rva)
+
+    def is_runtime_function_start(self, rva: int) -> bool:
+        return rva in self.runtime_function_starts
+
 def byte_is_short_relative_branch(byte: int) -> bool:
     return 0x70 <= byte <= 0x7F
 
@@ -161,7 +302,7 @@ def modrm_uses_rip_relative(modrm: int) -> bool:
     return (modrm & 0xC7) == 0x05
 
 def opcode_uses_supported_modrm(op: int) -> bool:
-    return op in {0x31, 0x39, 0x3B, 0x63, 0x85, 0x89, 0x8B, 0x8D}
+    return op in {0x31, 0x33, 0x39, 0x3B, 0x63, 0x85, 0x89, 0x8B, 0x8D}
 
 
 def opcode_uses_supported_modrm_immediate(op: int) -> bool:
@@ -454,9 +595,205 @@ def analyze_symbol(image: Elf64Image, symbol: dict[str, Any]) -> dict[str, Any]:
     result.update(measurement)
     result["prologueBytes"] = code[: min(16, len(code))].hex()
     return result
+def build_pe_unresolved_report(manifest_path: Path, executable_path: Path) -> dict[str, Any]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    executable_bytes = executable_path.read_bytes()
+    try:
+        pe_image: PeImage | None = PeImage(executable_path)
+    except ValueError:
+        pe_image = None
+    actual_code_view = pe_image.code_view if pe_image is not None else None
+    expected_code_view = manifest.get("executable", {}).get("pe", {}).get("codeView")
+    code_view_matches: bool | None = None
+    if isinstance(expected_code_view, dict):
+        if isinstance(actual_code_view, dict):
+            code_view_matches = (
+                str(expected_code_view.get("guid") or "").lower() == str(actual_code_view.get("guid") or "").lower()
+                and int(expected_code_view.get("age") or -1) == int(actual_code_view.get("age") or -2)
+            )
+        else:
+            code_view_matches = False
+    hook_targets = [] if code_view_matches is False else [hook for hook in manifest.get("hookTargets", []) if isinstance(hook, dict)]
+    symbols = [] if code_view_matches is False else [symbol for symbol in manifest.get("symbols", []) if isinstance(symbol, dict)]
+    symbols_by_id = {str(symbol.get("id")): symbol for symbol in symbols if symbol.get("id")}
+    empty_target_manifest = not symbols or not hook_targets
+
+    hooks: list[dict[str, Any]] = []
+    total_blocked = 0
+    total_unresolved = 0
+    total_missing = 0
+    total_prologue_blocked = 0
+    for hook in hook_targets:
+        targets: list[dict[str, Any]] = []
+        for symbol_id in hook.get("targetSymbolIds", []):
+            symbol = symbols_by_id.get(str(symbol_id))
+            if symbol is None:
+                total_missing += 1
+                targets.append(
+                    {
+                        "id": symbol_id,
+                        "status": "missing",
+                        "message": "Hook target references a symbol id that is not declared in the Windows manifest.",
+                    }
+                )
+                continue
+            resolution = symbol.get("windowsResolution") if isinstance(symbol.get("windowsResolution"), dict) else {}
+            symbol_kind = symbol.get("kind")
+            has_rva = resolution.get("rva") is not None
+            has_signature = bool(resolution.get("byteSignature"))
+            install_probe_validated = bool(resolution.get("installProbeValidated"))
+            is_runtime_function_start: bool | None = None
+            is_data_section_rva: bool | None = None
+            has_mapped_rva = False
+            prologue: dict[str, Any] | None = None
+            if has_rva and pe_image is not None:
+                try:
+                    resolved_rva = int(resolution.get("rva"))
+                except (TypeError, ValueError):
+                    resolved_rva = None
+                if resolved_rva is not None and symbol_kind == "data":
+                    section = pe_image.section_for_rva(resolved_rva)
+                    if section is not None:
+                        has_mapped_rva = True
+                        is_data_section_rva = pe_image.is_data_section_rva(resolved_rva)
+                elif resolved_rva is not None:
+                    code = pe_image.bytes_at_rva(resolved_rva, MAX_COPY_BYTES)
+                    if code:
+                        has_mapped_rva = True
+                        if symbol_kind == "function":
+                            prologue = measure_patch_window(code)
+                            prologue["prologueBytes"] = code[: min(16, len(code))].hex()
+                            is_runtime_function_start = pe_image.is_runtime_function_start(resolved_rva)
+                    else:
+                        prologue = {
+                            "status": "missing",
+                            "message": "Resolved PE RVA could not be mapped to executable bytes.",
+                        }
+            function_resolution_ready = (
+                symbol_kind == "function"
+                and resolution.get("status") == "resolved"
+                and has_mapped_rva
+                and (
+                    is_runtime_function_start
+                    or (is_runtime_function_start is False and install_probe_validated)
+                )
+            )
+            data_resolution_ready = symbol_kind == "data" and resolution.get("status") == "resolved" and has_mapped_rva and is_data_section_rva is True
+            if function_resolution_ready or data_resolution_ready:
+                resolution_status = "resolved"
+                if symbol_kind == "function" and prologue is not None and prologue.get("status") != "ready":
+                    total_prologue_blocked += 1
+                    message = "PE target has a mapped RVA, but its prologue is not safe for the current Windows detour installer."
+                elif symbol_kind == "function" and is_runtime_function_start is False:
+                    message = "PE target has Windows-specific mapped RVA metadata from an install-validated leaf function; native Windows detour installation remains blocked until real-target install support is enabled."
+                elif symbol_kind == "data":
+                    message = "PE data target has Windows-specific mapped RVA metadata in a writable data section; native Windows target installation remains blocked until real-target install support is enabled."
+                else:
+                    message = "PE target has Windows-specific mapped RVA metadata; native Windows detour installation remains blocked until real-target install support is enabled."
+            else:
+                resolution_status = "unresolved" if (has_signature or has_rva) and (not has_mapped_rva or is_runtime_function_start is False or is_data_section_rva is False) else resolution.get("status", "missing")
+                total_unresolved += 1
+                if symbol_kind == "data" and has_rva and not has_mapped_rva:
+                    message = "Windows PE data target has an RVA, but that RVA could not be mapped to executable bytes."
+                elif symbol_kind == "data" and has_rva and is_data_section_rva is False:
+                    message = "Windows PE data target has a mapped RVA, but that RVA is not in a writable data section."
+                elif symbol_kind == "data" and has_rva:
+                    message = "Windows PE data target is missing an exact per-build mapped RVA."
+                elif has_rva and is_runtime_function_start is False:
+                    message = "Windows PE target has a mapped RVA, but that RVA is not a RUNTIME_FUNCTION BeginAddress."
+                elif has_rva and not has_mapped_rva:
+                    message = "Windows PE target has an RVA, but that RVA could not be mapped to executable bytes."
+                elif has_signature and not has_mapped_rva:
+                    message = "Windows PE byteSignature metadata is present, but signature scanning is not implemented; provide a mapped RVA or implement signature matching."
+                else:
+                    message = "Windows PE target is missing an exact per-build mapped RVA."
+            total_blocked += 1
+            status = "blocked"
+            targets.append(
+                {
+                    "id": symbol.get("id"),
+                    "kind": symbol.get("kind"),
+                    "demangledLabel": symbol.get("demangledLabel"),
+                    "required": symbol.get("required", False),
+                    "stashCapabilities": symbol.get("stashCapabilities", []),
+                    "status": status,
+                    "resolutionStatus": resolution_status,
+                    "rva": resolution.get("rva"),
+                    "prologue": prologue,
+                    "runtimeFunctionStart": is_runtime_function_start,
+                    "byteSignature": resolution.get("byteSignature"),
+                    "message": message,
+                }
+            )
+        hooks.append(
+            {
+                "id": hook.get("id"),
+                "capability": hook.get("capability"),
+                "required": hook.get("required", False),
+                "installStatus": "blocked" if targets else "missing-targets",
+                "readyTargets": 0,
+                "blockedTargets": sum(1 for target in targets if target["status"] == "blocked"),
+                "missingTargets": sum(1 for target in targets if target["status"] == "missing"),
+                "targets": targets,
+                "message": "Windows PE targets require exact per-build RVAs or byte signatures before detour readiness can be analyzed.",
+            }
+        )
+
+    return {
+        "schemaVersion": "0.1.0",
+        "analyzer": {
+            "decoder": DECODER_ID,
+            "patchStyle": PATCH_STYLE,
+            "patchBytes": PATCH_BYTES,
+            "maxCopyBytes": MAX_COPY_BYTES,
+            "claimBoundary": "pe-target-resolution-required",
+        },
+        "manifest": {
+            "path": str(manifest_path),
+            "steamAppId": manifest.get("steamAppId"),
+            "steamBuildId": manifest.get("steamBuildId"),
+            "platform": manifest.get("platform"),
+            "requiredNextSteps": manifest.get("requiredNextSteps", []),
+        },
+        "executable": {
+            "path": str(executable_path),
+            "sha256": hashlib.sha256(executable_bytes).hexdigest(),
+            "size": len(executable_bytes),
+            "manifestSha256": manifest.get("executable", {}).get("sha256"),
+            "format": "PE" if executable_bytes[:2] == b"MZ" else "unknown",
+            "codeView": pe_image.code_view if pe_image is not None else None,
+            "manifestCodeView": expected_code_view if isinstance(expected_code_view, dict) else None,
+            "codeViewMatchesManifest": code_view_matches,
+        },
+        "summary": {
+            "hookGroups": len(hook_targets),
+            "declaredSymbols": len(symbols),
+            "readyTargets": 0,
+            "blockedTargets": total_blocked,
+            "missingTargets": total_missing,
+            "playableBehaviorClaimed": False,
+            "targetResolutionStatus": (
+                "windows-codeview-identity-mismatch"
+                if code_view_matches is False
+                else "empty-windows-target-manifest"
+                if empty_target_manifest
+                else "windows-target-map-complete-prologue-blocked"
+                if total_missing == 0 and total_unresolved == 0 and total_prologue_blocked > 0
+                else "windows-target-map-complete-detour-analysis-pending"
+                if total_missing == 0 and total_unresolved == 0
+                else "missing-windows-rva-or-signature-map"
+            ),
+        },
+        "hooks": hooks,
+    }
+
+
 
 
 def build_report(manifest_path: Path, executable_path: Path) -> dict[str, Any]:
+    executable_prefix = executable_path.read_bytes()[:4]
+    if executable_prefix[:2] == b"MZ":
+        return build_pe_unresolved_report(manifest_path, executable_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     image = Elf64Image(executable_path)
     symbols_by_id = {symbol["id"]: symbol for symbol in manifest["symbols"]}
@@ -548,6 +885,9 @@ def main(argv: list[str] | None = None) -> int:
         args.out.write_text(rendered + "\n", encoding="utf-8")
     else:
         print(rendered)
+    target_resolution_status = report.get("summary", {}).get("targetResolutionStatus")
+    if target_resolution_status:
+        return 2
     return 0
 
 

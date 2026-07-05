@@ -581,13 +581,13 @@ assert state["savedRows"] == 2, state
 state_path = pathlib.Path(state["path"])
 assert state_path.is_file(), state_path
 rows = [line for line in state_path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
-assert rows == ["1 2 -1 3 12345 1", "2 3 0 4 67890 1"], rows
+assert rows == ["1 2 -1 3 12345 1"], rows
 expected_targets = {
     "Entity::getChestInventoryList": 1,
     "Entity::addItemToChest": 1,
     "Entity::getItemFromChest": 1,
     "Entity::addItemToVoidChestServer": 1,
-    "Entity::removeItemFromVoidChestServer": 0,
+    "Entity::removeItemFromVoidChestServer": 1,
     "Entity::closeChest": 1,
     "Entity::closeChestServer": 0,
 }

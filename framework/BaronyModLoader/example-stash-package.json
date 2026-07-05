@@ -190,31 +190,18 @@
     "required": true,
     "mode": "paired-engine-runtime",
     "plugins": [],
-    "patches": [
+    "runtimeRequirements": {
+      "owner": "BaronyModLoader",
+      "runtimeContract": "bml-runtime-contract@0.1.0",
+      "requiresBmlRuntime": true,
+      "mutatesExecutableOnDisk": false
+    },
+    "sourceReferences": [
       {
         "id": "bml-runtime-stash-capabilities",
-        "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "upstream-release-or-git-sha",
         "path": "native/patches/bml-runtime-stash-capabilities.patch",
-        "required": true,
-        "providesCapabilities": [
-          "persistent_storage",
-          "persistent_inventory",
-          "void_chest_binding",
-          "placement_lobby",
-          "placement_shop",
-          "multiplayer_version_metadata"
-        ],
-        "reviewStance": "source patch should remain small, capability-oriented, and upstreamable"
-      }
-    ],
-    "builds": [
-      {
-        "platform": "linux-x86_64",
-        "baronyRevision": "git-sha-or-release-id",
-        "runtimeVersion": "0.1.0",
-        "artifact": "native/release/linux-x86_64/barony",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "runtimeAuthority": false,
+        "notes": "Semantic source reference only; runtime compatibility is resolved by registered BML runtimes."
       }
     ]
   },
@@ -289,15 +276,9 @@
   },
   "build": {
     "reproducible": true,
-    "system": "documented-native-build",
+    "system": "runtime-registration-selected",
     "instructions": "native/build/build.json",
-    "outputs": [
-      {
-        "platform": "linux-x86_64",
-        "path": "native/release/linux-x86_64/barony",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
-    ]
+    "status": "runtime_registration_required"
   },
   "runtimeReports": {
     "paths": {

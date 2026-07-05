@@ -184,6 +184,16 @@
       ]
     },
     {
+      "id": "summon_monster_no_smoke",
+      "kind": "function",
+      "mangledSymbol": "_Z19summonMonsterNoSmoke7Monsterllb",
+      "demangledLabel": "summonMonsterNoSmoke(Monster, long, long, bool)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_shop"
+      ]
+    },
+    {
       "id": "new_item",
       "kind": "function",
       "mangledSymbol": "_Z7newItem8ItemType6StatusssjbP6list_t",
@@ -391,6 +401,7 @@
       "targetSymbolIds": [
         "generate_dungeon",
         "assign_actions",
+        "summon_monster_no_smoke",
         "new_entity",
         "set_sprite_attributes",
         "map",

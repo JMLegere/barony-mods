@@ -15,12 +15,7 @@
     "layout",
     "barony",
     "framework",
-    "engine",
-    "modules",
-    "native",
-    "dependencies",
-    "conflicts",
-    "runtimeReports"
+    "engine"
   ],
   "properties": {
     "formatVersion": { "const": "0.1.0" },
@@ -114,8 +109,8 @@
     },
     "modules": {
       "type": "object",
-      "required": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"],
-      "additionalProperties": false,
+      "required": [],
+      "additionalProperties": true,
       "properties": {
         "persistentStorage": {
           "type": "object",
@@ -204,45 +199,84 @@
     },
     "native": {
       "type": "object",
-      "required": ["required", "mode", "plugins", "patches", "builds"],
+      "required": ["required", "mode", "plugins", "runtimeRequirements"],
       "additionalProperties": true,
       "properties": {
         "required": { "type": "boolean" },
         "mode": { "const": "paired-engine-runtime" },
         "plugins": { "type": "array", "maxItems": 0 },
-        "patches": {
+        "runtimeRequirements": {
+          "type": "object",
+          "required": ["owner", "runtimeContract", "requiresBmlRuntime", "mutatesExecutableOnDisk"],
+          "additionalProperties": true,
+          "properties": {
+            "owner": { "const": "BaronyModLoader" },
+            "runtimeContract": { "const": "bml-runtime-contract@0.1.0" },
+            "requiresBmlRuntime": { "const": true },
+            "mutatesExecutableOnDisk": { "const": false },
+            "platform": false,
+            "platforms": false,
+            "storefront": false,
+            "steam": false,
+            "steamAppId": false,
+            "steamBuildId": false,
+            "installedExecutable": false,
+            "steamExecutable": false,
+            "executable": false,
+            "artifact": false,
+            "hook": false,
+            "hookTargets": false,
+            "runtimeStrategy": false,
+            "gameRevision": false
+          }
+        },
+        "sourceReferences": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["id", "appliesTo", "baseRevision", "path", "required", "providesCapabilities"],
+            "required": ["id", "path", "runtimeAuthority"],
             "additionalProperties": true,
             "properties": {
               "id": { "$ref": "#/$defs/idFragment" },
-              "appliesTo": { "type": "string", "minLength": 1 },
-              "baseRevision": { "type": "string", "minLength": 1 },
               "path": { "$ref": "#/$defs/relativePath" },
-              "required": { "type": "boolean" },
-              "providesCapabilities": { "$ref": "#/$defs/capabilityIdList" },
-              "reviewStance": { "type": "string" }
+              "runtimeAuthority": { "const": false },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "size": { "type": "integer", "minimum": 0 },
+              "notes": { "type": "string" },
+              "platform": false,
+              "platforms": false,
+              "storefront": false,
+              "steam": false,
+              "steamAppId": false,
+              "steamBuildId": false,
+              "installedExecutable": false,
+              "steamExecutable": false,
+              "executable": false,
+              "artifact": false,
+              "hook": false,
+              "hookTargets": false,
+              "runtimeStrategy": false,
+              "gameRevision": false
             }
           }
         },
-        "builds": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["platform", "baronyRevision", "runtimeVersion", "artifact"],
-            "additionalProperties": true,
-            "properties": {
-              "platform": { "type": "string", "minLength": 1 },
-              "baronyRevision": { "type": "string", "minLength": 1 },
-              "runtimeVersion": { "$ref": "#/$defs/version" },
-              "artifact": { "$ref": "#/$defs/relativePath" },
-              "sha256": { "$ref": "#/$defs/sha256" }
-            }
-          }
-        }
+        "libraries": false,
+        "patches": false,
+        "builds": false,
+        "platform": false,
+        "platforms": false,
+        "storefront": false,
+        "steam": false,
+        "steamAppId": false,
+        "steamBuildId": false,
+        "installedExecutable": false,
+        "steamExecutable": false,
+        "executable": false,
+        "artifact": false,
+        "hook": false,
+        "hookTargets": false,
+        "runtimeStrategy": false,
+        "gameRevision": false
       }
     },
     "dependencies": {
@@ -277,10 +311,30 @@
     "migrations": { "type": "array", "items": { "type": "object", "required": ["id", "to", "phase", "path", "idempotent"], "additionalProperties": true } },
     "checksums": { "type": "object", "additionalProperties": true },
     "source": { "type": "object", "additionalProperties": true },
-    "build": { "type": "object", "additionalProperties": true },
+    "build": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "outputs": false,
+        "platform": false,
+        "platforms": false,
+        "storefront": false,
+        "steam": false,
+        "steamAppId": false,
+        "steamBuildId": false,
+        "installedExecutable": false,
+        "steamExecutable": false,
+        "executable": false,
+        "artifact": false,
+        "hook": false,
+        "hookTargets": false,
+        "runtimeStrategy": false,
+        "gameRevision": false
+      }
+    },
     "runtimeReports": {
       "type": "object",
-      "required": ["paths", "expectedLoadedCapabilities", "expectedLoadedModules", "blockOnErrors"],
+      "required": ["paths", "expectedLoadedCapabilities", "blockOnErrors"],
       "additionalProperties": false,
       "properties": {
         "paths": {
@@ -297,13 +351,26 @@
         "expectedLoadedCapabilities": { "$ref": "#/$defs/capabilityIdSet" },
         "expectedLoadedModules": {
           "type": "array",
-          "minItems": 1,
-          "items": { "type": "string", "enum": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"] },
+          "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
         "blockOnErrors": { "type": "boolean" }
       }
-    }
+    },
+    "platform": false,
+    "platforms": false,
+    "storefront": false,
+    "steam": false,
+    "steamAppId": false,
+    "steamBuildId": false,
+    "installedExecutable": false,
+    "steamExecutable": false,
+    "executable": false,
+    "artifact": false,
+    "hook": false,
+    "hookTargets": false,
+    "runtimeStrategy": false,
+    "gameRevision": false
   },
   "$defs": {
     "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
@@ -321,7 +388,8 @@
         "void_chest_binding",
         "placement_lobby",
         "placement_shop",
-        "multiplayer_version_metadata"
+        "multiplayer_version_metadata",
+        "runtime_load_smoke"
       ]
     },
     "capabilityRequest": {

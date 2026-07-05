@@ -1,6 +1,6 @@
 # BaronyModLoader
 
-BaronyModLoader is a planned standalone modding app and paired engine framework for Barony. It is not just a Stash patch, a one-off source fork, or a loose collection of engine edits. The product goal is to give players a reliable app for installing and launching Barony mods, while giving mod authors a small, explicit framework surface for engine-owned gameplay extensions that Barony's existing content tools cannot express safely.
+BaronyModLoader is a planned standalone modding app and paired engine framework for Barony. It is not just a Stash patch, a one-off source fork, or a loose collection of engine edits. The product goal is to give players a reliable app for installing and launching Barony mods, while giving mod authors a small, explicit framework surface for engine-owned gameplay extensions that Barony's existing content tools cannot express safely. Mod packages stay platform-agnostic: they request abstract framework capabilities, and the app plus runtime registration layer decides whether the selected platform/store/build can satisfy them.
 
 Barony already has official content modding through Custom Content, Workshop/local packages, maps, JSON data, assets, and Barony Script. BaronyModLoader should complement those systems rather than replace them. Content that can remain data-only should stay data-only. BaronyModLoader exists for the narrower class of mods that need validated install state, profile-aware storage, deterministic runtime hooks, save/multiplayer compatibility metadata, and player-facing package management.
 
@@ -21,14 +21,14 @@ BaronyModLoader has two cooperating halves:
    - Owns persistence, gameplay hook timing, placement resolution, item/container serialization, multiplayer compatibility negotiation, and save-state metadata.
    - Refuses unsupported or incompatible capabilities before gameplay state can be corrupted.
 
-The app is responsible for installation, packages, versions, profiles, runtime provenance, hook lifecycle, launch, validation, and human-readable diagnostics. The engine runtime is responsible for authoritative gameplay behavior.
+The app is responsible for installation, packages, versions, profiles, runtime provenance, runtime registration/selection, hook lifecycle, launch, validation, and human-readable diagnostics. The engine runtime is responsible for authoritative gameplay behavior. Packages remain immutable capability declarations; they do not select a platform-specific hook implementation themselves.
 
 ## Layer summary
 
 | Layer | Responsibility | First Stash use |
 | --- | --- | --- |
 | Standalone loader app | Install discovery, profiles, packages, dependency/version checks, runtime/provenance management, launch, validation, logs | Install/enable Stash against a compatible installed Barony runtime target |
-| Mod package format | Stable ids, versions, dependencies/conflicts, Barony/framework targets, capabilities, assets, metadata | A Stash package declaring persistent inventory, Void Chest binding, placement hooks, and multiplayer metadata |
+| Mod package format | Stable ids, versions, dependencies/conflicts, framework contract/capability requests, assets, metadata | A Stash package declaring persistent inventory, Void Chest binding, placement hooks, and multiplayer metadata |
 | Engine runtime/framework hook | Safe engine-owned hooks and capability execution through BML-owned bootstrap code | Persistent storage, persistent `void_chest_inventory`, Void Chest routing, lobby/shop placement, multiplayer/version checks |
 | Module SDK/interface | Documented declarations and narrow APIs for mod authors | The first module set required by Stash only |
 | Stash reference mod | First real mod proving the framework end-to-end | Shared persistent Void Chest stash across runs, saves, spell chests, lobby, and shops |
@@ -46,6 +46,8 @@ BaronyModLoader should be designed as a real standalone framework from the begin
 
 This is not a rejection of a larger future SDK. It is a sequencing rule: BaronyModLoader should have the architecture of a full framework while implementing only the concrete modules Stash needs first.
 
+Stash is the first concrete package, not the shape every package must copy. Future packages may request any valid subset of framework capabilities. Capability completeness requirements such as the six Stash v0 capabilities are specific to `jml.stash`, while platform/store/build compatibility remains a runtime registration decision.
+
 ## PC storefront compatibility stance
 
 BaronyModLoader should work with installed PC copies of Barony, not with an opaque source fork and not by modifying the retail executable on disk. The v1 product target is:
@@ -59,7 +61,7 @@ BaronyModLoader should work with installed PC copies of Barony, not with an opaq
 
 Nintendo Switch is out of scope for this native PC mod-loader approach.
 
-The first concrete implementation target is the local Steam/Linux executable because it is available for direct inspection (`appid 371970`, local build id `22630456`). The app/runtime contract should generalize to other PC storefronts by recording store/build/executable provenance and launching the installed game through a BML-owned hook/bootstrap library.
+The first concrete implementation target is the local Steam/Linux executable because it is available for direct inspection (`appid 371970`, local build id `22630456`). The app/runtime contract should generalize to other PC storefronts by recording store/build/executable provenance in registered runtimes and launching the installed game through a BML-owned hook/bootstrap library. This storefront matrix belongs to framework runtime registration and release metadata, not to per-mod package manifests.
 
 ## Mod organization
 
@@ -80,7 +82,7 @@ Each mod package should live under `mods/<mod-id>/` and use this shape:
 
 ```text
 mods/<mod-id>/
-  bml-package.json           # BML package identity, versions, dependencies, capabilities, runtime requirements
+  bml-package.json           # BML package identity, versions, dependencies, abstract engine capability requests
   workshop.toml              # Steam Workshop/local publishing metadata
   preview.png                # workshop/manager preview image
   content/
@@ -95,7 +97,7 @@ mods/<mod-id>/
     sounds/
 ```
 
-`content/` mirrors Barony's content-mod categories so data/assets that can remain ordinary Barony content stay ordinary Barony content. `bml-package.json` declares the extra framework/runtime capabilities needed by mods that go beyond content, such as Stash's persistent inventory and placement hooks. For v1, the BML app installs package archives into a package store under `<store>/<package-id>/<version>/`, and profiles enable those installed package directories rather than the mutable source tree.
+`content/` mirrors Barony's content-mod categories so data/assets that can remain ordinary Barony content stay ordinary Barony content. `bml-package.json` declares the extra abstract framework capabilities needed by mods that go beyond content, such as Stash's persistent inventory and placement hooks. For v1, the BML app installs package archives into a package store under `<store>/<package-id>/<version>/`, and profiles enable those installed package directories rather than the mutable source tree.
 
 Stash is currently organized as:
 
@@ -152,17 +154,19 @@ python framework/BaronyModLoader/app/barony_mod_loader.py launch \
 
 `package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, writes runtime-manifest/active-mods artifacts, and dry-runs the installed-executable hook launch.
 
+On Windows, the no-op smoke runtime/package is a framework diagnostic validation path only. Runtime-load smoke diagnostic packages request only the reserved `runtime_load_smoke` capability, with `jml.windows_smoke` as the reference fixture. Runtimes with `windowsSupportLevel: noop-runtime-load` must reject packages that request non-smoke capabilities with `BML_RUNTIME_NOOP_PACKAGE_UNSUPPORTED`. This validates runtime registration, launch-manifest generation, and report plumbing on Windows without claiming that Windows Stash gameplay hooks, Void Chest binding, placement, or persistence are implemented.
+
 ## Runnable verification scenarios
 
-The current native hook smoke is Linux-only and proves injection/reporting and symbol-probe plumbing only: `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so /usr/bin/true` should load the hook and write `<profile>/BaronyModLoader/reports/runtime-load-report.json` when the BML environment points at a profile, runtime manifest, and hook manifest. It does not install gameplay detours or create the Stash chest in-game.
+Diagnostic smoke paths prove framework plumbing only. The Linux no-op hook smoke proves injection/reporting and symbol-probe plumbing: `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so /usr/bin/true` should load the hook and write `<profile>/BaronyModLoader/reports/runtime-load-report.json` when the BML environment points at a profile, runtime manifest, and hook manifest. The Windows no-op smoke path is limited to runtime-load smoke diagnostic packages that request only `runtime_load_smoke` on runtimes marked `windowsSupportLevel: noop-runtime-load`; `jml.windows_smoke` is the reference fixture. It proves runtime registration, manifest/report paths, and fail-closed diagnostics without gameplay hooks. Those diagnostic paths are separate from the validated Steam/Linux Stash runtime path, which installs the production playable Stash bundle by default.
 
 The intended staged verification sequence is:
 
-1. **No-op hook load:** launch `/usr/bin/true` or the installed Steam/Linux executable with `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so`, a BML profile, and a runtime manifest; verify `BaronyModLoader/reports/runtime-load-report.json` is written.
+1. **No-op runtime load:** launch `/usr/bin/true` or the installed Steam/Linux executable with `LD_PRELOAD=native/barony-modloader-hook/build/libbarony_bml.so`, or use a Windows runtime-load smoke diagnostic package such as `jml.windows_smoke` with the reserved `runtime_load_smoke` capability; verify `BaronyModLoader/reports/runtime-load-report.json` is written without claiming Stash gameplay support.
 2. **Provenance success/failure:** verify matching Steam build/executable hash/version succeeds and mismatched provenance fails closed before gameplay hooks install.
 3. **Symbol probe:** resolve a harmless symbol/global for Steam/Linux build `22630456` and write diagnostics without mutating gameplay state.
-4. **Lobby/shop placement:** after gameplay hooks exist, verify Stash access points are created by the installed game process when Stash is active.
-5. **Inventory persistence:** after gameplay hooks exist, verify the shared Void Chest inventory survives save/resume, death/new-run, and relaunch boundaries.
+4. **Lobby/shop placement:** on a validated Steam/Linux Stash runtime, verify Stash access points are created by the installed game process when Stash is active.
+5. **Inventory persistence:** on a validated Steam/Linux Stash runtime, verify the shared Void Chest inventory survives save/resume, death/new-run, and relaunch boundaries.
 6. **Disabled/mismatch behavior:** verify no Stash hooks activate when Stash is disabled and incompatible runtime/package metadata blocks clearly.
 
 The previous `/tmp/barony-bml-build/barony` source-build smoke path is obsolete for v1 Steam-current support.
@@ -184,7 +188,7 @@ The principle is to borrow product shape and operational discipline, not arbitra
 
 Stash is the first reference mod and the first acceptance test for BaronyModLoader.
 
-The current Linux hook smoke does not implement the Stash chest, placement, persistence, or gameplay hooks. The target Stash behavior remains:
+Diagnostic smokes do not implement the Stash chest, placement, persistence, or gameplay hooks. The validated Steam/Linux Stash runtime path installs the production playable bundle by default; the target Stash behavior remains:
 
 1. The Stash package declares a persistent named inventory mapped to Barony's existing `void_chest_inventory` concept.
 2. The engine runtime loads that inventory from Stash's profile storage namespace.

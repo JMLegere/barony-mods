@@ -235,8 +235,7 @@ void *bml_fake_newItem(int type, int status, int16_t beatitude, int16_t count, u
     return item;
 }
 
-void *bml_fake_add_item_to_void_chest_server_impl(void *entity, int player, void *item, bool force_new_stack, void *picked_up_stack) {
-    (void)entity;
+void *bml_fake_add_item_to_void_chest_server_impl(int player, void *item, bool force_new_stack, void *picked_up_stack) {
     (void)player;
     (void)force_new_stack;
     (void)picked_up_stack;
@@ -255,8 +254,7 @@ void *bml_fake_add_item_to_void_chest_server_impl(void *entity, int player, void
     return fake_item;
 }
 
-bool bml_fake_remove_item_from_void_chest_server_impl(void *entity, int player, void *item, int count) {
-    (void)entity;
+bool bml_fake_remove_item_from_void_chest_server_impl(int player, void *item, int count) {
     (void)player;
     (void)count;
     BmlFakeItem *fake_item = (BmlFakeItem *)item;
@@ -268,8 +266,9 @@ bool bml_fake_remove_item_from_void_chest_server_impl(void *entity, int player, 
 }
 
 void *bml_fake_add_item_to_chest_impl(void *entity, void *item, bool force_new_stack, void *specific_destination_stack) {
+    (void)entity;
     (void)specific_destination_stack;
-    return bml_fake_add_item_to_void_chest_server_impl(entity, 0, item, force_new_stack, NULL);
+    return bml_fake_add_item_to_void_chest_server_impl(0, item, force_new_stack, NULL);
 }
 
 void *bml_fake_get_item_from_chest_impl(void *entity, void *item, int amount, bool get_info_only) {

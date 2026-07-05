@@ -1,0 +1,41 @@
+{
+  "runtimeId": "barony-bml-runtime-windows-noop",
+  "runtimeVersion": "0.1.0",
+  "runtimeName": "BaronyModLoader Windows no-op installed executable hook runtime",
+  "gameRevision": "steam-371970-22630456-windows",
+  "contractVersions": ["0.1.0"],
+  "game": {
+    "id": "barony",
+    "name": "Barony",
+    "supportedVersions": ["5.x"],
+    "revision": "steam-371970-22630456-windows"
+  },
+  "contract": {
+    "id": "bml-runtime-contract",
+    "versions": ["0.1.0"]
+  },
+  "platforms": [
+    {
+      "platform": "windows-x86_64",
+      "artifact": "native/barony-modloader-hook/build/bml_hook_win.dll",
+      "sha256": "ce9c2a01add3783db3503e93842930fef10edaa5492ba90d9077ce60f3f3a6b3"
+    }
+  ],
+  "capabilities": [
+    { "id": "runtime_load_smoke", "version": "0.1.0" }
+  ],
+  "moduleSupport": [],
+  "runtimeReportPaths": {
+    "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
+    "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
+    "runtimeLog": "BaronyModLoader/logs/runtime.log",
+    "stateRoot": "BaronyModLoader/state/"
+  },
+  "policy": {
+    "runtimeStrategy": "installed-binary-hook",
+    "requiresValidatedManifest": true,
+    "rejectsUnknownRequiredCapabilities": true,
+    "partialStashLoadAllowed": false,
+    "windowsSupportLevel": "noop-runtime-load"
+  }
+}

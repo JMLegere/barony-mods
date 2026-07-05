@@ -1,0 +1,814 @@
+{
+  "schemaVersion": "0.1.0",
+  "runtimeStrategy": "installed-binary-hook",
+  "storefront": "steam",
+  "steamAppId": "371970",
+  "steamBuildId": "22630456",
+  "platform": "windows-x86_64",
+  "status": "noop-validated",
+  "failClosed": false,
+  "supportBoundary": "No-op Windows loader validation for the exact local Steam/Windows barony.exe PE identity plus an unresolved Stash target checklist. This manifest remains registerable for smoke validation only; Stash gameplay hooks remain unsupported until every required PE target has a verified RVA or byte signature and a Windows x64 detour implementation.",
+  "stashTargetResolution": {
+    "status": "missing-windows-rva-or-signature-map",
+    "failClosed": true,
+    "claimBoundary": "target-resolution-checklist-only"
+  },
+  "gameVersionString": "v5.0.2",
+  "executable": {
+    "pathHint": "C:/Program Files (x86)/Steam/steamapps/common/Barony/barony.exe",
+    "sha256": "8566da37bc39ea5a1ed08a8ad57608af4f019fb415869258fb3c1d310b4419e4",
+    "buildId": null,
+    "pe": {
+      "format": "PE32+",
+      "machine": "x86_64",
+      "machineValue": "0x8664",
+      "bitness": 64,
+      "subsystem": "windows-gui",
+      "timeDateStamp": 1775179649,
+      "imageBase": 5368709120,
+      "addressOfEntryPoint": 10730440,
+      "sizeOfImage": 18161664,
+      "sections": [
+        {
+          "name": ".text",
+          "virtualAddress": 4096,
+          "virtualSize": 11314247,
+          "rawSize": 11314688,
+          "rawPointer": 1024,
+          "characteristics": "0x60000020"
+        },
+        {
+          "name": ".rdata",
+          "virtualAddress": 11321344,
+          "virtualSize": 1240186,
+          "rawSize": 1240576,
+          "rawPointer": 11315712,
+          "characteristics": "0x40000040"
+        },
+        {
+          "name": ".data",
+          "virtualAddress": 12562432,
+          "virtualSize": 5316464,
+          "rawSize": 271872,
+          "rawPointer": 12556288,
+          "characteristics": "0xc0000040"
+        },
+        {
+          "name": ".pdata",
+          "virtualAddress": 17879040,
+          "virtualSize": 240780,
+          "rawSize": 241152,
+          "rawPointer": 12828160,
+          "characteristics": "0x40000040"
+        },
+        {
+          "name": ".rsrc",
+          "virtualAddress": 18120704,
+          "virtualSize": 22312,
+          "rawSize": 22528,
+          "rawPointer": 13069312,
+          "characteristics": "0x40000040"
+        },
+        {
+          "name": ".reloc",
+          "virtualAddress": 18145280,
+          "virtualSize": 13592,
+          "rawSize": 13824,
+          "rawPointer": 13091840,
+          "characteristics": "0x42000040"
+        }
+      ],
+      "exports": [
+        {
+          "name": "AmdPowerXpressRequestHighPerformance",
+          "ordinal": 1,
+          "functionRva": 12710012
+        },
+        {
+          "name": "NvOptimusEnablement",
+          "ordinal": 2,
+          "functionRva": 12710008
+        }
+      ],
+      "codeView": {
+        "signature": "RSDS",
+        "guid": "b1ca0707-2b79-4e02-b9c5-1a8e0ecfd525",
+        "age": 2,
+        "pdbPath": "C:/Users/Ben/source/repos/Barony/VS.2015/x64/Steam Crossplay/barony.pdb"
+      }
+    }
+  },
+  "hook": {
+    "libraryName": "bml_hook_win.dll",
+    "entrypoint": "bml_hook_init",
+    "implemented": true,
+    "sha256": "ce9c2a01add3783db3503e93842930fef10edaa5492ba90d9077ce60f3f3a6b3"
+  },
+  "capabilities": [],
+  "symbols": [
+    {
+      "id": "act_chest",
+      "kind": "function",
+      "demangledLabel": "actChest(Entity*)",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3023824,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x2e23d0. On Windows the exported/global actChest(Entity*) wrapper at 0x2e23c0 is only a null-check thunk that immediately forwards to this member-body implementation after confirming `my != NULL`. Local PE disassembly at 0x2e23d0 matches Entity::actChest() state handling (chest status field, children/inventory access, and downstream chest interaction logic), so this Windows resolution intentionally targets the real body instead of the non-.pdata thunk."
+      }
+    },
+    {
+      "id": "act_chest_lid",
+      "kind": "function",
+      "demangledLabel": "actChestLid(Entity*)",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3028320,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x2e3560. Local PE disassembly matches actChestLid(Entity*): it resolves the parent chest via skill[14]/uid lookup, mirrors the parent chest item type into the lid, branches on multiplayer, and updates the lid sprite/state for the four cardinal chest-facing cases before returning."
+      }
+    },
+    {
+      "id": "entity_get_chest_inventory_list",
+      "kind": "function",
+      "demangledLabel": "Entity::getChestInventoryList()",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3044368,
+        "byteSignature": null,
+        "installProbeValidated": true,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 leaf routine at 0x2e7410. Local PE disassembly matches the distinctive getChestInventoryList control flow (multiplayer guard, actChest behavior check, and the void-chest branch returning stats[0]->void_chest_inventory), and the install-only Windows probe now confirms this non-.pdata leaf target passes RSDS identity validation, matches the expected prologue, and installs successfully in-process."
+      }
+    },
+    {
+      "id": "entity_add_item_to_chest",
+      "kind": "function",
+      "demangledLabel": "Entity::addItemToChest(Item*, bool, Item*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3028912,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x2e37b0. Local PE disassembly now distinguishes this from the nearby void-chest wrapper family: rcx=this, rdx=item, r8b=forceNewStack, r9=parent; it scans openedChest[] for this and falls back to clientnum, uses the local opener chest list on the CLIENT path and this->getChestInventoryList() on the server path, emits the `CITM` packet with item fields plus the void-chest flag derived from the opener GUI state, and appends new nodes via list_AddNodeLast while wiring the item deconstructor callback."
+      }
+    },
+    {
+      "id": "entity_get_item_from_chest",
+      "kind": "function",
+      "demangledLabel": "Entity::getItemFromChest(Item*, int, bool)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3044448,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x2e7460: local disassembly matches the member-function getItemFromChest(Item*, int, bool) shape with rcx=this, rdx=item, r8d=amount, r9b=getInfoOnly, the client RCIT packet branch, the exact getChestInventoryList() caller check, item-count decrement, and optional node removal path."
+      }
+    },
+    {
+      "id": "entity_add_item_to_void_chest_server",
+      "kind": "function",
+      "demangledLabel": "Entity::addItemToVoidChestServer(int, Item*, bool, Item*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3031968,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x2e43a0. Local PE disassembly shows the nearby 6565/6566 void-chest message branch shape, and the install-only Windows probe now confirms this target passes RSDS identity validation, matches the expected prologue, and installs successfully in-process."
+      }
+    },
+    {
+      "id": "entity_remove_item_from_void_chest_server",
+      "kind": "function",
+      "demangledLabel": "Entity::removeItemFromVoidChestServer(int, Item*, int)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3045456,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x2e7850. Local PE disassembly matches the direct void-chest server removal loop over `stats[0]->void_chest_inventory`: it never performs the chestVoidState save/restore dance, treats the player arg as effectively unused, compares/removes matching stacks, and the install-only Windows probe confirms this target passes RSDS identity validation, matches the expected prologue, and installs successfully in-process."
+      }
+    },
+    {
+      "id": "entity_close_chest",
+      "kind": "function",
+      "demangledLabel": "Entity::closeChest()",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3034784,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x2e4ea0. Local PE disassembly matches the full Entity::closeChest() control flow from source: it scans `openedChest[MAXPLAYERS]` for `this`, falls back to `clientnum`, emits the close message Language::get(460) plus the `CCLS` packet branch for remote players, clears chest status, updates the opener slot, and on the local-player path calls the nearby tiny GUI/slot-clearing helper at 0x2e51f0."
+      }
+    },
+    {
+      "id": "entity_close_chest_server",
+      "kind": "function",
+      "demangledLabel": "Entity::closeChestServer()",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3035632,
+        "byteSignature": null,
+        "installProbeValidated": true,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 leaf helper at 0x2e51f0. Local PE disassembly matches Entity::closeChestServer(): it reads the chest status flag through `this`, clears the opener GUI/slot state for the owning player, and returns without the clientside `list_FreeAll(&chestInv[player])` cleanup or the outer `CCLS` packet/message branch from Entity::closeChest(). The dedicated Windows install-only probe now confirms this target passes RSDS identity validation, matches the expected prologue, and installs successfully in-process."
+      }
+    },
+    {
+      "id": "generate_dungeon",
+      "kind": "function",
+      "demangledLabel": "generateDungeon(char*, unsigned int, std::tuple<int, int, int, int>)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 5305360,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x50f410. Local PE disassembly matches the gameplay generateDungeon() body: large frame setup, levelset pointer in rcx, seed in edx, later debug strings for `generating a dungeon from level set`, and immediate free/reset of global placement arrays including `shoparea` before the dungeon-generation path continues."
+      }
+    },
+    {
+      "id": "assign_actions",
+      "kind": "function",
+      "demangledLabel": "assignActions(map_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 5264752,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x505570. Earlier local evidence rejected 0x355fe0 / 3497952 as wrong-scope because it overlapped newEntity result pointers and carried a garbage map snapshot. The refined assignActions fired-hook probe now confirms 0x505570 fires in-process with CodeView/prologue match, records gameplay-scoped maps such as 'Mages Guild', and validates the argument against the resolved global `map` symbol (`argumentMatchesGlobal=true`)."
+      }
+    },
+    {
+      "id": "new_entity",
+      "kind": "function",
+      "demangledLabel": "newEntity(int, unsigned int, list_t*, list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 6070496,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x5ca0e0. A direct Steam-alive quickstart probe confirms newEntity fires in-process, and the placement-discovery report now shows assignActions-scoped newEntity activity plus later setSprite correlation. This target appears sound; the remaining blocker is finding a valid map-level assignActions target to anchor stash-specific context."
+      }
+    },
+    {
+      "id": "set_sprite_attributes",
+      "kind": "function",
+      "demangledLabel": "setSpriteAttributes(Entity*, Entity*, Entity*)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 4791632,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x491d50. A direct Steam-alive quickstart probe confirms setSpriteAttributes fires in-process with codeView/prologue checks passing, and the placement-discovery report now correlates later setSprite calls to assignActions-scoped newEntity results. The remaining blocker is the map-level assignActions anchor, not this target."
+      }
+    },
+    {
+      "id": "summon_monster_no_smoke",
+      "kind": "function",
+      "demangledLabel": "summonMonsterNoSmoke(Monster, long, long, bool)",
+      "required": true,
+      "stashCapabilities": [
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 3469216,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 function probed in Shopping Spree. A direct fired probe confirms this path spawns SHOPKEEPER (`creature == 20`) with `forceLocation == true` from return RVA 5418932 on the Minetown custom-run path."
+      }
+    },
+    {
+      "id": "new_item",
+      "kind": "function",
+      "demangledLabel": "newItem(ItemType, Status, short, short, unsigned int, bool, list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 5140912,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x4e71b0. Static PE evidence already showed the exact newItem(ItemType, Status, short, short, unsigned int, bool, list_t*) signature and Item allocation path. A dedicated gameplay-map probe now confirms this callee fires in-process under `-quickstart=barbarian -map=minetown` with replacementCalls > 0; the probe succeeds in relaxed-prefix mode because gameplay-map item generation does not begin with the older menu-seeded four-item prefix used by the original strict harness."
+      }
+    },
+    {
+      "id": "list_free_all",
+      "kind": "function",
+      "demangledLabel": "list_FreeAll(list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 5250384,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x501d50. Local PE disassembly matches list_FreeAll(list_t*): null-list guard, special-case check for map.entities, loop over list->first with nextnode saved before each call to list_RemoveNode(node), then zeroing list->first and list->last before return."
+      }
+    },
+    {
+      "id": "list_remove_node",
+      "kind": "function",
+      "demangledLabel": "list_RemoveNode(node_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 5250768,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x501ed0. Local PE disassembly matches the full list_RemoveNode(node_t*) shape from list.cpp: map.entities_map erase path, openedChest/chestInv selected-item cleanup, inventory/paper-doll cleanup, first/last/middle list-splice cases, then deconstructor-or-free logic for node->element followed by freeing the node itself."
+      }
+    },
+    {
+      "id": "list_add_node_last",
+      "kind": "function",
+      "demangledLabel": "list_AddNodeLast(list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 5250000,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x501bd0. Local PE disassembly matches list_AddNodeLast(list_t*): null-list early return, 0x30-byte node allocation, zeroing element/deconstructor/size/next, wiring node->list, then either appending after list->last or initializing an empty list before storing list->last = node and returning the node pointer."
+      }
+    },
+    {
+      "id": "list_add_node_first",
+      "kind": "function",
+      "demangledLabel": "list_AddNodeFirst(list_t*)",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 5249872,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 .pdata BeginAddress at 0x501b50. Local PE disassembly matches list_AddNodeFirst(list_t*): null-list early return, 0x30-byte node allocation, zeroing element/deconstructor/size/prev, wiring node->list, then either prepending before list->first or initializing an empty list before storing list->first = node and returning the node pointer."
+      }
+    },
+    {
+      "id": "stats",
+      "kind": "data",
+      "demangledLabel": "stats",
+      "required": true,
+      "stashCapabilities": [
+        "persistent_inventory",
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 17511280,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 writable-data slot at 0x10b3370. Local PE disassembly in getChestInventoryList(), addItemToVoidChestServer(), and removeItemFromVoidChestServer() loads this address from memory, then adds the void_chest_inventory field offset before iterating or returning the list, matching the source `stats[0]->void_chest_inventory` access pattern and identifying the base symbol as `stats`."
+      }
+    },
+    {
+      "id": "map",
+      "kind": "data",
+      "demangledLabel": "map",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 17119600,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 global map instance at 0x1053970. Local PE disassembly at the gameplay callsite that invokes assignActions() loads `lea rcx, [rip+0xb86ff9]` -> 0x141053970 immediately before the candidate assignActions call, matching source callsites that pass `&map`."
+      }
+    },
+    {
+      "id": "map_rng",
+      "kind": "data",
+      "demangledLabel": "map_rng",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "unresolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": null,
+        "byteSignature": null,
+        "notes": "Resolve against the exact PE identity in this manifest; do not reuse Linux ELF symbols."
+      }
+    },
+    {
+      "id": "map_server_rng",
+      "kind": "data",
+      "demangledLabel": "map_server_rng",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "unresolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": null,
+        "byteSignature": null,
+        "notes": "Resolve against the exact PE identity in this manifest; do not reuse Linux ELF symbols."
+      }
+    },
+    {
+      "id": "multiplayer",
+      "kind": "data",
+      "demangledLabel": "multiplayer",
+      "required": true,
+      "stashCapabilities": [
+        "multiplayer_version_metadata"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 17119476,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 writable-data location at 0x10538f4. Local PE disassembly across chest and void-chest helpers repeatedly compares this address against the CLIENT value (`cmp`/`jne` guards) in the same control-flow positions as the source `multiplayer` checks."
+      }
+    },
+    {
+      "id": "clientnum",
+      "kind": "data",
+      "demangledLabel": "clientnum",
+      "required": true,
+      "stashCapabilities": [
+        "multiplayer_version_metadata"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 17116616,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 writable-data location at 0x1052dc8. Local PE disassembly in the chest/void helper family loads this address as the fallback local-player index when no opener slot matches, matching the source `clientnum` fallback path."
+      }
+    },
+    {
+      "id": "opened_chest",
+      "kind": "data",
+      "demangledLabel": "openedChest",
+      "required": true,
+      "stashCapabilities": [
+        "void_chest_binding"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 17660496,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 writable-data array at 0x10d7a50. Local PE disassembly in Entity::closeChest(), the nearby player-index close helper, and the validated closeChestServer() leaf scans, clears, and compares this array against chest entity pointers, matching the source `openedChest[MAXPLAYERS]` usage."
+      }
+    },
+    {
+      "id": "shoparea",
+      "kind": "data",
+      "demangledLabel": "shoparea",
+      "required": true,
+      "stashCapabilities": [
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "resolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": 17119840,
+        "byteSignature": null,
+        "notes": "Mapped RVA matching the exact local Steam build 22630456 global `bool* shoparea` pointer at 0x1053a60. Local PE disassembly shows the single free/reallocate/zero-fill lifecycle in the map-load path (`if (shoparea) free(shoparea); shoparea = malloc(width * height); ... shoparea[index] = false`) and downstream byte-indexed reads/writes (`shoparea[y + x * map.height]`) used by shopkeeper placement and shop exclusion checks."
+      }
+    },
+    {
+      "id": "tile_entity_list",
+      "kind": "data",
+      "demangledLabel": "TileEntityList",
+      "required": true,
+      "stashCapabilities": [
+        "placement_lobby",
+        "placement_shop"
+      ],
+      "windowsResolution": {
+        "status": "unresolved",
+        "required": true,
+        "acceptedMethods": [
+          "rva",
+          "byteSignature"
+        ],
+        "rva": null,
+        "byteSignature": null,
+        "notes": "Resolve against the exact PE identity in this manifest; do not reuse Linux ELF symbols."
+      }
+    }
+  ],
+  "hookTargets": [
+    {
+      "id": "stash_void_chest_binding",
+      "capability": "void_chest_binding",
+      "required": true,
+      "targetSymbolIds": [
+        "act_chest",
+        "act_chest_lid",
+        "entity_get_chest_inventory_list",
+        "entity_add_item_to_void_chest_server",
+        "entity_remove_item_from_void_chest_server"
+      ],
+      "installStrategy": "windows-x64-detour-required",
+      "installStatus": "target_resolution_missing",
+      "failClosedCode": "BML_WINDOWS_TARGET_RESOLUTION_MISSING",
+      "windowsResolutionStatus": "unresolved"
+    },
+    {
+      "id": "stash_inventory_persistence",
+      "capability": "persistent_inventory",
+      "required": true,
+      "targetSymbolIds": [
+        "entity_get_chest_inventory_list",
+        "entity_add_item_to_chest",
+        "entity_get_item_from_chest",
+        "entity_close_chest",
+        "entity_close_chest_server",
+        "new_item",
+        "list_add_node_first",
+        "list_add_node_last",
+        "list_remove_node",
+        "list_free_all",
+        "stats"
+      ],
+      "installStrategy": "windows-x64-detour-required",
+      "installStatus": "target_resolution_missing",
+      "failClosedCode": "BML_WINDOWS_TARGET_RESOLUTION_MISSING",
+      "windowsResolutionStatus": "unresolved"
+    },
+    {
+      "id": "stash_lobby_placement",
+      "capability": "placement_lobby",
+      "required": true,
+      "targetSymbolIds": [
+        "assign_actions",
+        "new_entity",
+        "set_sprite_attributes",
+        "map"
+      ],
+      "installStrategy": "windows-x64-detour-required",
+      "installStatus": "target_resolution_missing",
+      "failClosedCode": "BML_WINDOWS_TARGET_RESOLUTION_MISSING",
+      "windowsResolutionStatus": "unresolved"
+    },
+    {
+      "id": "stash_shop_placement",
+      "capability": "placement_shop",
+      "required": true,
+      "targetSymbolIds": [
+        "generate_dungeon",
+        "assign_actions",
+        "summon_monster_no_smoke",
+        "new_entity",
+        "set_sprite_attributes",
+        "map",
+        "shoparea"
+      ],
+      "installStrategy": "windows-x64-detour-required",
+      "installStatus": "target_resolution_missing",
+      "failClosedCode": "BML_WINDOWS_TARGET_RESOLUTION_MISSING",
+      "windowsResolutionStatus": "unresolved"
+    },
+    {
+      "id": "stash_multiplayer_metadata_gate",
+      "capability": "multiplayer_version_metadata",
+      "required": true,
+      "targetSymbolIds": [
+        "multiplayer",
+        "clientnum"
+      ],
+      "installStrategy": "windows-x64-detour-required",
+      "installStatus": "target_resolution_missing",
+      "failClosedCode": "BML_WINDOWS_TARGET_RESOLUTION_MISSING",
+      "windowsResolutionStatus": "unresolved"
+    }
+  ],
+  "validated": {
+    "level": "noop-runtime-load",
+    "reports": [
+      "BaronyModLoader/reports/launcher-injection-report.json",
+      "BaronyModLoader/reports/runtime-load-report.json"
+    ]
+  },
+  "requiredNextSteps": [
+    "Resolve every windowsResolution entry by exact PE identity using per-build RVAs or byte signatures; do not reuse the Linux ELF symbol map.",
+    "Implement and validate a Windows x64 detour backend for one required Stash target before advertising any Stash gameplay capability.",
+    "Promote candidateCapabilities into capabilities only after the runtime load report proves those gameplay hooks installed in-process."
+  ],
+  "candidateCapabilities": [
+    {
+      "id": "persistent_storage",
+      "version": "0.1.0"
+    },
+    {
+      "id": "persistent_inventory",
+      "version": "0.1.0"
+    },
+    {
+      "id": "void_chest_binding",
+      "version": "0.1.0"
+    },
+    {
+      "id": "placement_lobby",
+      "version": "0.1.0"
+    },
+    {
+      "id": "placement_shop",
+      "version": "0.1.0"
+    },
+    {
+      "id": "multiplayer_version_metadata",
+      "version": "0.1.0"
+    }
+  ]
+}

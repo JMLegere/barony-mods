@@ -1,0 +1,88 @@
+{
+  "runtimeId": "barony-bml-runtime-stash-windows",
+  "runtimeVersion": "0.1.0",
+  "runtimeName": "BaronyModLoader Stash Windows installed executable hook runtime",
+  "gameRevision": "steam-371970-22630456-windows",
+  "contractVersions": [
+    "0.1.0"
+  ],
+  "game": {
+    "id": "barony",
+    "name": "Barony",
+    "supportedVersions": [
+      "5.x"
+    ],
+    "revision": "steam-371970-22630456-windows"
+  },
+  "contract": {
+    "id": "bml-runtime-contract",
+    "versions": [
+      "0.1.0"
+    ]
+  },
+  "platforms": [
+    {
+      "platform": "windows-x86_64",
+      "artifact": "native/barony-modloader-hook/build/bml_hook_win.dll",
+      "sha256": "ce9c2a01add3783db3503e93842930fef10edaa5492ba90d9077ce60f3f3a6b3"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "persistent_storage",
+      "version": "0.1.0",
+      "requiredForStash": true,
+      "description": "Profile-scoped engine-managed storage for mod state."
+    },
+    {
+      "id": "persistent_inventory",
+      "version": "0.1.0",
+      "requiredForStash": true,
+      "description": "Named inventory state that survives run, save, and process boundaries."
+    },
+    {
+      "id": "void_chest_binding",
+      "version": "0.1.0",
+      "requiredForStash": true,
+      "description": "Authoritative binding from Barony Void Chest access paths to a persistent inventory."
+    },
+    {
+      "id": "placement_lobby",
+      "version": "0.1.0",
+      "requiredForStash": true,
+      "description": "Safe deterministic placement of a Void Chest access point in the lobby."
+    },
+    {
+      "id": "placement_shop",
+      "version": "0.1.0",
+      "requiredForStash": true,
+      "description": "Safe deterministic placement of a Void Chest access point in generated shops."
+    },
+    {
+      "id": "multiplayer_version_metadata",
+      "version": "0.1.0",
+      "requiredForStash": true,
+      "description": "Host/client compatibility metadata for package, runtime, and persistent inventory schema versions."
+    }
+  ],
+  "moduleSupport": [
+    "persistentStorage",
+    "persistentInventories",
+    "voidChestBindings",
+    "placements",
+    "multiplayer"
+  ],
+  "runtimeReportPaths": {
+    "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
+    "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
+    "runtimeLog": "BaronyModLoader/logs/runtime.log",
+    "stateRoot": "BaronyModLoader/state/"
+  },
+  "policy": {
+    "runtimeStrategy": "installed-binary-hook",
+    "requiresValidatedManifest": true,
+    "rejectsUnknownRequiredCapabilities": true,
+    "partialStashLoadAllowed": false,
+    "windowsSupportLevel": "stash-runtime-supported"
+  }
+}

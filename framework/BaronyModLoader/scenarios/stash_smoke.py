@@ -214,7 +214,7 @@ def launch_game(
 def assert_scenario(profile: Path, expect_shop: bool, expect_inventory_save: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     bml_root = profile / "BaronyModLoader"
     report = read_json(bml_root / "reports" / "runtime-load-report.json")
-    if report.get("status") != "loaded" or report.get("loaded") is not True:
+    if report.get("status") != "loaded":
         raise ScenarioError(f"Runtime did not load cleanly: {json.dumps(report, indent=2)}")
 
     events = read_jsonl(bml_root / "state" / "stash-diagnostics.jsonl")

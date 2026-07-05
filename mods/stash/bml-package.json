@@ -192,48 +192,28 @@
     "required": true,
     "mode": "paired-engine-runtime",
     "plugins": [],
-    "patches": [
+    "runtimeRequirements": {
+      "owner": "BaronyModLoader",
+      "runtimeContract": "bml-runtime-contract@0.1.0",
+      "requiresBmlRuntime": true,
+      "mutatesExecutableOnDisk": false
+    },
+    "sourceReferences": [
       {
         "id": "bml-runtime-handshake",
-        "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "pending-upstream-release-or-git-sha",
         "path": "native/barony-modloader-runtime/patches/0001-bml-runtime-handshake.patch",
-        "required": true,
-        "providesCapabilities": [
-          "multiplayer_version_metadata"
-        ],
+        "runtimeAuthority": false,
         "sha256": "1d278ccfa3bf319acbfb7577eeec2b5a69770eb942de4b2e5689efb3a322d989",
         "size": 14642,
-        "reviewStance": "source patch adds BaronyModLoader runtime manifest discovery, runtime-info reporting, and load report plumbing without claiming Stash gameplay behavior is verified"
+        "notes": "Semantic reference for runtime manifest discovery, runtime-info reporting, and load report plumbing; runtime compatibility is resolved by registered BML runtimes."
       },
       {
         "id": "bml-stash-runtime-capabilities",
-        "appliesTo": "TurningWheel/Barony",
-        "baseRevision": "pending-upstream-release-or-git-sha",
         "path": "native/barony-modloader-runtime/patches/0002-bml-stash-runtime.patch",
-        "required": true,
-        "providesCapabilities": [
-          "persistent_storage",
-          "persistent_inventory",
-          "void_chest_binding",
-          "placement_lobby",
-          "placement_shop",
-          "multiplayer_version_metadata"
-        ],
+        "runtimeAuthority": false,
         "sha256": "3f5438e84f83b0beb00d30c45bd0d2d9046a5c88ade4bf88907151a085a15348",
         "size": 20186,
-        "reviewStance": "source patch implements the capability-oriented Stash runtime hooks; built-game behavioral verification remains pending"
-      }
-    ],
-    "builds": [
-      {
-        "platform": "linux-x86_64",
-        "baronyRevision": "pending-patched-build-source-revision",
-        "runtimeVersion": "0.1.0",
-        "artifact": "native/release/linux-x86_64/barony",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-        "status": "placeholder_pending_built_game",
-        "notes": "No playable patched Barony binary has been verified for this package manifest yet."
+        "notes": "Semantic reference for Stash capability-oriented runtime hooks; playable runtime support is selected and verified through runtime registration."
       }
     ]
   },
@@ -322,17 +302,9 @@
   },
   "build": {
     "reproducible": true,
-    "system": "documented-native-build",
+    "system": "runtime-registration-selected",
     "instructions": "native/barony-modloader-runtime/README.md",
-    "status": "pending_patched_build",
-    "outputs": [
-      {
-        "platform": "linux-x86_64",
-        "path": "native/release/linux-x86_64/barony",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-        "status": "placeholder_pending_built_game"
-      }
-    ]
+    "status": "runtime_registration_required"
   },
   "runtimeReports": {
     "paths": {
