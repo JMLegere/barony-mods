@@ -1,0 +1,244 @@
+{
+  "formatVersion": "0.1.0",
+  "id": "jml.runebound-elixirs",
+  "name": "Runebound: Elixirs",
+  "version": "0.1.0",
+  "kind": "gameplay-mod",
+  "summary": "Class-bound bargain elixirs for Barony: semi-common consumables with permanent or run-permanent tradeoff effects.",
+  "description": "Runebound: Elixirs is a BaronyModLoader gameplay mod for class-bound bargain elixirs: semi-common consumables that grant permanent or run-permanent tradeoff effects. Solo drops are authored to match the local player class; multiplayer drops are host-authoritative and constrained to present party classes and party-size gates. The package now requires a paired installed-binary BML hook runtime that can install the Runebound live hooks and emit live install evidence. Current live evidence is limited to the fake Barony symbol provider/live-hook path for elixir metadata, use/display hooks, stat-application hooks, and host-authoritative install reporting; it is not Steam Workshop playable evidence. Unsupported builds, missing symbols, or failed live installs must fail closed and omit the package from loaded runtime reports.",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "JMLegere"
+    }
+  ],
+  "layout": {
+    "contentRoot": "content/",
+    "assetRoot": "assets/",
+    "nativeRoot": "native/",
+    "migrationRoot": "migrations/"
+  },
+  "barony": {
+    "officialContentSystems": [
+      "Custom Content",
+      "Steam Workshop",
+      "maps",
+      "JSON",
+      "Barony Script"
+    ],
+    "upstreamRepository": "https://github.com/TurningWheel/Barony",
+    "workingForkRepository": "https://github.com/JMLegere/Barony",
+    "supportedGameVersions": [
+      "5.x"
+    ],
+    "notes": "Runebound: Elixirs is packaged as a clean BML gameplay module backed by content/data/bml elixir data and a paired installed-binary hook runtime. Stock Barony cannot load the BML-owned dynamic data files as standalone behavior. The current live hook contract is verified only against the fake Barony symbol provider; true in-game Steam readiness remains gated on live gameplay evidence. Unsupported builds or failed hook installs fail closed."
+  },
+  "framework": {
+    "id": "BaronyModLoader",
+    "minimumAppVersion": "0.1.0",
+    "packageSchema": "bml-package@0.1.0",
+    "runtimeContract": "bml-runtime-contract@0.1.0"
+  },
+  "content": {
+    "entries": []
+  },
+  "assets": {
+    "icon": "assets/preview.png",
+    "previewImages": [
+      "assets/preview.png"
+    ],
+    "readme": null
+  },
+  "engine": {
+    "runtimeContract": "bml-runtime-contract@0.1.0",
+    "minimumRuntimeVersion": "0.1.0",
+    "capabilities": [
+      {
+        "id": "elixir_item_metadata",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Runtime must associate inert POTION_EMPTY carrier items with authored elixir IDs and sidecar metadata without mutating base Barony item state."
+      },
+      {
+        "id": "elixir_drop_generation",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Runtime must provide host-authoritative class-aware and party-size-aware elixir generation."
+      },
+      {
+        "id": "elixir_consumption",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Runtime must intercept eligible elixir carrier use, apply the authored bargain, and consume the item through engine-owned inventory semantics."
+      },
+      {
+        "id": "active_elixir_effect_state",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Runtime must persist and restore consumed elixir effects in BML-owned sidecar state across safe save/load boundaries."
+      },
+      {
+        "id": "active_elixir_effect_application",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Runtime must apply only supported elixir effect opcodes to engine-owned stat, combat, resource, and diagnostic hook surfaces."
+      },
+      {
+        "id": "item_name_tooltip_rendering",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Elixir names, bargain summaries, and duplicate/stacking warnings must be visible through engine-owned name and tooltip rendering."
+      },
+      {
+        "id": "multiplayer_version_metadata",
+        "version": "0.1.0",
+        "required": true,
+        "reason": "Hosts and clients must agree on the active Runebound: Elixirs package, runtime contract, and gameplay data schema before interacting with shared elixir items or active effect state."
+      }
+    ]
+  },
+  "modules": {
+    "runeboundElixirs": {
+      "namespace": "runebound_elixirs",
+      "schemaVersion": "0.1.0",
+      "authority": "host",
+      "carrierItemType": "POTION_EMPTY",
+      "dataFiles": [
+        "content/data/bml/elixir-catalog.json",
+        "content/data/bml/elixir-drop-tables.json"
+      ],
+      "dropPolicy": {
+        "eligibleClasses": "present_party_classes",
+        "soloClassPolicy": "local_player_only",
+        "partySizeEligibility": "generation_time_only",
+        "rngAuthority": "host"
+      },
+      "activeEffects": {
+        "stateScope": "profile_save_sidecar",
+        "stateFile": "BaronyModLoader/state/jml.runebound-elixirs/active-elixir-effects.json",
+        "savePolicy": "on_safe_save_boundary",
+        "duplicatePolicy": "onePerElixirIdPerPlayer",
+        "failurePolicy": "fail-closed"
+      },
+      "display": {
+        "nameRendering": "elixir_display_name",
+        "tooltipRendering": "upside_downside_lifecycle_duplicate_policy",
+        "consumeMessages": "explicit_bargain_result",
+        "reminderPolicy": "runtime_report_and_tooltip"
+      },
+      "multiplayer": {
+        "versionPolicy": "matching_package_and_runtime_metadata_required",
+        "stateAuthority": "host",
+        "clientCompatibility": "reject_mismatched_elixir_contract",
+        "failurePolicy": "fail-closed"
+      },
+      "failurePolicy": "fail-closed",
+      "description": "Host-authoritative class-bound bargain elixirs carried by inert POTION_EMPTY items. Data files define authored elixir metadata, generation weights, party-size filters, duplicate policy, and supported effect opcodes. A paired installed-binary hook runtime must install the live Runebound hooks and report runeboundElixirs plus the elixir capabilities before the package is considered loaded. Fake-provider live installs may prove hook wiring; Steam gameplay remains unverified until separate in-game evidence exists."
+    }
+  },
+  "native": {
+    "required": true,
+    "mode": "paired-engine-runtime",
+    "plugins": [],
+    "patches": [],
+    "builds": [],
+    "runtimeStrategy": "installed-binary-hook",
+    "runtimeAuthority": "native/barony-modloader-hook/",
+    "notes": "Runebound: Elixirs requires the BML installed-binary hook runtime. The native runtime installs relocation-safe live hooks for elixir use, item display/name rendering, and initial STR/DEX stat effect application under the fake Barony symbol provider, and writes a dedicated Runebound live install report. Missing required symbols or failed detour installation must fail closed with BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED-style evidence and leave the package unloaded. This package does not ship a Steam-ready native binary and does not claim in-game Workshop readiness.",
+    "platforms": [
+      {
+        "platform": "linux-x86_64",
+        "hostOs": "linux",
+        "gameExecutableName": "barony.x86_64",
+        "hookArtifact": "native/barony-modloader-hook/build/libbarony_bml.so",
+        "artifactExtension": ".so",
+        "launchAdapter": "linux-ld-preload",
+        "verificationStatus": "fake_provider_live_hook_install_verified_steam_gameplay_unverified",
+        "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+        "notes": "Fake-provider/live-hook install evidence covers useItem, Item::getName, statGetSTR, and statGetDEX detours. Steam/Linux gameplay remains hidden and unverified until real in-game evidence exists."
+      },
+      {
+        "platform": "windows-x86_64",
+        "hostOs": "windows",
+        "gameExecutableName": "barony.exe",
+        "hookArtifact": null,
+        "hookLibraryName": "barony_bml.dll",
+        "artifactExtension": ".dll",
+        "launchAdapter": "windows-createprocess-loadlibrary",
+        "launcherExecutable": "bml-win-launcher.exe",
+        "verificationStatus": "fail_closed_unverified",
+        "notes": "No playable Windows runtime is claimed. Windows must fail closed until a production DLL/launcher path, build manifest, checksums, and live runtime evidence are present."
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "id": "barony",
+      "kind": "game",
+      "version": ">=4.0.0",
+      "required": true
+    },
+    {
+      "id": "bml.runtime",
+      "kind": "engine-runtime",
+      "version": ">=0.1.0 <0.2.0",
+      "required": true
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "*.active_elixir_effect_state",
+      "kind": "exclusive-capability-owner",
+      "reason": "Runebound: Elixirs claims authoritative ownership of elixir item metadata and active elixir effect state for this package. Another mod that owns the same elixir/active-effect state could corrupt or fork per-player sidecar state."
+    }
+  ],
+  "loadAfter": [],
+  "loadBefore": [],
+  "migrations": [],
+  "checksums": {
+    "algorithm": "sha256",
+    "file": "checksums.json",
+    "releaseRequired": false,
+    "entries": [],
+    "notes": "Checksums are generated at install time for release packages. Development packages may omit this field."
+  },
+  "source": {
+    "homepage": "https://github.com/JMLegere/Barony",
+    "upstream": "https://github.com/TurningWheel/Barony",
+    "repository": "https://github.com/JMLegere/Barony",
+    "revision": "semantic-reference-only",
+    "revisionStatus": "semantic_reference_only",
+    "transparency": "No source-built Barony binary is claimed by this package. Live behavior requires the paired BML installed-binary hook runtime and runtime-report evidence. Current live install evidence is fake-provider scoped and must not be advertised as Steam-ready gameplay support."
+  },
+  "build": {
+    "reproducible": false,
+    "system": "none",
+    "instructions": null,
+    "status": "paired_runtime_required_no_package_build",
+    "outputs": [],
+    "notes": "No package-local build step. Runtime behavior is supplied by the paired installed-binary BML hook runtime; fake-provider live-hook evidence is available, while real in-game Steam gameplay evidence remains pending."
+  },
+  "runtimeReports": {
+    "paths": {
+      "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
+      "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
+      "runtimeLog": "BaronyModLoader/logs/runtime.log",
+      "validationReport": "BaronyModLoader/validation-report.json",
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
+    },
+    "expectedLoadedCapabilities": [
+      "elixir_item_metadata",
+      "elixir_drop_generation",
+      "elixir_consumption",
+      "active_elixir_effect_state",
+      "active_elixir_effect_application",
+      "item_name_tooltip_rendering",
+      "multiplayer_version_metadata"
+    ],
+    "expectedLoadedModules": [
+      "runeboundElixirs"
+    ],
+    "blockOnErrors": true,
+    "notes": "Runtime reports must include jml.runebound-elixirs with runeboundElixirs and every canonical elixir capability only after the paired native runtime installs the live hooks. The dedicated live install report records fake-provider/live-hook detour installation status. blockOnErrors preserves fail-closed behavior for missing symbols, unsupported builds, or failed live install attempts."
+  }
+}

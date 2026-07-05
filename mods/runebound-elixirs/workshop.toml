@@ -1,0 +1,20 @@
+slug = "runebound-elixirs"
+title = "Runebound: Elixirs"
+description = """
+Runebound: Elixirs is a BaronyModLoader gameplay mod for semi-common, class-bound bargain elixirs.
+
+Elixirs grant permanent or run-permanent tradeoff effects. Solo drops are authored to match the player's class; multiplayer drops are host-authoritative and constrained to currently present classes and party-size gates.
+
+Current constraints:
+- a paired installed-binary BML hook runtime is now required; stock Barony cannot load the BML-owned data files (content/data/bml/*) as standalone behavior
+- fake-provider/live-hook evidence covers native hook installation for use/display/stat application and runtime reporting, not true Steam Workshop playable support
+- unsupported builds, missing symbols, or failed live hook install attempts must fail closed and leave the package unloaded
+- keep hidden until verified in-game Steam runtime evidence exists
+"""
+preview = "preview.png"
+visibility = 2
+publishedfileid = "0"
+changenote = "Update Runebound Elixirs package contract for paired native live-hook runtime while keeping Workshop visibility hidden"
+
+[content]
+folder = "content"

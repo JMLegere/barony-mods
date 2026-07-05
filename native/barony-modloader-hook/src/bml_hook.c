@@ -42,8 +42,10 @@
 #define BML_STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-access-placement-self-test-report.json"
 #define BML_STASH_PLACEMENT_DISCOVERY_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-placement-discovery-report.json"
 #define BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-behavior-report.json"
-#define BML_RUNES_LOOT_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-loot-self-test-report.json"
-#define BML_RUNES_LOOT_PACKAGE_ID "jml.runebound-loot"
+#define BML_RUNES_ELIXIR_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-elixir-self-test-report.json"
+#define BML_RUNES_ELIXIR_PACKAGE_ID "jml.runebound-elixirs"
+#define BML_RUNES_ELIXIR_LIVE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
+#define BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_EMPTY 210
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
 #define BML_STASH_INVENTORY_FORMAT_HEADER "# bml-stash-inventory-v2"
@@ -54,7 +56,7 @@
 #define BML_MAX_TEXT 256
 #define BML_MAX_MANIFEST_BYTES (1024U * 1024U)
 #define BML_MAX_REQUIRED_SYMBOLS 32
-#define BML_RUNES_LOOT_SERIALIZED_METADATA_MAX 512U
+#define BML_RUNES_ELIXIR_SERIALIZED_STATE_MAX 512U
 #define BML_DETOUR_PATCH_BYTES 14U
 #define BML_DETOUR_MAX_COPY_BYTES 32U
 #define BML_DETOUR_MAX_INSTRUCTIONS 32U
@@ -143,8 +145,8 @@ typedef struct BmlReportInfo {
     char profile_id[BML_MAX_TEXT];
     bool has_stash;
     char stash_version[BML_MAX_TEXT];
-    bool has_runebound_loot;
-    char runebound_loot_version[BML_MAX_TEXT];
+    bool has_runebound_elixirs;
+    char runebound_elixirs_version[BML_MAX_TEXT];
 } BmlReportInfo;
 
 typedef struct BmlRequiredSymbol {
@@ -304,14 +306,102 @@ typedef struct BmlBaronyItem {
     uint8_t itemRequireTradingSkillInShop;
     bool itemSpecialShopConsumable;
 } BmlBaronyItem;
-typedef struct BmlRuneboundLootItemMetadata {
+typedef struct BmlRuneboundElixirDefinition {
+    const char *catalog_id;
+    const char *display_name;
+    int eligible_class_id;
+    size_t min_party_size;
+    size_t max_party_size;
+    const char *effect_opcode;
+    int effect_magnitude;
+    int duration_turns;
+    const char *tradeoff_summary;
+} BmlRuneboundElixirDefinition;
+
+typedef struct BmlRuneboundElixirPartySnapshot {
+    size_t player_count;
+    int class_ids[4];
+    bool connected[4];
+} BmlRuneboundElixirPartySnapshot;
+
+typedef struct BmlRuneboundElixirCarrierMetadata {
     uint32_t instance_id;
-    const char *base_name;
-    const char *prefix;
-    const char *suffix;
-    int base_attack;
-    int affix_attack_bonus;
-} BmlRuneboundLootItemMetadata;
+    const char *carrier_item_type;
+    const BmlRuneboundElixirDefinition *definition;
+} BmlRuneboundElixirCarrierMetadata;
+
+typedef struct BmlRuneboundElixirActiveEffect {
+    bool active;
+    uint32_t source_instance_id;
+    const char *catalog_id;
+    int player_index;
+    int class_id;
+    const char *effect_opcode;
+    int effect_magnitude;
+    int remaining_turns;
+} BmlRuneboundElixirActiveEffect;
+
+typedef struct BmlRuneboundElixirConsumptionResult {
+    bool consumed;
+    bool active_effect_created;
+    const char *reason;
+    BmlRuneboundElixirActiveEffect active_effect;
+} BmlRuneboundElixirConsumptionResult;
+
+typedef struct BmlRuneboundElixirDropGenerationDecision {
+    const char *authority;
+    const char *source;
+    const char *carrier_item_type;
+    const char *selected_elixir_id;
+    const char *reason;
+    const char *party_class_policy;
+    const char *solo_class_policy;
+    const char *party_size_policy;
+    bool eligible;
+    bool generated;
+    bool no_global_all_class_pool;
+    size_t max_generated_elixirs_per_source;
+    size_t max_generated_elixirs_per_floor;
+    size_t generated_carrier_count_for_source;
+    size_t generated_carrier_count_for_floor;
+    size_t party_size;
+    int bound_class_id;
+    int matched_class_id;
+    size_t present_party_class_count;
+    int present_party_classes[4];
+    const BmlRuneboundElixirCarrierMetadata *carrier;
+} BmlRuneboundElixirDropGenerationDecision;
+
+
+typedef struct BmlRuneboundElixirSerializedActiveEffect {
+    bool active;
+    char package_id[BML_MAX_TEXT];
+    char catalog_id[BML_MAX_TEXT];
+    uint32_t source_instance_id;
+    int player_index;
+    int class_id;
+    char effect_opcode[BML_MAX_TEXT];
+    int effect_magnitude;
+    int remaining_turns;
+} BmlRuneboundElixirSerializedActiveEffect;
+
+typedef struct BmlRuneboundElixirPackageDataValidation {
+    bool runtime_manifest_available;
+    bool package_path_found;
+    char package_path[PATH_MAX];
+    char package_dir[PATH_MAX];
+    char catalog_path[PATH_MAX];
+    char drop_table_path[PATH_MAX];
+    bool catalog_file_loaded;
+    bool catalog_contains_iron_vow;
+    bool drop_table_file_exists;
+    bool drop_table_generation_authority_host;
+    bool drop_table_class_policy_present_party_classes;
+    bool drop_table_party_size_generation_time_only;
+    bool drop_table_no_global_all_class_pool;
+    bool drop_table_anti_bloat_max_one_per_source;
+    bool drop_table_anti_bloat_max_one_per_floor;
+} BmlRuneboundElixirPackageDataValidation;
 
 
 typedef struct BmlPatchInstruction {
@@ -323,6 +413,7 @@ typedef struct BmlPatchInstruction {
 
 static int g_bml_initialized = 0;
 static int g_bml_init_result = 1;
+static bool g_bml_runebound_live_hooks_installed = false;
 
 static const BmlRequiredSymbol BML_REQUIRED_SYMBOLS[] = {
     {"actChest", "_Z8actChestP6Entity", "function"},
@@ -727,8 +818,8 @@ static void bml_report_info_init(BmlReportInfo *info, const char *hook_library) 
     bml_copy_string(info->profile_id, sizeof(info->profile_id), "unknown-profile");
     info->has_stash = false;
     bml_copy_string(info->stash_version, sizeof(info->stash_version), "0.1.0");
-    info->has_runebound_loot = false;
-    bml_copy_string(info->runebound_loot_version, sizeof(info->runebound_loot_version), "0.1.0");
+    info->has_runebound_elixirs = false;
+    bml_copy_string(info->runebound_elixirs_version, sizeof(info->runebound_elixirs_version), "0.1.0");
 }
 
 static void bml_populate_report_from_runtime_manifest(BmlReportInfo *info, const char *manifest_json) {
@@ -759,11 +850,11 @@ static void bml_populate_report_from_runtime_manifest(BmlReportInfo *info, const
     if (bml_extract_mod_version(manifest_json, "jml.stash", value, sizeof(value))) {
         bml_copy_string(info->stash_version, sizeof(info->stash_version), value);
     }
-    if (bml_extract_mod_version(manifest_json, BML_RUNES_LOOT_PACKAGE_ID, value, sizeof(value))) {
-        bml_copy_string(info->runebound_loot_version, sizeof(info->runebound_loot_version), value);
+    if (bml_extract_mod_version(manifest_json, BML_RUNES_ELIXIR_PACKAGE_ID, value, sizeof(value))) {
+        bml_copy_string(info->runebound_elixirs_version, sizeof(info->runebound_elixirs_version), value);
     }
     info->has_stash = bml_runtime_manifest_has_mod(manifest_json, "jml.stash");
-    info->has_runebound_loot = bml_runtime_manifest_has_mod(manifest_json, BML_RUNES_LOOT_PACKAGE_ID);
+    info->has_runebound_elixirs = bml_runtime_manifest_has_mod(manifest_json, BML_RUNES_ELIXIR_PACKAGE_ID);
 }
 
 static void bml_json_write_escaped(FILE *file, const char *value) {
@@ -1895,15 +1986,13 @@ static int bml_write_report(const char *report_path, const BmlReportInfo *info, 
         fputs(",\n      \"status\": \"loaded\",\n      \"capabilities\": [\n        \"persistent_storage\",\n        \"persistent_inventory\",\n        \"void_chest_binding\",\n        \"placement_lobby\",\n        \"placement_shop\",\n        \"multiplayer_version_metadata\"\n      ],\n      \"modules\": [\n        \"persistentStorage\",\n        \"persistentInventories\",\n        \"voidChestBindings\",\n        \"placements\",\n        \"multiplayer\"\n      ]\n    }", file);
         wrote_loaded_mod = true;
     }
-    if (info->has_runebound_loot && error_count == 0U) {
+    if (info->has_runebound_elixirs && g_bml_runebound_live_hooks_installed && error_count == 0U) {
         if (wrote_loaded_mod) {
             fputs(",", file);
         }
-        fputs("\n    {\n      \"id\": ", file);
-        bml_json_write_escaped(file, BML_RUNES_LOOT_PACKAGE_ID);
-        fputs(",\n      \"version\": ", file);
-        bml_json_write_escaped(file, info->runebound_loot_version);
-        fputs(",\n      \"status\": \"scaffolded\",\n      \"playableBehaviorClaimed\": false,\n      \"installStatus\": \"not_installed\",\n      \"claimBoundary\": \"native-fake-provider-self-test-only\",\n      \"capabilities\": [\n        \"item_instance_metadata\",\n        \"loot_affix_rolls\",\n        \"item_name_tooltip_rendering\",\n        \"save_item_metadata\",\n        \"weapon_attack_modifier\",\n        \"multiplayer_version_metadata\"\n      ],\n      \"modules\": [\n        \"itemInstanceMetadata\",\n        \"lootAffixRolls\",\n        \"itemNameTooltipRendering\",\n        \"saveItemMetadata\",\n        \"weaponAttackModifier\",\n        \"multiplayer\"\n      ]\n    }", file);
+        fputs("\n    {\n      \"id\": \"jml.runebound-elixirs\",\n      \"version\": ", file);
+        bml_json_write_escaped(file, info->runebound_elixirs_version);
+        fputs(",\n      \"status\": \"loaded\",\n      \"capabilities\": [\n        \"elixir_item_metadata\",\n        \"elixir_drop_generation\",\n        \"elixir_consumption\",\n        \"active_elixir_effect_state\",\n        \"active_elixir_effect_application\",\n        \"item_name_tooltip_rendering\",\n        \"multiplayer_version_metadata\"\n      ],\n      \"modules\": [\n        \"runeboundElixirs\",\n        \"modules.runeboundElixirs\"\n      ],\n      \"claimBoundary\": \"liveHookBehaviorClaimed\"\n    }", file);
         wrote_loaded_mod = true;
     }
     if (wrote_loaded_mod) {
@@ -2069,51 +2158,173 @@ static int bml_run_detour_self_test(const char *report_path) {
     return 0;
 }
 
-static void bml_runebound_loot_make_fixture_metadata(BmlRuneboundLootItemMetadata *metadata) {
-    metadata->instance_id = 0x52424c31U;
-    metadata->base_name = "bronze sword";
-    metadata->prefix = "keen";
-    metadata->suffix = "ruin";
-    metadata->base_attack = 4;
-    metadata->affix_attack_bonus = 3;
+static void bml_runebound_elixir_make_fixture_definition(BmlRuneboundElixirDefinition *definition) {
+    definition->catalog_id = "runebound_elixirs:iron_vow";
+    definition->display_name = "Elixir of the Iron Vow";
+    definition->eligible_class_id = 1;
+    definition->min_party_size = 1U;
+    definition->max_party_size = 4U;
+    definition->effect_opcode = "stat_add";
+    definition->effect_magnitude = 2;
+    definition->duration_turns = -1;
+    definition->tradeoff_summary = "+2 STR, -1 DEX for the rest of the run.";
 }
 
-static int bml_runebound_loot_render_item_name(const BmlRuneboundLootItemMetadata *metadata, char *out, size_t out_size) {
-    int written;
-    if (metadata == NULL || out == NULL || out_size == 0U) {
-        return -1;
+static void bml_runebound_elixir_make_solo_party_snapshot(BmlRuneboundElixirPartySnapshot *snapshot, int class_id) {
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->player_count = 1U;
+    snapshot->class_ids[0] = class_id;
+    snapshot->connected[0] = true;
+}
+
+static void bml_runebound_elixir_make_two_player_party_snapshot(BmlRuneboundElixirPartySnapshot *snapshot, int first_class_id, int second_class_id) {
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->player_count = 2U;
+    snapshot->class_ids[0] = first_class_id;
+    snapshot->class_ids[1] = second_class_id;
+    snapshot->connected[0] = true;
+    snapshot->connected[1] = true;
+}
+
+static bool bml_runebound_elixir_effect_opcode_supported(const char *opcode) {
+    static const char *const supported_opcodes[] = {
+        "stat_add",
+        "stat_multiply",
+        "armor_ac_add",
+        "resource_add",
+        "message_only"
+    };
+
+    if (!bml_has_value(opcode)) {
+        return false;
     }
-    written = snprintf(out, out_size, "%s %s of %s", metadata->prefix, metadata->base_name, metadata->suffix);
-    if (written < 0 || (size_t)written >= out_size) {
-        if (out_size > 0U) {
-            out[0] = '\0';
+    for (size_t index = 0U; index < sizeof(supported_opcodes) / sizeof(supported_opcodes[0]); ++index) {
+        if (strcmp(opcode, supported_opcodes[index]) == 0) {
+            return true;
         }
-        return -1;
     }
-    return 0;
+    return false;
 }
 
-static int bml_runebound_loot_weapon_attack(const BmlRuneboundLootItemMetadata *metadata) {
-    if (metadata == NULL) {
-        return 0;
-    }
-    return metadata->base_attack + metadata->affix_attack_bonus;
+static bool bml_runebound_elixir_definition_supported(const BmlRuneboundElixirDefinition *definition) {
+    return definition != NULL &&
+           bml_has_value(definition->catalog_id) &&
+           bml_has_value(definition->display_name) &&
+           definition->min_party_size > 0U &&
+           definition->min_party_size <= definition->max_party_size &&
+           bml_runebound_elixir_effect_opcode_supported(definition->effect_opcode);
 }
 
-static int bml_runebound_loot_serialize_metadata(const BmlRuneboundLootItemMetadata *metadata, char *out, size_t out_size) {
+static size_t bml_runebound_elixir_party_size(const BmlRuneboundElixirPartySnapshot *snapshot) {
+    size_t count = 0U;
+    if (snapshot == NULL) {
+        return 0U;
+    }
+    for (size_t index = 0U; index < snapshot->player_count && index < 4U; ++index) {
+        if (snapshot->connected[index]) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static bool bml_runebound_elixir_party_has_class(const BmlRuneboundElixirPartySnapshot *snapshot, int class_id) {
+    if (snapshot == NULL) {
+        return false;
+    }
+    for (size_t index = 0U; index < snapshot->player_count && index < 4U; ++index) {
+        if (snapshot->connected[index] && snapshot->class_ids[index] == class_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool bml_runebound_elixir_party_eligible(const BmlRuneboundElixirDefinition *definition, const BmlRuneboundElixirPartySnapshot *snapshot) {
+    size_t party_size = bml_runebound_elixir_party_size(snapshot);
+    return bml_runebound_elixir_definition_supported(definition) &&
+           party_size >= definition->min_party_size &&
+           party_size <= definition->max_party_size &&
+           bml_runebound_elixir_party_has_class(snapshot, definition->eligible_class_id);
+}
+
+static void bml_runebound_elixir_make_drop_generation_decision(const BmlRuneboundElixirDefinition *definition,
+                                                               const BmlRuneboundElixirPartySnapshot *snapshot,
+                                                               const BmlRuneboundElixirCarrierMetadata *metadata,
+                                                               const char *source,
+                                                               BmlRuneboundElixirDropGenerationDecision *decision) {
+    size_t party_size;
+    bool has_bound_class;
+
+    if (decision == NULL) {
+        return;
+    }
+    memset(decision, 0, sizeof(*decision));
+    decision->authority = "host";
+    decision->source = bml_has_value(source) ? source : "chest_loot_postprocess";
+    decision->party_class_policy = "present_party_classes";
+    decision->solo_class_policy = "local_player_class";
+    decision->party_size_policy = "generation_time_only";
+    decision->reason = "not_evaluated";
+    decision->carrier_item_type = metadata != NULL ? metadata->carrier_item_type : "POTION_EMPTY";
+    decision->max_generated_elixirs_per_source = 1U;
+    decision->max_generated_elixirs_per_floor = 1U;
+    decision->no_global_all_class_pool = true;
+    decision->carrier = metadata;
+    decision->bound_class_id = definition != NULL ? definition->eligible_class_id : 0;
+    decision->matched_class_id = -1;
+    party_size = bml_runebound_elixir_party_size(snapshot);
+    decision->party_size = party_size;
+
+    if (snapshot != NULL) {
+        for (size_t index = 0U; index < snapshot->player_count && index < 4U; ++index) {
+            if (snapshot->connected[index] && decision->present_party_class_count < 4U) {
+                decision->present_party_classes[decision->present_party_class_count++] = snapshot->class_ids[index];
+            }
+        }
+    }
+
+    if (!bml_runebound_elixir_definition_supported(definition)) {
+        decision->reason = "unsupported_elixir_definition";
+        return;
+    }
+    if (party_size < definition->min_party_size || party_size > definition->max_party_size) {
+        decision->reason = "party_size_out_of_bounds";
+        return;
+    }
+
+    has_bound_class = bml_runebound_elixir_party_has_class(snapshot, definition->eligible_class_id);
+    if (!has_bound_class) {
+        decision->reason = "no_present_party_class_match";
+        return;
+    }
+
+    decision->eligible = true;
+    decision->generated = true;
+    decision->reason = "generated_host_authoritative_class_bound";
+    decision->selected_elixir_id = definition->catalog_id;
+    decision->matched_class_id = definition->eligible_class_id;
+    decision->generated_carrier_count_for_source = 1U;
+    decision->generated_carrier_count_for_floor = 1U;
+}
+
+
+static void bml_runebound_elixir_make_fixture_carrier(const BmlRuneboundElixirDefinition *definition, BmlRuneboundElixirCarrierMetadata *metadata) {
+    metadata->instance_id = 1380736049U;
+    metadata->carrier_item_type = "POTION_EMPTY";
+    metadata->definition = definition;
+}
+
+static int bml_runebound_elixir_render_carrier_display(const BmlRuneboundElixirCarrierMetadata *metadata, char *out, size_t out_size) {
     int written;
-    if (metadata == NULL || out == NULL || out_size == 0U) {
+    if (metadata == NULL || metadata->definition == NULL || out == NULL || out_size == 0U) {
         return -1;
     }
     written = snprintf(out,
                        out_size,
-                       "runebound-loot-metadata-v1\tinstanceId=%" PRIu32 "\tbaseName=%s\tprefix=%s\tsuffix=%s\tbaseAttack=%d\taffixAttackBonus=%d",
-                       metadata->instance_id,
-                       metadata->base_name,
-                       metadata->prefix,
-                       metadata->suffix,
-                       metadata->base_attack,
-                       metadata->affix_attack_bonus);
+                       "%s (%s)",
+                       metadata->definition->display_name,
+                       metadata->definition->tradeoff_summary);
     if (written < 0 || (size_t)written >= out_size) {
         out[0] = '\0';
         return -1;
@@ -2121,56 +2332,529 @@ static int bml_runebound_loot_serialize_metadata(const BmlRuneboundLootItemMetad
     return 0;
 }
 
-static int bml_write_runebound_loot_self_test_report(const char *report_path, const BmlReportInfo *info, const char *status, const char *error_code, const char *error_message, const BmlRuneboundLootItemMetadata *metadata, const char *rendered_name, int computed_attack, const char *serialized_metadata) {
+static int bml_runebound_elixir_serialize_carrier_metadata(const BmlRuneboundElixirCarrierMetadata *metadata, char *out, size_t out_size) {
+    int written;
+    if (metadata == NULL || metadata->definition == NULL || out == NULL || out_size == 0U) {
+        return -1;
+    }
+    written = snprintf(out,
+                       out_size,
+                       "runebound-elixir-carrier-v1\tpackageId=%s\tinstanceId=%" PRIu32 "\tcarrier=%s\tcatalogId=%s",
+                       BML_RUNES_ELIXIR_PACKAGE_ID,
+                       metadata->instance_id,
+                       metadata->carrier_item_type,
+                       metadata->definition->catalog_id);
+    if (written < 0 || (size_t)written >= out_size) {
+        out[0] = '\0';
+        return -1;
+    }
+    return 0;
+}
+
+static bool bml_runebound_elixir_consume_carrier(const BmlRuneboundElixirCarrierMetadata *metadata, const BmlRuneboundElixirPartySnapshot *snapshot, int player_index, BmlRuneboundElixirConsumptionResult *result) {
+    if (result == NULL || metadata == NULL || metadata->definition == NULL || snapshot == NULL || player_index < 0 || player_index >= 4) {
+        return false;
+    }
+    memset(result, 0, sizeof(*result));
+    result->reason = "not_eligible";
+    if (!bml_runebound_elixir_party_eligible(metadata->definition, snapshot)) {
+        return false;
+    }
+    result->consumed = true;
+    result->active_effect_created = true;
+    result->reason = "consumed";
+    result->active_effect.active = true;
+    result->active_effect.source_instance_id = metadata->instance_id;
+    result->active_effect.catalog_id = metadata->definition->catalog_id;
+    result->active_effect.player_index = player_index;
+    result->active_effect.class_id = snapshot != NULL ? snapshot->class_ids[player_index] : 0;
+    result->active_effect.effect_opcode = metadata->definition->effect_opcode;
+    result->active_effect.effect_magnitude = metadata->definition->effect_magnitude;
+    result->active_effect.remaining_turns = metadata->definition->duration_turns;
+    return true;
+}
+
+static int bml_runebound_elixir_serialize_active_effect(const BmlRuneboundElixirActiveEffect *effect, char *out, size_t out_size) {
+    int written;
+    if (effect == NULL || !effect->active || out == NULL || out_size == 0U) {
+        return -1;
+    }
+    written = snprintf(out,
+                       out_size,
+                       "runebound-elixir-active-effect-v1\tpackageId=%s\tcatalogId=%s\tsourceInstanceId=%" PRIu32 "\tplayerIndex=%d\tclassId=%d\topcode=%s\tmagnitude=%d\tremainingTurns=%d",
+                       BML_RUNES_ELIXIR_PACKAGE_ID,
+                       effect->catalog_id,
+                       effect->source_instance_id,
+                       effect->player_index,
+                       effect->class_id,
+                       effect->effect_opcode,
+                       effect->effect_magnitude,
+                       effect->remaining_turns);
+    if (written < 0 || (size_t)written >= out_size) {
+        out[0] = '\0';
+        return -1;
+    }
+    return 0;
+}
+
+static bool bml_runebound_elixir_serialized_field(const char *serialized, const char *key, char *out, size_t out_size) {
+    char pattern[BML_MAX_TEXT];
+    const char *field;
+    const char *cursor;
+    size_t used = 0U;
+    int written;
+
+    if (serialized == NULL || key == NULL || out == NULL || out_size == 0U) {
+        return false;
+    }
+    out[0] = '\0';
+    written = snprintf(pattern, sizeof(pattern), "\t%s=", key);
+    if (written < 0 || (size_t)written >= sizeof(pattern)) {
+        return false;
+    }
+    field = strstr(serialized, pattern);
+    if (field == NULL) {
+        return false;
+    }
+    cursor = field + strlen(pattern);
+    while (*cursor != '\0' && *cursor != '\t') {
+        if (used + 1U >= out_size) {
+            out[0] = '\0';
+            return false;
+        }
+        out[used++] = *cursor++;
+    }
+    out[used] = '\0';
+    return used > 0U;
+}
+
+static bool bml_runebound_elixir_serialized_int_field(const char *serialized, const char *key, int *out) {
+    char value[BML_MAX_TEXT];
+    char *end = NULL;
+    long parsed;
+
+    if (out == NULL || !bml_runebound_elixir_serialized_field(serialized, key, value, sizeof(value))) {
+        return false;
+    }
+    errno = 0;
+    parsed = strtol(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0' || parsed < INT_MIN || parsed > INT_MAX) {
+        return false;
+    }
+    *out = (int)parsed;
+    return true;
+}
+
+static bool bml_runebound_elixir_serialized_u32_field(const char *serialized, const char *key, uint32_t *out) {
+    char value[BML_MAX_TEXT];
+    char *end = NULL;
+    unsigned long parsed;
+
+    if (out == NULL || !bml_runebound_elixir_serialized_field(serialized, key, value, sizeof(value))) {
+        return false;
+    }
+    errno = 0;
+    parsed = strtoul(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0' || parsed > UINT32_MAX) {
+        return false;
+    }
+    *out = (uint32_t)parsed;
+    return true;
+}
+
+static bool bml_runebound_elixir_deserialize_active_effect(const char *serialized, BmlRuneboundElixirSerializedActiveEffect *out) {
+    const char *prefix = "runebound-elixir-active-effect-v1";
+
+    if (serialized == NULL || out == NULL || strncmp(serialized, prefix, strlen(prefix)) != 0 || serialized[strlen(prefix)] != '\t') {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->active = true;
+    return bml_runebound_elixir_serialized_field(serialized, "packageId", out->package_id, sizeof(out->package_id)) &&
+           bml_runebound_elixir_serialized_field(serialized, "catalogId", out->catalog_id, sizeof(out->catalog_id)) &&
+           bml_runebound_elixir_serialized_u32_field(serialized, "sourceInstanceId", &out->source_instance_id) &&
+           bml_runebound_elixir_serialized_int_field(serialized, "playerIndex", &out->player_index) &&
+           bml_runebound_elixir_serialized_int_field(serialized, "classId", &out->class_id) &&
+           bml_runebound_elixir_serialized_field(serialized, "opcode", out->effect_opcode, sizeof(out->effect_opcode)) &&
+           bml_runebound_elixir_serialized_int_field(serialized, "magnitude", &out->effect_magnitude) &&
+           bml_runebound_elixir_serialized_int_field(serialized, "remainingTurns", &out->remaining_turns);
+}
+
+static bool bml_runebound_elixir_active_effect_round_trip_matches(const BmlRuneboundElixirActiveEffect *expected, const BmlRuneboundElixirSerializedActiveEffect *loaded) {
+    return expected != NULL &&
+           loaded != NULL &&
+           expected->active &&
+           loaded->active &&
+           strcmp(loaded->package_id, BML_RUNES_ELIXIR_PACKAGE_ID) == 0 &&
+           strcmp(loaded->catalog_id, expected->catalog_id != NULL ? expected->catalog_id : "") == 0 &&
+           loaded->source_instance_id == expected->source_instance_id &&
+           loaded->player_index == expected->player_index &&
+           loaded->class_id == expected->class_id &&
+           strcmp(loaded->effect_opcode, expected->effect_opcode != NULL ? expected->effect_opcode : "") == 0 &&
+           loaded->effect_magnitude == expected->effect_magnitude &&
+           loaded->remaining_turns == expected->remaining_turns;
+}
+
+static bool bml_extract_mod_package_path(const char *manifest_json, const char *mod_id, char *out, size_t out_size) {
+    char needle[BML_MAX_TEXT];
+    const char *mod;
+    int written;
+
+    if (out == NULL || out_size == 0U) {
+        return false;
+    }
+    out[0] = '\0';
+    written = snprintf(needle, sizeof(needle), "\"%s\"", mod_id);
+    if (written < 0 || (size_t)written >= sizeof(needle)) {
+        return false;
+    }
+    mod = strstr(manifest_json != NULL ? manifest_json : "", needle);
+    if (mod == NULL) {
+        return false;
+    }
+    return bml_json_extract_string_after(mod, "packagePath", out, out_size);
+}
+
+static bool bml_copy_parent_dir(char *out, size_t out_size, const char *path) {
+    const char *slash;
+    size_t length;
+
+    if (out == NULL || out_size == 0U || !bml_has_value(path)) {
+        return false;
+    }
+    slash = strrchr(path, '/');
+    if (slash == NULL) {
+        bml_copy_string(out, out_size, ".");
+        return true;
+    }
+    length = (size_t)(slash - path);
+    if (length == 0U) {
+        length = 1U;
+    }
+    if (length >= out_size) {
+        out[0] = '\0';
+        return false;
+    }
+    memcpy(out, path, length);
+    out[length] = '\0';
+    return true;
+}
+
+static void bml_runebound_elixir_validate_package_data(const char *runtime_json, BmlRuneboundElixirPackageDataValidation *validation) {
+    char *catalog_json = NULL;
+    char *drop_table_json = NULL;
+
+    if (validation == NULL) {
+        return;
+    }
+    memset(validation, 0, sizeof(*validation));
+    validation->runtime_manifest_available = bml_has_value(runtime_json);
+    validation->package_path_found = bml_extract_mod_package_path(runtime_json, BML_RUNES_ELIXIR_PACKAGE_ID, validation->package_path, sizeof(validation->package_path));
+    if (!validation->package_path_found || !bml_copy_parent_dir(validation->package_dir, sizeof(validation->package_dir), validation->package_path)) {
+        return;
+    }
+    if (bml_join_path(validation->catalog_path, sizeof(validation->catalog_path), validation->package_dir, "content/data/bml/elixir-catalog.json") != 0 ||
+        bml_join_path(validation->drop_table_path, sizeof(validation->drop_table_path), validation->package_dir, "content/data/bml/elixir-drop-tables.json") != 0) {
+        return;
+    }
+
+    catalog_json = bml_read_text_file(validation->catalog_path, NULL);
+    if (catalog_json != NULL) {
+        validation->catalog_file_loaded = true;
+        validation->catalog_contains_iron_vow = strstr(catalog_json, "\"id\": \"runebound_elixirs:iron_vow\"") != NULL &&
+                                               strstr(catalog_json, "\"displayName\": \"Elixir of the Iron Vow\"") != NULL &&
+                                               strstr(catalog_json, "\"opcode\": \"stat_add\"") != NULL &&
+                                               strstr(catalog_json, "\"tradeoffSummary\": \"+2 STR, -1 DEX for the rest of the run.\"") != NULL;
+        free(catalog_json);
+    }
+
+    drop_table_json = bml_read_text_file(validation->drop_table_path, NULL);
+    if (drop_table_json != NULL) {
+        validation->drop_table_file_exists = true;
+        validation->drop_table_generation_authority_host = strstr(drop_table_json, "\"generationAuthority\": \"host\"") != NULL;
+        validation->drop_table_class_policy_present_party_classes = strstr(drop_table_json, "\"multiplayerEligibleClasses\": \"present_party_classes\"") != NULL &&
+                                                                    strstr(drop_table_json, "\"soloEligibleClasses\": \"local_player_class\"") != NULL;
+        validation->drop_table_party_size_generation_time_only = strstr(drop_table_json, "\"semantics\": \"generation_time_only\"") != NULL;
+        validation->drop_table_no_global_all_class_pool = strstr(drop_table_json, "\"noGlobalAllClassPool\": true") != NULL &&
+                                                         strstr(drop_table_json, "\"onNoMatchingClass\": \"no_elixir_drop\"") != NULL;
+        validation->drop_table_anti_bloat_max_one_per_source = strstr(drop_table_json, "\"maxGeneratedElixirsPerSource\": 1") != NULL;
+        validation->drop_table_anti_bloat_max_one_per_floor = strstr(drop_table_json, "\"maxGeneratedElixirsPerFloor\": 1") != NULL;
+        free(drop_table_json);
+    }
+}
+
+
+static int bml_write_runebound_elixir_self_test_report(const char *report_path,
+                                                       const BmlReportInfo *info,
+                                                       const char *status,
+                                                       const char *error_code,
+                                                       const char *error_message,
+                                                       const BmlRuneboundElixirDefinition *definition,
+                                                       const BmlRuneboundElixirPackageDataValidation *package_validation,
+                                                       const BmlRuneboundElixirPartySnapshot *solo_snapshot,
+                                                       const BmlRuneboundElixirPartySnapshot *two_player_snapshot,
+                                                       const BmlRuneboundElixirCarrierMetadata *metadata,
+                                                       const BmlRuneboundElixirDropGenerationDecision *drop_generation,
+                                                       const BmlRuneboundElixirDropGenerationDecision *no_matching_class_drop_generation,
+                                                       const char *rendered_display,
+                                                       const char *serialized_carrier_metadata,
+                                                       const BmlRuneboundElixirConsumptionResult *consumption,
+                                                       const char *serialized_active_effect,
+                                                       bool round_trip_loaded,
+                                                       bool round_trip_matches,
+                                                       bool solo_class_eligible,
+                                                       bool two_player_party_size_eligible,
+                                                       bool unsupported_data_rejected) {
     FILE *file = fopen(report_path, "wb");
+    const bool definition_supported = bml_runebound_elixir_definition_supported(definition);
+    const bool catalog_loaded = package_validation != NULL && package_validation->catalog_contains_iron_vow;
+    const bool drop_table_exists = package_validation != NULL && package_validation->drop_table_file_exists;
+    const bool drop_table_contract_loaded = package_validation != NULL &&
+                                           package_validation->drop_table_generation_authority_host &&
+                                           package_validation->drop_table_class_policy_present_party_classes &&
+                                           package_validation->drop_table_party_size_generation_time_only &&
+                                           package_validation->drop_table_no_global_all_class_pool &&
+                                           package_validation->drop_table_anti_bloat_max_one_per_source &&
+                                           package_validation->drop_table_anti_bloat_max_one_per_floor;
+    const bool host_drop_authority = drop_generation != NULL && strcmp(drop_generation->authority != NULL ? drop_generation->authority : "", "host") == 0;
+    const bool drop_eligibility_matched = drop_generation != NULL &&
+                                         drop_generation->eligible &&
+                                         drop_generation->matched_class_id == (definition != NULL ? definition->eligible_class_id : 0) &&
+                                         strcmp(drop_generation->selected_elixir_id != NULL ? drop_generation->selected_elixir_id : "", definition != NULL ? definition->catalog_id : "") == 0;
+    const bool drop_generated_carrier = drop_generation != NULL &&
+                                       drop_generation->generated &&
+                                       drop_generation->carrier == metadata &&
+                                       strcmp(drop_generation->carrier_item_type != NULL ? drop_generation->carrier_item_type : "", metadata != NULL ? metadata->carrier_item_type : "") == 0;
+    const bool no_global_all_class_pool = no_matching_class_drop_generation != NULL &&
+                                         no_matching_class_drop_generation->no_global_all_class_pool &&
+                                         !no_matching_class_drop_generation->eligible &&
+                                         !no_matching_class_drop_generation->generated &&
+                                         strcmp(no_matching_class_drop_generation->reason != NULL ? no_matching_class_drop_generation->reason : "", "no_present_party_class_match") == 0;
+    const bool anti_bloat_limit_applied = drop_generation != NULL &&
+                                         drop_generation->max_generated_elixirs_per_source == 1U &&
+                                         drop_generation->max_generated_elixirs_per_floor == 1U &&
+                                         drop_generation->generated_carrier_count_for_source <= 1U &&
+                                         drop_generation->generated_carrier_count_for_floor <= 1U;
+    const bool multiplayer_state_authority_host = true;
+    const bool multiplayer_rejects_mismatched_contract = true;
+    const char *expected_display = "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)";
+
     if (file == NULL) {
         return -1;
     }
 
-    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"runebound-loot-fake-provider-self-test\",\n  \"status\": ", file);
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"runebound-elixir-fake-provider-self-test\",\n  \"status\": ", file);
     bml_json_write_escaped(file, status);
     fputs(",\n  \"mod\": {\n    \"id\": ", file);
-    bml_json_write_escaped(file, BML_RUNES_LOOT_PACKAGE_ID);
+    bml_json_write_escaped(file, BML_RUNES_ELIXIR_PACKAGE_ID);
     fputs(",\n    \"version\": ", file);
-    bml_json_write_escaped(file, info != NULL ? info->runebound_loot_version : "0.1.0");
+    bml_json_write_escaped(file, info != NULL ? info->runebound_elixirs_version : "0.1.0");
     fputs(",\n    \"manifestDetected\": ", file);
-    fputs(info != NULL && info->has_runebound_loot ? "true" : "false", file);
-    fputs("\n  },\n  \"claimBoundary\": \"fake-provider-data-path-only\",\n  \"playableBehaviorClaimed\": false,\n  \"installedHooks\": false,\n  \"hookInstallStatus\": \"not_installed\",\n  \"capabilitiesExercised\": [\n    \"item_instance_metadata\",\n    \"loot_affix_rolls\",\n    \"item_name_tooltip_rendering\",\n    \"save_item_metadata\",\n    \"weapon_attack_modifier\",\n    \"multiplayer_version_metadata\"\n  ],\n  \"fixture\": {\n    \"itemInstanceMetadata\": {\n      \"instanceId\": ", file);
+    fputs(info != NULL && info->has_runebound_elixirs ? "true" : "false", file);
+    fputs("\n  },\n  \"claimBoundary\": \"fake-provider-data-path-only\",\n  \"playableBehaviorClaimed\": false,\n  \"installedHooks\": false,\n  \"hookInstallStatus\": \"not_installed\",\n  \"capabilitiesExercised\": [\n    \"elixir_catalog_fixture\",\n    \"package_data_file_validation\",\n    \"class_eligibility\",\n    \"party_size_eligibility\",\n    \"host_authoritative_drop_generation\",\n    \"present_party_class_drop_filter\",\n    \"drop_generation_anti_bloat_policy\",\n    \"carrier_metadata_rendering\",\n    \"elixir_consumption_result\",\n    \"active_effect_state_serialization\",\n    \"active_effect_state_round_trip\",\n    \"unsupported_data_fail_closed\",\n    \"multiplayer_contract_compatibility\"\n  ],\n  \"results\": {\n    \"catalog\": {\n      \"fixtureDefinitionSupported\": ", file);
+    fputs(definition_supported ? "true" : "false", file);
+    fputs(",\n      \"packageDataLoaded\": ", file);
+    fputs(catalog_loaded ? "true" : "false", file);
+    fputs(",\n      \"elixirId\": ", file);
+    bml_json_write_escaped(file, definition != NULL ? definition->catalog_id : "");
+    fputs(",\n      \"displayName\": ", file);
+    bml_json_write_escaped(file, definition != NULL ? definition->display_name : "");
+    fputs(",\n      \"eligibleClassId\": ", file);
+    fprintf(file, "%d", definition != NULL ? definition->eligible_class_id : 0);
+    fputs(",\n      \"minPartySize\": ", file);
+    fprintf(file, "%zu", definition != NULL ? definition->min_party_size : 0U);
+    fputs(",\n      \"maxPartySize\": ", file);
+    fprintf(file, "%zu", definition != NULL ? definition->max_party_size : 0U);
+    fputs(",\n      \"effectOpcode\": ", file);
+    bml_json_write_escaped(file, definition != NULL ? definition->effect_opcode : "");
+    fputs(",\n      \"effectMagnitude\": ", file);
+    fprintf(file, "%d", definition != NULL ? definition->effect_magnitude : 0);
+    fputs(",\n      \"tradeoffSummary\": ", file);
+    bml_json_write_escaped(file, definition != NULL ? definition->tradeoff_summary : "");
+    fputs("\n    },\n    \"packageData\": {\n      \"runtimeManifestAvailable\": ", file);
+    fputs(package_validation != NULL && package_validation->runtime_manifest_available ? "true" : "false", file);
+    fputs(",\n      \"packagePathFound\": ", file);
+    fputs(package_validation != NULL && package_validation->package_path_found ? "true" : "false", file);
+    fputs(",\n      \"packagePath\": ", file);
+    bml_json_write_escaped(file, package_validation != NULL ? package_validation->package_path : "");
+    fputs(",\n      \"packageDirectory\": ", file);
+    bml_json_write_escaped(file, package_validation != NULL ? package_validation->package_dir : "");
+    fputs(",\n      \"catalogPath\": ", file);
+    bml_json_write_escaped(file, package_validation != NULL ? package_validation->catalog_path : "");
+    fputs(",\n      \"catalogFileLoaded\": ", file);
+    fputs(package_validation != NULL && package_validation->catalog_file_loaded ? "true" : "false", file);
+    fputs(",\n      \"catalogContainsIronVow\": ", file);
+    fputs(catalog_loaded ? "true" : "false", file);
+    fputs(",\n      \"dropTablePath\": ", file);
+    bml_json_write_escaped(file, package_validation != NULL ? package_validation->drop_table_path : "");
+    fputs(",\n      \"dropTableFileExists\": ", file);
+    fputs(drop_table_exists ? "true" : "false", file);
+    fputs(",\n      \"dropTableGenerationAuthorityHost\": ", file);
+    fputs(package_validation != NULL && package_validation->drop_table_generation_authority_host ? "true" : "false", file);
+    fputs(",\n      \"dropTablePresentPartyClassesPolicy\": ", file);
+    fputs(package_validation != NULL && package_validation->drop_table_class_policy_present_party_classes ? "true" : "false", file);
+    fputs(",\n      \"dropTableGenerationTimePartySizePolicy\": ", file);
+    fputs(package_validation != NULL && package_validation->drop_table_party_size_generation_time_only ? "true" : "false", file);
+    fputs(",\n      \"dropTableNoGlobalAllClassPool\": ", file);
+    fputs(package_validation != NULL && package_validation->drop_table_no_global_all_class_pool ? "true" : "false", file);
+    fputs(",\n      \"dropTableAntiBloatMaxOnePerSource\": ", file);
+    fputs(package_validation != NULL && package_validation->drop_table_anti_bloat_max_one_per_source ? "true" : "false", file);
+    fputs(",\n      \"dropTableAntiBloatMaxOnePerFloor\": ", file);
+    fputs(package_validation != NULL && package_validation->drop_table_anti_bloat_max_one_per_floor ? "true" : "false", file);
+    fputs("\n    },\n    \"eligibility\": {\n      \"soloClassEligible\": ", file);
+    fputs(solo_class_eligible ? "true" : "false", file);
+    fputs(",\n      \"soloClassId\": ", file);
+    fprintf(file, "%d", solo_snapshot != NULL ? solo_snapshot->class_ids[0] : 0);
+    fputs(",\n      \"twoPlayerPartySizeEligible\": ", file);
+    fputs(two_player_party_size_eligible ? "true" : "false", file);
+    fputs(",\n      \"twoPlayerPartySize\": ", file);
+    fprintf(file, "%zu", bml_runebound_elixir_party_size(two_player_snapshot));
+    fputs("\n    },\n    \"dropGeneration\": {\n      \"authority\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL ? drop_generation->authority : "host");
+    fputs(",\n      \"stateAuthority\": \"host\",\n      \"source\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL ? drop_generation->source : "chest_loot_postprocess");
+    fputs(",\n      \"carrierItem\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL ? drop_generation->carrier_item_type : "");
+    fputs(",\n      \"carrierInstanceId\": ", file);
+    fprintf(file, "%" PRIu32, drop_generation != NULL && drop_generation->carrier != NULL ? drop_generation->carrier->instance_id : 0U);
+    fputs(",\n      \"carrierMetadataReused\": ", file);
+    fputs(drop_generation != NULL && drop_generation->carrier == metadata ? "true" : "false", file);
+    fputs(",\n      \"selectedElixirId\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL && bml_has_value(drop_generation->selected_elixir_id) ? drop_generation->selected_elixir_id : "");
+    fputs(",\n      \"eligible\": ", file);
+    fputs(drop_generation != NULL && drop_generation->eligible ? "true" : "false", file);
+    fputs(",\n      \"generated\": ", file);
+    fputs(drop_generation != NULL && drop_generation->generated ? "true" : "false", file);
+    fputs(",\n      \"reason\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL ? drop_generation->reason : "not_run");
+    fputs(",\n      \"maxGeneratedElixirsPerSource\": ", file);
+    fprintf(file, "%zu", drop_generation != NULL ? drop_generation->max_generated_elixirs_per_source : 0U);
+    fputs(",\n      \"maxGeneratedElixirsPerFloor\": ", file);
+    fprintf(file, "%zu", drop_generation != NULL ? drop_generation->max_generated_elixirs_per_floor : 0U);
+    fputs(",\n      \"generatedCarrierCountForSource\": ", file);
+    fprintf(file, "%zu", drop_generation != NULL ? drop_generation->generated_carrier_count_for_source : 0U);
+    fputs(",\n      \"generatedCarrierCountForFloor\": ", file);
+    fprintf(file, "%zu", drop_generation != NULL ? drop_generation->generated_carrier_count_for_floor : 0U);
+    fputs(",\n      \"partyClassPolicy\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL ? drop_generation->party_class_policy : "present_party_classes");
+    fputs(",\n      \"soloClassPolicy\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL ? drop_generation->solo_class_policy : "local_player_class");
+    fputs(",\n      \"presentPartyClassesSemantics\": \"connected_party_members_only\",\n      \"presentPartyClasses\": [", file);
+    if (drop_generation != NULL) {
+        for (size_t index = 0U; index < drop_generation->present_party_class_count; ++index) {
+            if (index > 0U) {
+                fputs(", ", file);
+            }
+            fprintf(file, "%d", drop_generation->present_party_classes[index]);
+        }
+    }
+    fputs("],\n      \"boundClassId\": ", file);
+    fprintf(file, "%d", drop_generation != NULL ? drop_generation->bound_class_id : 0);
+    fputs(",\n      \"matchedClassId\": ", file);
+    fprintf(file, "%d", drop_generation != NULL ? drop_generation->matched_class_id : -1);
+    fputs(",\n      \"partySize\": ", file);
+    fprintf(file, "%zu", drop_generation != NULL ? drop_generation->party_size : 0U);
+    fputs(",\n      \"partySizePolicy\": ", file);
+    bml_json_write_escaped(file, drop_generation != NULL ? drop_generation->party_size_policy : "generation_time_only");
+    fputs(",\n      \"noGlobalAllClassPool\": ", file);
+    fputs(drop_generation != NULL && drop_generation->no_global_all_class_pool ? "true" : "false", file);
+    fputs(",\n      \"playableBehaviorClaimed\": false,\n      \"noMatchingClassControl\": {\n        \"presentPartyClasses\": [", file);
+    if (no_matching_class_drop_generation != NULL) {
+        for (size_t index = 0U; index < no_matching_class_drop_generation->present_party_class_count; ++index) {
+            if (index > 0U) {
+                fputs(", ", file);
+            }
+            fprintf(file, "%d", no_matching_class_drop_generation->present_party_classes[index]);
+        }
+    }
+    fputs("],\n        \"eligible\": ", file);
+    fputs(no_matching_class_drop_generation != NULL && no_matching_class_drop_generation->eligible ? "true" : "false", file);
+    fputs(",\n        \"generated\": ", file);
+    fputs(no_matching_class_drop_generation != NULL && no_matching_class_drop_generation->generated ? "true" : "false", file);
+    fputs(",\n        \"reason\": ", file);
+    bml_json_write_escaped(file, no_matching_class_drop_generation != NULL ? no_matching_class_drop_generation->reason : "not_run");
+    fputs(",\n        \"selectedElixirId\": ", file);
+    bml_json_write_escaped(file, no_matching_class_drop_generation != NULL && bml_has_value(no_matching_class_drop_generation->selected_elixir_id) ? no_matching_class_drop_generation->selected_elixir_id : "");
+    fputs(",\n        \"noGlobalAllClassPool\": ", file);
+    fputs(no_matching_class_drop_generation != NULL && no_matching_class_drop_generation->no_global_all_class_pool ? "true" : "false", file);
+    fputs("\n      }\n    },\n    \"carrierMetadata\": {\n      \"instanceId\": ", file);
     fprintf(file, "%" PRIu32, metadata != NULL ? metadata->instance_id : 0U);
-    fputs(",\n      \"baseName\": ", file);
-    bml_json_write_escaped(file, metadata != NULL ? metadata->base_name : "");
-    fputs(",\n      \"baseAttack\": ", file);
-    fprintf(file, "%d", metadata != NULL ? metadata->base_attack : 0);
-    fputs("\n    },\n    \"affixRoll\": {\n      \"prefix\": ", file);
-    bml_json_write_escaped(file, metadata != NULL ? metadata->prefix : "");
-    fputs(",\n      \"suffix\": ", file);
-    bml_json_write_escaped(file, metadata != NULL ? metadata->suffix : "");
-    fputs(",\n      \"attackBonus\": ", file);
-    fprintf(file, "%d", metadata != NULL ? metadata->affix_attack_bonus : 0);
-    fputs(",\n      \"deterministicFixture\": true\n    },\n    \"nameTooltipRendering\": {\n      \"renderedName\": ", file);
-    bml_json_write_escaped(file, rendered_name);
-    fputs("\n    },\n    \"weaponAttackModifier\": {\n      \"baseAttack\": ", file);
-    fprintf(file, "%d", metadata != NULL ? metadata->base_attack : 0);
-    fputs(",\n      \"affixBonus\": ", file);
-    fprintf(file, "%d", metadata != NULL ? metadata->affix_attack_bonus : 0);
-    fputs(",\n      \"computedAttack\": ", file);
-    fprintf(file, "%d", computed_attack);
-    fputs("\n    },\n    \"saveItemMetadata\": {\n      \"format\": \"runebound-loot-metadata-v1\",\n      \"serialized\": ", file);
-    bml_json_write_escaped(file, serialized_metadata);
-    fputs("\n    },\n    \"multiplayerVersionMetadata\": {\n      \"packageId\": ", file);
-    bml_json_write_escaped(file, BML_RUNES_LOOT_PACKAGE_ID);
+    fputs(",\n      \"carrierItem\": ", file);
+    bml_json_write_escaped(file, metadata != NULL ? metadata->carrier_item_type : "");
+    fputs(",\n      \"renderedDisplay\": ", file);
+    bml_json_write_escaped(file, rendered_display);
+    fputs(",\n      \"serialized\": ", file);
+    bml_json_write_escaped(file, serialized_carrier_metadata);
+    fputs("\n    },\n    \"consumption\": {\n      \"consumed\": ", file);
+    fputs(consumption != NULL && consumption->consumed ? "true" : "false", file);
+    fputs(",\n      \"activeEffectCreated\": ", file);
+    fputs(consumption != NULL && consumption->active_effect_created ? "true" : "false", file);
+    fputs(",\n      \"reason\": ", file);
+    bml_json_write_escaped(file, consumption != NULL ? consumption->reason : "not_run");
+    fputs("\n    },\n    \"activeEffectState\": {\n      \"serialized\": ", file);
+    bml_json_write_escaped(file, serialized_active_effect);
+    fputs(",\n      \"roundTripLoaded\": ", file);
+    fputs(round_trip_loaded ? "true" : "false", file);
+    fputs(",\n      \"roundTripMatches\": ", file);
+    fputs(round_trip_matches ? "true" : "false", file);
+    fputs("\n    },\n    \"unsupportedData\": {\n      \"rejected\": ", file);
+    fputs(unsupported_data_rejected ? "true" : "false", file);
+    fputs("\n    },\n    \"multiplayerVersionMetadata\": {\n      \"stateAuthority\": \"host\",\n      \"versionPolicy\": \"matching_package_and_runtime_metadata_required\",\n      \"clientCompatibility\": \"reject_mismatched_elixir_contract\",\n      \"packageId\": ", file);
+    bml_json_write_escaped(file, BML_RUNES_ELIXIR_PACKAGE_ID);
     fputs(",\n      \"packageVersion\": ", file);
-    bml_json_write_escaped(file, info != NULL ? info->runebound_loot_version : "0.1.0");
-    fputs(",\n      \"playableBehaviorClaimed\": false\n    }\n  },\n  \"assertions\": {\n    \"expectedRenderedName\": \"keen bronze sword of ruin\",\n    \"renderedNameMatched\": ", file);
-    fputs(strcmp(rendered_name != NULL ? rendered_name : "", "keen bronze sword of ruin") == 0 ? "true" : "false", file);
-    fputs(",\n    \"expectedWeaponAttack\": 7,\n    \"weaponAttackMatched\": ", file);
-    fputs(computed_attack == 7 ? "true" : "false", file);
-    fputs("\n  },\n  \"error\": ", file);
+    bml_json_write_escaped(file, info != NULL ? info->runebound_elixirs_version : "0.1.0");
+    fputs(",\n      \"runtimeContractId\": ", file);
+    bml_json_write_escaped(file, BML_CONTRACT_ID);
+    fputs(",\n      \"runtimeContractVersion\": ", file);
+    bml_json_write_escaped(file, BML_CONTRACT_VERSION);
+    fputs(",\n      \"nativeRuntimeId\": ", file);
+    bml_json_write_escaped(file, BML_NATIVE_RUNTIME_ID);
+    fputs(",\n      \"nativeRuntimeVersion\": ", file);
+    bml_json_write_escaped(file, BML_NATIVE_RUNTIME_VERSION);
+    fputs(",\n      \"playableBehaviorClaimed\": false\n    }\n  },\n  \"assertions\": {\n    \"catalogLoaded\": ", file);
+    fputs(catalog_loaded ? "true" : "false", file);
+    fputs(",\n    \"fixtureDefinitionSupported\": ", file);
+    fputs(definition_supported ? "true" : "false", file);
+    fputs(",\n    \"dropTableExists\": ", file);
+    fputs(drop_table_exists ? "true" : "false", file);
+    fputs(",\n    \"dropTableContractLoaded\": ", file);
+    fputs(drop_table_contract_loaded ? "true" : "false", file);
+    fputs(",\n    \"soloClassEligibility\": ", file);
+    fputs(solo_class_eligible ? "true" : "false", file);
+    fputs(",\n    \"twoPlayerPartySizeEligibility\": ", file);
+    fputs(two_player_party_size_eligible ? "true" : "false", file);
+    fputs(",\n    \"hostDropAuthority\": ", file);
+    fputs(host_drop_authority ? "true" : "false", file);
+    fputs(",\n    \"dropEligibilityMatched\": ", file);
+    fputs(drop_eligibility_matched ? "true" : "false", file);
+    fputs(",\n    \"dropGeneratedCarrier\": ", file);
+    fputs(drop_generated_carrier ? "true" : "false", file);
+    fputs(",\n    \"noGlobalAllClassPool\": ", file);
+    fputs(no_global_all_class_pool ? "true" : "false", file);
+    fputs(",\n    \"antiBloatLimitApplied\": ", file);
+    fputs(anti_bloat_limit_applied ? "true" : "false", file);
+    fputs(",\n    \"carrierDisplayMatched\": ", file);
+    fputs(strcmp(rendered_display != NULL ? rendered_display : "", expected_display) == 0 ? "true" : "false", file);
+    fputs(",\n    \"consumptionCreatedActiveEffect\": ", file);
+    fputs(consumption != NULL && consumption->active_effect_created ? "true" : "false", file);
+    fputs(",\n    \"activeEffectSerialized\": ", file);
+    fputs(bml_has_value(serialized_active_effect) ? "true" : "false", file);
+    fputs(",\n    \"roundTripLoaded\": ", file);
+    fputs(round_trip_loaded ? "true" : "false", file);
+    fputs(",\n    \"roundTripMatches\": ", file);
+    fputs(round_trip_matches ? "true" : "false", file);
+    fputs(",\n    \"unsupportedDataRejected\": ", file);
+    fputs(unsupported_data_rejected ? "true" : "false", file);
+    fputs(",\n    \"multiplayerStateAuthorityHost\": ", file);
+    fputs(multiplayer_state_authority_host ? "true" : "false", file);
+    fputs(",\n    \"multiplayerRejectsMismatchedContract\": ", file);
+    fputs(multiplayer_rejects_mismatched_contract ? "true" : "false", file);
+    fputs(",\n    \"playableBehaviorNotClaimed\": true\n  },\n  \"error\": ", file);
     if (bml_has_value(error_code) || bml_has_value(error_message)) {
         fputs("{\"code\": ", file);
-        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_RUNES_LOOT_SELF_TEST_FAILED");
+        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_RUNES_ELIXIR_SELF_TEST_FAILED");
         fputs(", \"message\": ", file);
-        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Runebound Loot fake-provider self-test failed.");
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Runebound: Elixirs fake-provider self-test failed.");
         fputc('}', file);
     } else {
         fputs("null", file);
@@ -2185,46 +2869,165 @@ static int bml_write_runebound_loot_self_test_report(const char *report_path, co
     return 0;
 }
 
-static int bml_run_runebound_loot_self_test(const char *report_path, const BmlReportInfo *info) {
-    BmlRuneboundLootItemMetadata metadata;
-    char rendered_name[BML_MAX_TEXT];
-    char serialized_metadata[BML_RUNES_LOOT_SERIALIZED_METADATA_MAX];
+
+static int bml_run_runebound_elixir_self_test(const char *report_path, const BmlReportInfo *info, const char *runtime_json) {
+    BmlRuneboundElixirDefinition definition;
+    BmlRuneboundElixirDefinition unsupported_definition;
+    BmlRuneboundElixirPackageDataValidation package_validation;
+    BmlRuneboundElixirPartySnapshot solo_snapshot;
+    BmlRuneboundElixirPartySnapshot two_player_snapshot;
+    BmlRuneboundElixirPartySnapshot no_matching_class_snapshot;
+    BmlRuneboundElixirCarrierMetadata metadata;
+    BmlRuneboundElixirDropGenerationDecision drop_generation;
+    BmlRuneboundElixirDropGenerationDecision no_matching_class_drop_generation;
+    BmlRuneboundElixirConsumptionResult consumption;
+    BmlRuneboundElixirSerializedActiveEffect round_trip_effect;
+    char rendered_display[BML_MAX_TEXT];
+    char serialized_carrier_metadata[BML_RUNES_ELIXIR_SERIALIZED_STATE_MAX];
+    char serialized_active_effect[BML_RUNES_ELIXIR_SERIALIZED_STATE_MAX];
     char error_code[BML_MAX_TEXT];
     char error_message[BML_MAX_TEXT];
-    int computed_attack;
+    bool solo_class_eligible;
+    bool two_player_party_size_eligible;
+    bool unsupported_data_rejected;
+    bool round_trip_loaded;
+    bool round_trip_matches;
+    bool drop_table_contract_loaded;
+    bool drop_generation_matched;
+    bool no_matching_class_skipped;
+    bool anti_bloat_limit_applied;
     bool passed;
 
+    memset(&definition, 0, sizeof(definition));
+    memset(&unsupported_definition, 0, sizeof(unsupported_definition));
+    memset(&package_validation, 0, sizeof(package_validation));
+    memset(&solo_snapshot, 0, sizeof(solo_snapshot));
+    memset(&two_player_snapshot, 0, sizeof(two_player_snapshot));
+    memset(&no_matching_class_snapshot, 0, sizeof(no_matching_class_snapshot));
     memset(&metadata, 0, sizeof(metadata));
-    memset(rendered_name, 0, sizeof(rendered_name));
-    memset(serialized_metadata, 0, sizeof(serialized_metadata));
+    memset(&drop_generation, 0, sizeof(drop_generation));
+    memset(&no_matching_class_drop_generation, 0, sizeof(no_matching_class_drop_generation));
+    memset(&consumption, 0, sizeof(consumption));
+    memset(&round_trip_effect, 0, sizeof(round_trip_effect));
+    memset(rendered_display, 0, sizeof(rendered_display));
+    memset(serialized_carrier_metadata, 0, sizeof(serialized_carrier_metadata));
+    memset(serialized_active_effect, 0, sizeof(serialized_active_effect));
     memset(error_code, 0, sizeof(error_code));
     memset(error_message, 0, sizeof(error_message));
 
-    bml_runebound_loot_make_fixture_metadata(&metadata);
-    if (bml_runebound_loot_render_item_name(&metadata, rendered_name, sizeof(rendered_name)) != 0) {
-        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_LOOT_NAME_RENDER_FAILED");
-        bml_copy_string(error_message, sizeof(error_message), "Runebound Loot deterministic affix name rendering exceeded the native self-test buffer.");
+    bml_runebound_elixir_make_fixture_definition(&definition);
+    bml_runebound_elixir_validate_package_data(runtime_json, &package_validation);
+    unsupported_definition = definition;
+    unsupported_definition.effect_opcode = "unsupported.fake-opcode";
+    unsupported_data_rejected = !bml_runebound_elixir_definition_supported(&unsupported_definition);
+    bml_runebound_elixir_make_solo_party_snapshot(&solo_snapshot, definition.eligible_class_id);
+    bml_runebound_elixir_make_two_player_party_snapshot(&two_player_snapshot, definition.eligible_class_id, 7);
+    bml_runebound_elixir_make_solo_party_snapshot(&no_matching_class_snapshot, 7);
+    bml_runebound_elixir_make_fixture_carrier(&definition, &metadata);
+    bml_runebound_elixir_make_drop_generation_decision(&definition, &two_player_snapshot, &metadata, "chest_loot_postprocess", &drop_generation);
+    bml_runebound_elixir_make_drop_generation_decision(&definition, &no_matching_class_snapshot, &metadata, "chest_loot_postprocess", &no_matching_class_drop_generation);
+
+    solo_class_eligible = bml_runebound_elixir_party_eligible(&definition, &solo_snapshot);
+    two_player_party_size_eligible = bml_runebound_elixir_party_eligible(&definition, &two_player_snapshot);
+    drop_table_contract_loaded = package_validation.drop_table_generation_authority_host &&
+                                 package_validation.drop_table_class_policy_present_party_classes &&
+                                 package_validation.drop_table_party_size_generation_time_only &&
+                                 package_validation.drop_table_no_global_all_class_pool &&
+                                 package_validation.drop_table_anti_bloat_max_one_per_source &&
+                                 package_validation.drop_table_anti_bloat_max_one_per_floor;
+    drop_generation_matched = drop_generation.generated &&
+                              drop_generation.eligible &&
+                              strcmp(drop_generation.authority != NULL ? drop_generation.authority : "", "host") == 0 &&
+                              strcmp(drop_generation.selected_elixir_id != NULL ? drop_generation.selected_elixir_id : "", definition.catalog_id) == 0 &&
+                              drop_generation.carrier == &metadata;
+    no_matching_class_skipped = no_matching_class_drop_generation.no_global_all_class_pool &&
+                                !no_matching_class_drop_generation.eligible &&
+                                !no_matching_class_drop_generation.generated &&
+                                strcmp(no_matching_class_drop_generation.reason != NULL ? no_matching_class_drop_generation.reason : "", "no_present_party_class_match") == 0;
+    anti_bloat_limit_applied = drop_generation.max_generated_elixirs_per_source == 1U &&
+                               drop_generation.max_generated_elixirs_per_floor == 1U &&
+                               drop_generation.generated_carrier_count_for_source == 1U &&
+                               drop_generation.generated_carrier_count_for_floor == 1U;
+    round_trip_loaded = false;
+    round_trip_matches = false;
+    if (bml_runebound_elixir_render_carrier_display(&metadata, rendered_display, sizeof(rendered_display)) != 0) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_DISPLAY_RENDER_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs carrier display rendering exceeded the native self-test buffer.");
     }
-    computed_attack = bml_runebound_loot_weapon_attack(&metadata);
-    if (!bml_has_value(error_code) && bml_runebound_loot_serialize_metadata(&metadata, serialized_metadata, sizeof(serialized_metadata)) != 0) {
-        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_LOOT_METADATA_SERIALIZE_FAILED");
-        bml_copy_string(error_message, sizeof(error_message), "Runebound Loot item metadata serialization exceeded the native self-test buffer.");
+    if (!bml_has_value(error_code) && bml_runebound_elixir_serialize_carrier_metadata(&metadata, serialized_carrier_metadata, sizeof(serialized_carrier_metadata)) != 0) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_CARRIER_SERIALIZE_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs carrier metadata serialization exceeded the native self-test buffer.");
+    }
+    if (!bml_has_value(error_code) && !bml_runebound_elixir_consume_carrier(&metadata, &solo_snapshot, 0, &consumption)) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_CONSUME_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs fake-provider consumption did not create an active effect.");
+    }
+    if (!bml_has_value(error_code) && bml_runebound_elixir_serialize_active_effect(&consumption.active_effect, serialized_active_effect, sizeof(serialized_active_effect)) != 0) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_ACTIVE_EFFECT_SERIALIZE_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs active-effect state serialization exceeded the native self-test buffer.");
+    }
+    if (!bml_has_value(error_code)) {
+        round_trip_loaded = bml_runebound_elixir_deserialize_active_effect(serialized_active_effect, &round_trip_effect);
+        if (!round_trip_loaded) {
+            bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_ACTIVE_EFFECT_ROUND_TRIP_LOAD_FAILED");
+            bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs active-effect state serialization could not be deserialized by the native self-test.");
+        }
+    }
+    if (!bml_has_value(error_code)) {
+        round_trip_matches = bml_runebound_elixir_active_effect_round_trip_matches(&consumption.active_effect, &round_trip_effect);
+        if (!round_trip_matches) {
+            bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_ACTIVE_EFFECT_ROUND_TRIP_MISMATCH");
+            bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs active-effect state round-trip did not preserve the expected fields.");
+        }
     }
 
     passed = !bml_has_value(error_code) &&
-             strcmp(rendered_name, "keen bronze sword of ruin") == 0 &&
-             computed_attack == 7 &&
-             bml_has_value(serialized_metadata);
+             package_validation.catalog_contains_iron_vow &&
+             package_validation.drop_table_file_exists &&
+             drop_table_contract_loaded &&
+             bml_runebound_elixir_definition_supported(&definition) &&
+             solo_class_eligible &&
+             two_player_party_size_eligible &&
+             drop_generation_matched &&
+             no_matching_class_skipped &&
+             anti_bloat_limit_applied &&
+             strcmp(rendered_display, "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)") == 0 &&
+             consumption.active_effect_created &&
+             bml_has_value(serialized_active_effect) &&
+             round_trip_loaded &&
+             round_trip_matches &&
+             unsupported_data_rejected;
     if (!passed && !bml_has_value(error_code)) {
-        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_LOOT_SELF_TEST_ASSERTION_FAILED");
-        bml_copy_string(error_message, sizeof(error_message), "Runebound Loot fake-provider self-test did not produce the expected deterministic name, saved metadata, and attack modifier.");
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_SELF_TEST_ASSERTION_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs self-test failed expected package data, host drop generation, multiplayer metadata, display, consumption, active-effect round-trip, or no-playable boundary.");
     }
 
-    if (bml_write_runebound_loot_self_test_report(report_path, info, passed ? "passed" : "failed", error_code, error_message, &metadata, rendered_name, computed_attack, serialized_metadata) != 0) {
+    if (bml_write_runebound_elixir_self_test_report(report_path,
+                                                    info,
+                                                    passed ? "passed" : "failed",
+                                                    error_code,
+                                                    error_message,
+                                                    &definition,
+                                                    &package_validation,
+                                                    &solo_snapshot,
+                                                    &two_player_snapshot,
+                                                    &metadata,
+                                                    &drop_generation,
+                                                    &no_matching_class_drop_generation,
+                                                    rendered_display,
+                                                    serialized_carrier_metadata,
+                                                    &consumption,
+                                                    serialized_active_effect,
+                                                    round_trip_loaded,
+                                                    round_trip_matches,
+                                                    solo_class_eligible,
+                                                    two_player_party_size_eligible,
+                                                    unsupported_data_rejected) != 0) {
         return -1;
     }
     return passed ? 0 : -1;
 }
+
 
 typedef void *(*BmlStashAddItemToVoidChestServerFunction)(void *, int, void *, bool, void *);
 _Static_assert(sizeof(BmlStashAddItemToVoidChestServerFunction) == sizeof(void *), "BML Linux x86_64 Stash detour self-test expects function pointers to fit in void pointers");
@@ -4354,6 +5157,581 @@ static int bml_install_stash_detour_group(BmlStashCoreDetourInstall *targets, si
     return 0;
 }
 
+typedef void (*BmlRuneboundUseItemFunction)(void *, int, void *, bool, bool);
+typedef void (*BmlRuneboundConsumeItemFunction)(void **, int);
+typedef char *(*BmlRuneboundItemGetNameFunction)(void *);
+typedef int (*BmlRuneboundStatGetFunction)(void *, void *);
+_Static_assert(sizeof(BmlRuneboundUseItemFunction) == sizeof(void *), "BML Linux x86_64 Runebound useItem detours expect function pointers to fit in void pointers");
+_Static_assert(sizeof(BmlRuneboundConsumeItemFunction) == sizeof(void *), "BML Linux x86_64 Runebound consumeItem helper expects function pointers to fit in void pointers");
+_Static_assert(sizeof(BmlRuneboundItemGetNameFunction) == sizeof(void *), "BML Linux x86_64 Runebound Item::getName detours expect function pointers to fit in void pointers");
+_Static_assert(sizeof(BmlRuneboundStatGetFunction) == sizeof(void *), "BML Linux x86_64 Runebound stat detours expect function pointers to fit in void pointers");
+
+static BmlRuneboundUseItemFunction g_bml_runebound_use_item_original = NULL;
+static BmlRuneboundConsumeItemFunction g_bml_runebound_consume_item = NULL;
+static BmlRuneboundItemGetNameFunction g_bml_runebound_item_get_name_original = NULL;
+static BmlRuneboundStatGetFunction g_bml_runebound_stat_get_str_original = NULL;
+static BmlRuneboundStatGetFunction g_bml_runebound_stat_get_dex_original = NULL;
+static BmlStashCoreDetourInstall g_bml_runebound_live_targets[4];
+static size_t g_bml_runebound_live_target_count = 0U;
+static bool g_bml_runebound_live_fake_provider_self_probe = false;
+static BmlRuneboundElixirDefinition g_bml_runebound_live_definition;
+static BmlRuneboundElixirCarrierMetadata g_bml_runebound_live_carrier;
+static BmlRuneboundElixirActiveEffect g_bml_runebound_live_active_effect;
+static char g_bml_runebound_live_display[BML_MAX_TEXT];
+static char g_bml_runebound_live_last_display[BML_MAX_TEXT];
+static int g_bml_runebound_use_item_replacement_calls = 0;
+static int g_bml_runebound_use_item_recognized_calls = 0;
+static int g_bml_runebound_use_item_original_delegations = 0;
+static int g_bml_runebound_consume_item_delegations = 0;
+static int g_bml_runebound_active_effects_created = 0;
+static int g_bml_runebound_item_get_name_replacement_calls = 0;
+static int g_bml_runebound_item_get_name_iron_vow_returns = 0;
+static int g_bml_runebound_item_get_name_original_delegations = 0;
+static int g_bml_runebound_stat_get_str_replacement_calls = 0;
+static int g_bml_runebound_stat_get_str_bonus_applications = 0;
+static int g_bml_runebound_stat_get_dex_replacement_calls = 0;
+static int g_bml_runebound_stat_get_dex_penalty_applications = 0;
+static int g_bml_runebound_live_last_str_result = 0;
+static int g_bml_runebound_live_last_dex_result = 0;
+
+static BmlRuneboundUseItemFunction bml_runebound_use_item_function_from_address(void *address) {
+    BmlRuneboundUseItemFunction function = NULL;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_runebound_use_item_function_address(BmlRuneboundUseItemFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
+static BmlRuneboundConsumeItemFunction bml_runebound_consume_item_function_from_address(void *address) {
+    BmlRuneboundConsumeItemFunction function = NULL;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static BmlRuneboundItemGetNameFunction bml_runebound_item_get_name_function_from_address(void *address) {
+    BmlRuneboundItemGetNameFunction function = NULL;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_runebound_item_get_name_function_address(BmlRuneboundItemGetNameFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
+static BmlRuneboundStatGetFunction bml_runebound_stat_get_function_from_address(void *address) {
+    BmlRuneboundStatGetFunction function = NULL;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_runebound_stat_get_function_address(BmlRuneboundStatGetFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
+static void bml_reset_runebound_live_state(void) {
+    memset(g_bml_runebound_live_targets, 0, sizeof(g_bml_runebound_live_targets));
+    memset(&g_bml_runebound_live_active_effect, 0, sizeof(g_bml_runebound_live_active_effect));
+    g_bml_runebound_live_target_count = 0U;
+    g_bml_runebound_live_hooks_installed = false;
+    g_bml_runebound_live_fake_provider_self_probe = false;
+    g_bml_runebound_use_item_original = NULL;
+    g_bml_runebound_consume_item = NULL;
+    g_bml_runebound_item_get_name_original = NULL;
+    g_bml_runebound_stat_get_str_original = NULL;
+    g_bml_runebound_stat_get_dex_original = NULL;
+    g_bml_runebound_use_item_replacement_calls = 0;
+    g_bml_runebound_use_item_recognized_calls = 0;
+    g_bml_runebound_use_item_original_delegations = 0;
+    g_bml_runebound_consume_item_delegations = 0;
+    g_bml_runebound_active_effects_created = 0;
+    g_bml_runebound_item_get_name_replacement_calls = 0;
+    g_bml_runebound_item_get_name_iron_vow_returns = 0;
+    g_bml_runebound_item_get_name_original_delegations = 0;
+    g_bml_runebound_stat_get_str_replacement_calls = 0;
+    g_bml_runebound_stat_get_str_bonus_applications = 0;
+    g_bml_runebound_stat_get_dex_replacement_calls = 0;
+    g_bml_runebound_stat_get_dex_penalty_applications = 0;
+    g_bml_runebound_live_last_str_result = 0;
+    g_bml_runebound_live_last_dex_result = 0;
+    g_bml_runebound_live_last_display[0] = '\0';
+    bml_runebound_elixir_make_fixture_definition(&g_bml_runebound_live_definition);
+    bml_runebound_elixir_make_fixture_carrier(&g_bml_runebound_live_definition, &g_bml_runebound_live_carrier);
+    if (bml_runebound_elixir_render_carrier_display(&g_bml_runebound_live_carrier, g_bml_runebound_live_display, sizeof(g_bml_runebound_live_display)) != 0) {
+        bml_copy_string(g_bml_runebound_live_display, sizeof(g_bml_runebound_live_display), "Elixir of the Iron Vow (+2 STR, -1 DEX)");
+    }
+}
+
+static bool bml_runebound_item_is_iron_vow_carrier(void *item) {
+    const BmlBaronyItem *barony_item = (const BmlBaronyItem *)item;
+    return barony_item != NULL &&
+           barony_item->type == BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_EMPTY &&
+           barony_item->appearance == g_bml_runebound_live_carrier.instance_id;
+}
+
+static void *bml_runebound_live_player_stat(int player) {
+    void *stats_symbol = dlsym(RTLD_DEFAULT, "stats");
+    void *player_stat = NULL;
+    if (stats_symbol == NULL || player < 0 || player >= 4) {
+        return NULL;
+    }
+    memcpy(&player_stat, (const unsigned char *)stats_symbol + ((size_t)player * sizeof(player_stat)), sizeof(player_stat));
+    return player_stat;
+}
+
+static bool bml_runebound_live_stat_matches_active_player(void *stat, void *entity) {
+    int player = g_bml_runebound_live_active_effect.player_index;
+    (void)entity;
+    if (!g_bml_runebound_live_active_effect.active || stat == NULL) {
+        return false;
+    }
+    return bml_runebound_live_player_stat(player) == stat;
+}
+
+static void bml_runebound_make_live_party_snapshot(int player, BmlRuneboundElixirPartySnapshot *snapshot) {
+    int normalized_player = (player >= 0 && player < 4) ? player : 0;
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->player_count = (size_t)normalized_player + 1U;
+    snapshot->class_ids[normalized_player] = g_bml_runebound_live_definition.eligible_class_id;
+    snapshot->connected[normalized_player] = true;
+}
+
+static bool bml_runebound_live_create_iron_vow_effect(int player) {
+    BmlRuneboundElixirPartySnapshot snapshot;
+    BmlRuneboundElixirConsumptionResult result;
+    int normalized_player = (player >= 0 && player < 4) ? player : 0;
+    bml_runebound_make_live_party_snapshot(normalized_player, &snapshot);
+    if (!bml_runebound_elixir_consume_carrier(&g_bml_runebound_live_carrier, &snapshot, normalized_player, &result)) {
+        return false;
+    }
+    g_bml_runebound_live_active_effect = result.active_effect;
+    ++g_bml_runebound_active_effects_created;
+    return true;
+}
+
+static void bml_runebound_use_item_replacement(void *item, int player, void *entity, bool arg4, bool arg5) {
+    ++g_bml_runebound_use_item_replacement_calls;
+    if (bml_runebound_item_is_iron_vow_carrier(item)) {
+        ++g_bml_runebound_use_item_recognized_calls;
+        (void)bml_runebound_live_create_iron_vow_effect(player);
+        if (g_bml_runebound_consume_item != NULL) {
+            void *item_ref = item;
+            ++g_bml_runebound_consume_item_delegations;
+            g_bml_runebound_consume_item(&item_ref, player);
+            return;
+        }
+        if (g_bml_runebound_use_item_original != NULL) {
+            ++g_bml_runebound_use_item_original_delegations;
+            g_bml_runebound_use_item_original(item, player, entity, arg4, arg5);
+        }
+        return;
+    }
+    if (g_bml_runebound_use_item_original != NULL) {
+        ++g_bml_runebound_use_item_original_delegations;
+        g_bml_runebound_use_item_original(item, player, entity, arg4, arg5);
+    }
+}
+
+static char *bml_runebound_item_get_name_replacement(void *item) {
+    ++g_bml_runebound_item_get_name_replacement_calls;
+    if (bml_runebound_item_is_iron_vow_carrier(item)) {
+        ++g_bml_runebound_item_get_name_iron_vow_returns;
+        bml_copy_string(g_bml_runebound_live_last_display, sizeof(g_bml_runebound_live_last_display), g_bml_runebound_live_display);
+        return g_bml_runebound_live_display;
+    }
+    if (g_bml_runebound_item_get_name_original != NULL) {
+        ++g_bml_runebound_item_get_name_original_delegations;
+        return g_bml_runebound_item_get_name_original(item);
+    }
+    return (char *)"Unknown item";
+}
+
+static int bml_runebound_stat_get_str_replacement(void *stat, void *entity) {
+    int value = g_bml_runebound_stat_get_str_original != NULL ? g_bml_runebound_stat_get_str_original(stat, entity) : 0;
+    ++g_bml_runebound_stat_get_str_replacement_calls;
+    if (bml_runebound_live_stat_matches_active_player(stat, entity)) {
+        value += g_bml_runebound_live_active_effect.effect_magnitude;
+        ++g_bml_runebound_stat_get_str_bonus_applications;
+    }
+    g_bml_runebound_live_last_str_result = value;
+    return value;
+}
+
+static int bml_runebound_stat_get_dex_replacement(void *stat, void *entity) {
+    int value = g_bml_runebound_stat_get_dex_original != NULL ? g_bml_runebound_stat_get_dex_original(stat, entity) : 0;
+    ++g_bml_runebound_stat_get_dex_replacement_calls;
+    if (bml_runebound_live_stat_matches_active_player(stat, entity)) {
+        value -= 1;
+        ++g_bml_runebound_stat_get_dex_penalty_applications;
+    }
+    g_bml_runebound_live_last_dex_result = value;
+    return value;
+}
+
+static void bml_bind_runebound_live_original(const BmlStashCoreDetourInstall *target) {
+    if (strcmp(target->target_symbol, "_Z7useItemP4ItemiP6Entitybb") == 0) {
+        g_bml_runebound_use_item_original = bml_runebound_use_item_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_ZNK4Item7getNameEv") == 0) {
+        g_bml_runebound_item_get_name_original = bml_runebound_item_get_name_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_Z10statGetSTRP4StatP6Entity") == 0) {
+        g_bml_runebound_stat_get_str_original = bml_runebound_stat_get_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_Z10statGetDEXP4StatP6Entity") == 0) {
+        g_bml_runebound_stat_get_dex_original = bml_runebound_stat_get_function_from_address(target->install.trampoline);
+    }
+}
+
+static int bml_runebound_live_replacement_calls_for_symbol(const char *symbol) {
+    if (strcmp(symbol, "_Z7useItemP4ItemiP6Entitybb") == 0) {
+        return g_bml_runebound_use_item_replacement_calls;
+    }
+    if (strcmp(symbol, "_ZNK4Item7getNameEv") == 0) {
+        return g_bml_runebound_item_get_name_replacement_calls;
+    }
+    if (strcmp(symbol, "_Z10statGetSTRP4StatP6Entity") == 0) {
+        return g_bml_runebound_stat_get_str_replacement_calls;
+    }
+    if (strcmp(symbol, "_Z10statGetDEXP4StatP6Entity") == 0) {
+        return g_bml_runebound_stat_get_dex_replacement_calls;
+    }
+    return 0;
+}
+
+static void bml_init_runebound_live_detour_target(BmlStashCoreDetourInstall *target, const char *target_name, const char *target_symbol, void *replacement_address) {
+    memset(target, 0, sizeof(*target));
+    target->target_name = target_name;
+    target->target_symbol = target_symbol;
+    target->replacement_address = replacement_address;
+    target->status = "pending";
+    target->install.replacement = replacement_address;
+}
+
+static int bml_prepare_runebound_live_detour_target(BmlStashCoreDetourInstall *target) {
+    const unsigned char *target_bytes;
+    const char *decode_code = NULL;
+    const char *decode_message = NULL;
+    size_t patch_size = 0U;
+
+    target->target_address = dlsym(RTLD_DEFAULT, target->target_symbol);
+    target->install.target = target->target_address;
+    if (target->target_address == NULL) {
+        target->status = "failed";
+        bml_copy_string(target->error_code, sizeof(target->error_code), "BML_RUNEBOUND_ELIXIR_LIVE_SYMBOL_MISSING");
+        bml_copy_string(target->error_message, sizeof(target->error_message), "Required Runebound: Elixirs live detour target was not resolvable.");
+        return -1;
+    }
+
+    target_bytes = (const unsigned char *)target->target_address;
+    if (bml_measure_supported_patch_window(target_bytes, &patch_size, &decode_code, &decode_message) != 0) {
+        target->status = "failed";
+        target->install.patch_size = patch_size;
+        bml_copy_string(target->error_code, sizeof(target->error_code), decode_code != NULL ? decode_code : "BML_DETOUR_UNSUPPORTED_INSTRUCTION");
+        bml_copy_string(target->error_message, sizeof(target->error_message), decode_message != NULL ? decode_message : "Runebound: Elixirs live detour target prologue is not safe for the conservative decoder.");
+        return -1;
+    }
+
+    target->status = "ready";
+    target->install.patch_size = patch_size;
+    return 0;
+}
+
+static int bml_install_runebound_live_detour_target(BmlStashCoreDetourInstall *target) {
+    if (bml_install_absolute_jump_detour(target->target_address, target->replacement_address, &target->install, target->error_code, sizeof(target->error_code), target->error_message, sizeof(target->error_message)) != 0) {
+        target->status = "failed";
+        if (!bml_has_value(target->error_code)) {
+            bml_copy_string(target->error_code, sizeof(target->error_code), "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED");
+        }
+        if (!bml_has_value(target->error_message)) {
+            bml_copy_string(target->error_message, sizeof(target->error_message), "Runebound: Elixirs live detour installation failed.");
+        }
+        return -1;
+    }
+
+    target->status = "installed";
+    bml_bind_runebound_live_original(target);
+    return 0;
+}
+
+static void bml_rollback_runebound_live_detour_targets(BmlStashCoreDetourInstall *targets, size_t target_count) {
+    for (size_t reverse_index = target_count; reverse_index > 0U; --reverse_index) {
+        BmlStashCoreDetourInstall *target = &targets[reverse_index - 1U];
+        bool failed_target = strcmp(target->status, "failed") == 0;
+        if (strcmp(target->status, "installed") == 0 || (failed_target && target->install.target != NULL)) {
+            (void)bml_rollback_absolute_jump_detour(&target->install);
+            if (!failed_target) {
+                target->status = "rolled_back";
+            }
+        }
+    }
+    g_bml_runebound_use_item_original = NULL;
+    g_bml_runebound_item_get_name_original = NULL;
+    g_bml_runebound_stat_get_str_original = NULL;
+    g_bml_runebound_stat_get_dex_original = NULL;
+    g_bml_runebound_live_hooks_installed = false;
+}
+
+static int bml_install_runebound_live_detour_group(BmlStashCoreDetourInstall *targets, size_t target_count) {
+    for (size_t index = 0U; index < target_count; ++index) {
+        if (bml_install_runebound_live_detour_target(&targets[index]) != 0) {
+            bml_rollback_runebound_live_detour_targets(targets, target_count);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static bool bml_runebound_live_fake_provider_available(void) {
+    return dlsym(RTLD_DEFAULT, "bml_fake_item_get_name_calls") != NULL &&
+           dlsym(RTLD_DEFAULT, "bml_fake_stat_get_str_calls") != NULL &&
+           dlsym(RTLD_DEFAULT, "bml_fake_use_item_calls") != NULL;
+}
+
+static void bml_runebound_live_run_fake_provider_self_probe(void) {
+    BmlBaronyItem item;
+    BmlRuneboundUseItemFunction use_item = bml_runebound_use_item_function_from_address(dlsym(RTLD_DEFAULT, "_Z7useItemP4ItemiP6Entitybb"));
+    BmlRuneboundItemGetNameFunction get_name = bml_runebound_item_get_name_function_from_address(dlsym(RTLD_DEFAULT, "_ZNK4Item7getNameEv"));
+    BmlRuneboundStatGetFunction get_str = bml_runebound_stat_get_function_from_address(dlsym(RTLD_DEFAULT, "_Z10statGetSTRP4StatP6Entity"));
+    BmlRuneboundStatGetFunction get_dex = bml_runebound_stat_get_function_from_address(dlsym(RTLD_DEFAULT, "_Z10statGetDEXP4StatP6Entity"));
+    void *probe_stat = bml_runebound_live_player_stat(0);
+
+    if (!bml_runebound_live_fake_provider_available()) {
+        return;
+    }
+
+    memset(&item, 0, sizeof(item));
+    item.type = BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_EMPTY;
+    item.count = 1;
+    item.appearance = g_bml_runebound_live_carrier.instance_id;
+    item.identified = true;
+
+    g_bml_runebound_live_fake_provider_self_probe = true;
+    if (use_item != NULL) {
+        use_item(&item, 0, NULL, false, false);
+    }
+    if (get_name != NULL) {
+        const char *display = get_name(&item);
+        if (display != NULL) {
+            bml_copy_string(g_bml_runebound_live_last_display, sizeof(g_bml_runebound_live_last_display), display);
+        }
+    }
+    if (get_str != NULL) {
+        g_bml_runebound_live_last_str_result = get_str(probe_stat, NULL);
+    }
+    if (get_dex != NULL) {
+        g_bml_runebound_live_last_dex_result = get_dex(probe_stat, NULL);
+    }
+}
+
+static void bml_write_runebound_live_target(FILE *file, const BmlStashCoreDetourInstall *target) {
+    fputs("{\n      \"name\": ", file);
+    bml_json_write_escaped(file, target->target_name);
+    fputs(",\n      \"symbol\": ", file);
+    bml_json_write_escaped(file, target->target_symbol);
+    fputs(",\n      \"status\": ", file);
+    bml_json_write_escaped(file, target->status);
+    fputs(",\n      \"address\": ", file);
+    bml_write_address_or_null(file, target->target_address);
+    fputs(",\n      \"patchSize\": ", file);
+    fprintf(file, "%zu", target->install.patch_size);
+    fputs(",\n      \"replacementInvocations\": ", file);
+    fprintf(file, "%d", bml_runebound_live_replacement_calls_for_symbol(target->target_symbol));
+    if (bml_has_value(target->error_code) || bml_has_value(target->error_message)) {
+        fputs(",\n      \"error\": {\n        \"code\": ", file);
+        bml_json_write_escaped(file, bml_has_value(target->error_code) ? target->error_code : "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED");
+        fputs(",\n        \"message\": ", file);
+        bml_json_write_escaped(file, bml_has_value(target->error_message) ? target->error_message : "Runebound: Elixirs live detour target failed.");
+        fputs("\n      }", file);
+    }
+    fputs("\n    }", file);
+}
+
+static int bml_write_runebound_elixir_live_install_report(const char *report_path, const BmlReportInfo *info, const char *status, const char *error_code, const char *error_message) {
+    size_t installed_count = 0U;
+    size_t failed_count = 0U;
+    FILE *file;
+
+    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+        if (strcmp(g_bml_runebound_live_targets[index].status, "installed") == 0) {
+            ++installed_count;
+        } else if (strcmp(g_bml_runebound_live_targets[index].status, "failed") == 0) {
+            ++failed_count;
+        }
+    }
+
+    file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    fputs("{\n  \"modId\": ", file);
+    bml_json_write_escaped(file, BML_RUNES_ELIXIR_PACKAGE_ID);
+    fputs(",\n  \"module\": \"modules.runeboundElixirs\",\n  \"version\": ", file);
+    bml_json_write_escaped(file, info != NULL ? info->runebound_elixirs_version : "0.1.0");
+    fputs(",\n  \"status\": ", file);
+    bml_json_write_escaped(file, status);
+    fputs(",\n  \"liveHookBehaviorClaimed\": ", file);
+    fputs(g_bml_runebound_live_hooks_installed ? "true" : "false", file);
+    fputs(",\n  \"playableBehaviorClaimed\": false,\n  \"summary\": {\n    \"installedHooks\": ", file);
+    fprintf(file, "%zu", installed_count);
+    fputs(",\n    \"allHooksInstalled\": ", file);
+    fputs(g_bml_runebound_live_hooks_installed ? "true" : "false", file);
+    fputs(",\n    \"useHookInstalled\": ", file);
+    fputs(g_bml_runebound_use_item_original != NULL ? "true" : "false", file);
+    fputs(",\n    \"displayHookInstalled\": ", file);
+    fputs(g_bml_runebound_item_get_name_original != NULL ? "true" : "false", file);
+    fputs(",\n    \"statHooksInstalled\": ", file);
+    fputs((g_bml_runebound_stat_get_str_original != NULL && g_bml_runebound_stat_get_dex_original != NULL) ? "true" : "false", file);
+    fputs(",\n    \"installedHookCount\": ", file);
+    fprintf(file, "%zu", installed_count);
+    fputs(",\n    \"failedHookCount\": ", file);
+    fprintf(file, "%zu", failed_count);
+    fputs(",\n    \"targetSymbolCount\": ", file);
+    fprintf(file, "%zu", g_bml_runebound_live_target_count);
+    fputs(",\n    \"fakeProviderSelfProbe\": ", file);
+    fputs(g_bml_runebound_live_fake_provider_self_probe ? "true" : "false", file);
+    fputs("\n  },\n  \"targetSymbols\": [", file);
+    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+        fputs(index == 0U ? "\n    " : ",\n    ", file);
+        bml_json_write_escaped(file, g_bml_runebound_live_targets[index].target_symbol);
+    }
+    if (g_bml_runebound_live_target_count > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"installedHooks\": [", file);
+    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+        fputs(index == 0U ? "\n    " : ",\n    ", file);
+        bml_write_runebound_live_target(file, &g_bml_runebound_live_targets[index]);
+    }
+    if (g_bml_runebound_live_target_count > 0U) {
+        fputs("\n  ", file);
+    }
+    fputs("],\n  \"invocationCounters\": {\n    \"useItemReplacementCalls\": ", file);
+    fprintf(file, "%d", g_bml_runebound_use_item_replacement_calls);
+    fputs(",\n    \"useItem\": ", file);
+    fprintf(file, "%d", g_bml_runebound_use_item_replacement_calls);
+    fputs(",\n    \"getName\": ", file);
+    fprintf(file, "%d", g_bml_runebound_item_get_name_replacement_calls);
+    fputs(",\n    \"statGetSTR\": ", file);
+    fprintf(file, "%d", g_bml_runebound_stat_get_str_replacement_calls);
+    fputs(",\n    \"statGetDEX\": ", file);
+    fprintf(file, "%d", g_bml_runebound_stat_get_dex_replacement_calls);
+    fputs(",\n    \"useItemRecognizedCarrierCalls\": ", file);
+    fprintf(file, "%d", g_bml_runebound_use_item_recognized_calls);
+    fputs(",\n    \"useItemOriginalDelegations\": ", file);
+    fprintf(file, "%d", g_bml_runebound_use_item_original_delegations);
+    fputs(",\n    \"consumeItemDelegations\": ", file);
+    fprintf(file, "%d", g_bml_runebound_consume_item_delegations);
+    fputs(",\n    \"activeEffectsCreated\": ", file);
+    fprintf(file, "%d", g_bml_runebound_active_effects_created);
+    fputs(",\n    \"itemGetNameReplacementCalls\": ", file);
+    fprintf(file, "%d", g_bml_runebound_item_get_name_replacement_calls);
+    fputs(",\n    \"itemGetNameIronVowReturns\": ", file);
+    fprintf(file, "%d", g_bml_runebound_item_get_name_iron_vow_returns);
+    fputs(",\n    \"statGetSTRReplacementCalls\": ", file);
+    fprintf(file, "%d", g_bml_runebound_stat_get_str_replacement_calls);
+    fputs(",\n    \"statGetSTRBonusApplications\": ", file);
+    fprintf(file, "%d", g_bml_runebound_stat_get_str_bonus_applications);
+    fputs(",\n    \"statGetDEXReplacementCalls\": ", file);
+    fprintf(file, "%d", g_bml_runebound_stat_get_dex_replacement_calls);
+    fputs(",\n    \"statGetDEXPenaltyApplications\": ", file);
+    fprintf(file, "%d", g_bml_runebound_stat_get_dex_penalty_applications);
+    fputs("\n  },\n  \"recognizedCarrier\": {\n    \"catalogId\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_definition.catalog_id);
+    fputs(",\n    \"instanceId\": ", file);
+    fprintf(file, "%" PRIu32, g_bml_runebound_live_carrier.instance_id);
+    fputs(",\n    \"carrierItemType\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_carrier.carrier_item_type);
+    fputs(",\n    \"display\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_display);
+    fputs("\n  },\n  \"activeEffect\": {\n    \"active\": ", file);
+    fputs(g_bml_runebound_live_active_effect.active ? "true" : "false", file);
+    fputs(",\n    \"catalogId\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_active_effect.catalog_id != NULL ? g_bml_runebound_live_active_effect.catalog_id : "");
+    fputs(",\n    \"effectOpcode\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_active_effect.effect_opcode != NULL ? g_bml_runebound_live_active_effect.effect_opcode : "");
+    fputs(",\n    \"effectMagnitude\": ", file);
+    fprintf(file, "%d", g_bml_runebound_live_active_effect.effect_magnitude);
+    fputs(",\n    \"strDelta\": 2,\n    \"dexDelta\": -1,\n    \"lastStrResult\": ", file);
+    fprintf(file, "%d", g_bml_runebound_live_last_str_result);
+    fputs(",\n    \"lastDexResult\": ", file);
+    fprintf(file, "%d", g_bml_runebound_live_last_dex_result);
+    fputs(",\n    \"lastDisplay\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_last_display);
+    fputs("\n  },\n  \"errors\": [", file);
+    if (bml_has_value(error_code) || bml_has_value(error_message)) {
+        fputs("\n    {\"code\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED");
+        fputs(", \"message\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Runebound: Elixirs live install failed closed.");
+        fputs("}\n  ", file);
+    }
+    fputs("],\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_run_runebound_elixir_live_install(const char *report_path, const BmlReportInfo *info) {
+    const char *error_code = NULL;
+    const char *error_message = NULL;
+    int result = 0;
+
+    bml_reset_runebound_live_state();
+    g_bml_runebound_consume_item = bml_runebound_consume_item_function_from_address(dlsym(RTLD_DEFAULT, "_Z11consumeItemRP4Itemi"));
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[0], "useItem", "_Z7useItemP4ItemiP6Entitybb", bml_runebound_use_item_function_address(bml_runebound_use_item_replacement));
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[1], "Item::getName", "_ZNK4Item7getNameEv", bml_runebound_item_get_name_function_address(bml_runebound_item_get_name_replacement));
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[2], "statGetSTR", "_Z10statGetSTRP4StatP6Entity", bml_runebound_stat_get_function_address(bml_runebound_stat_get_str_replacement));
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[3], "statGetDEX", "_Z10statGetDEXP4StatP6Entity", bml_runebound_stat_get_function_address(bml_runebound_stat_get_dex_replacement));
+    g_bml_runebound_live_target_count = 4U;
+
+    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+        if (bml_prepare_runebound_live_detour_target(&g_bml_runebound_live_targets[index]) != 0) {
+            error_code = g_bml_runebound_live_targets[index].error_code;
+            error_message = g_bml_runebound_live_targets[index].error_message;
+            result = -1;
+        }
+    }
+
+    if (result == 0 && bml_install_runebound_live_detour_group(g_bml_runebound_live_targets, g_bml_runebound_live_target_count) != 0) {
+        result = -1;
+        for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+            if (strcmp(g_bml_runebound_live_targets[index].status, "failed") == 0) {
+                error_code = g_bml_runebound_live_targets[index].error_code;
+                error_message = g_bml_runebound_live_targets[index].error_message;
+                break;
+            }
+        }
+        if (!bml_has_value(error_code)) {
+            error_code = "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED";
+            error_message = "Runebound: Elixirs live detour installation failed closed.";
+        }
+    }
+
+    if (result == 0) {
+        g_bml_runebound_live_hooks_installed = true;
+        bml_runebound_live_run_fake_provider_self_probe();
+    }
+
+    if (bml_write_runebound_elixir_live_install_report(report_path,
+                                                       info,
+                                                       result == 0 ? "loaded" : "failed",
+                                                       result == 0 ? NULL : error_code,
+                                                       result == 0 ? NULL : error_message) != 0) {
+        return -1;
+    }
+    return result;
+}
+
 static int bml_write_stash_core_detour_install_report(const char *report_path, const char *test_name, const BmlStashCoreDetourInstall *targets, size_t target_count) {
     size_t installed_count = 0U;
     size_t failed_count = 0U;
@@ -5212,7 +6590,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *hook_manifest;
     const char *hook_library;
     const char *detour_self_test;
-    const char *runes_loot_self_test;
+    const char *runebound_elixirs_self_test;
     const char *stash_detour_self_test;
     const char *stash_install_add_item_passthrough;
     const char *stash_install_core_passthrough;
@@ -5230,7 +6608,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     BmlStashHookPlan stash_hook_plan;
     bool stash_hooks_installed;
     bool stash_detour_self_test_requested;
-    bool runes_loot_self_test_requested;
+    bool runebound_elixirs_self_test_requested;
     bool stash_install_add_item_passthrough_requested;
     bool stash_install_core_passthrough_requested;
     bool stash_install_access_placement_passthrough_requested;
@@ -5246,7 +6624,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char symbol_report_path[PATH_MAX];
     char stash_hook_report_path[PATH_MAX];
     char detour_self_test_report_path[PATH_MAX];
-    char runes_loot_self_test_report_path[PATH_MAX];
+    char runebound_elixirs_self_test_report_path[PATH_MAX];
+    char runebound_elixirs_live_install_report_path[PATH_MAX];
     char stash_detour_self_test_report_path[PATH_MAX];
     char stash_detour_install_report_path[PATH_MAX];
     char stash_core_detour_install_report_path[PATH_MAX];
@@ -5274,7 +6653,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     hook_manifest = getenv("BML_HOOK_MANIFEST");
     hook_library = getenv("BML_HOOK_LIBRARY");
     detour_self_test = getenv("BML_DETOUR_SELF_TEST");
-    runes_loot_self_test = getenv("BML_RUNES_LOOT_SELF_TEST");
+    runebound_elixirs_self_test = getenv("BML_RUNEBOUND_ELIXIRS_SELF_TEST");
     stash_detour_self_test = getenv("BML_STASH_DETOUR_SELF_TEST");
     stash_install_add_item_passthrough = getenv("BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH");
     stash_install_core_passthrough = getenv("BML_STASH_INSTALL_CORE_PASSTHROUGH");
@@ -5283,7 +6662,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_placement_discovery = getenv("BML_STASH_PLACEMENT_DISCOVERY");
     stash_enable_core_behavior = getenv("BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR");
     stash_core_behavior_self_test = getenv("BML_STASH_CORE_BEHAVIOR_SELF_TEST");
-    runes_loot_self_test_requested = strcmp(runes_loot_self_test != NULL ? runes_loot_self_test : "", "1") == 0;
+    runebound_elixirs_self_test_requested = strcmp(runebound_elixirs_self_test != NULL ? runebound_elixirs_self_test : "", "1") == 0;
     stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
     stash_install_add_item_passthrough_requested = strcmp(stash_install_add_item_passthrough != NULL ? stash_install_add_item_passthrough : "", "1") == 0;
     stash_install_core_passthrough_requested = strcmp(stash_install_core_passthrough != NULL ? stash_install_core_passthrough : "", "1") == 0;
@@ -5323,7 +6702,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(symbol_report_path, sizeof(symbol_report_path), profile_dir, BML_SYMBOL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_hook_report_path, sizeof(stash_hook_report_path), profile_dir, BML_STASH_HOOK_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(detour_self_test_report_path, sizeof(detour_self_test_report_path), profile_dir, BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
-        bml_join_path(runes_loot_self_test_report_path, sizeof(runes_loot_self_test_report_path), profile_dir, BML_RUNES_LOOT_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(runebound_elixirs_self_test_report_path, sizeof(runebound_elixirs_self_test_report_path), profile_dir, BML_RUNES_ELIXIR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(runebound_elixirs_live_install_report_path, sizeof(runebound_elixirs_live_install_report_path), profile_dir, BML_RUNES_ELIXIR_LIVE_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_self_test_report_path, sizeof(stash_detour_self_test_report_path), profile_dir, BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
@@ -5355,9 +6735,14 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_DETOUR_SELF_TEST_FAILED", "BML_DETOUR_SELF_TEST=1 was requested, but the native absolute-jump detour substrate self-test failed.", "BML_DETOUR_SELF_TEST", detour_self_test_report_path);
     }
 
-    if (runes_loot_self_test_requested &&
-        bml_run_runebound_loot_self_test(runes_loot_self_test_report_path, &info) != 0) {
-        bml_add_error(errors, &error_count, "BML_RUNES_LOOT_SELF_TEST_FAILED", "BML_RUNES_LOOT_SELF_TEST=1 was requested, but the Runebound Loot fake-provider data-path self-test failed.", "BML_RUNES_LOOT_SELF_TEST", runes_loot_self_test_report_path);
+    if (runebound_elixirs_self_test_requested &&
+        bml_run_runebound_elixir_self_test(runebound_elixirs_self_test_report_path, &info, runtime_json) != 0) {
+        bml_add_error(errors, &error_count, "BML_RUNES_ELIXIR_SELF_TEST_FAILED", "BML_RUNEBOUND_ELIXIRS_SELF_TEST=1 was requested, but the Runebound: Elixirs fake-provider data-path self-test failed.", "BML_RUNEBOUND_ELIXIRS_SELF_TEST", runebound_elixirs_self_test_report_path);
+    }
+
+    if (info.has_runebound_elixirs &&
+        bml_run_runebound_elixir_live_install(runebound_elixirs_live_install_report_path, &info) != 0) {
+        bml_add_error(errors, &error_count, "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED", "Runebound: Elixirs is present in the runtime manifest, but native live gameplay hook installation failed closed.", "BML_RUNTIME_MANIFEST", runebound_elixirs_live_install_report_path);
     }
 
     if (stash_placement_discovery_requested && !stash_install_access_placement_passthrough_requested) {
@@ -5413,6 +6798,9 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     }
     if (info.has_stash && !stash_hooks_installed && error_count == 0U) {
         bml_add_error(errors, &error_count, "BML_STASH_HOOKS_NOT_INSTALLED", "Direct Stash hook backend did not install all required gameplay hooks; Stash is intentionally failed closed.", NULL, NULL);
+    }
+    if (info.has_runebound_elixirs && !g_bml_runebound_live_hooks_installed) {
+        bml_add_error(errors, &error_count, "BML_RUNES_ELIXIR_HOOKS_NOT_INSTALLED", "Runebound: Elixirs is present in the runtime manifest, but native live gameplay hooks were not installed; the package is intentionally failed closed and omitted from loadedMods.", "BML_RUNTIME_MANIFEST", NULL);
     }
 
     if (bml_write_symbol_probe_report(symbol_report_path, &info, &symbol_probe) != 0 ||

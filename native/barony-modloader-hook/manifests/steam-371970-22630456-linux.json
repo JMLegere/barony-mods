@@ -41,11 +41,15 @@
       "version": "0.1.0"
     },
     {
-      "id": "item_instance_metadata",
+      "id": "elixir_item_metadata",
       "version": "0.1.0"
     },
     {
-      "id": "loot_affix_rolls",
+      "id": "elixir_drop_generation",
+      "version": "0.1.0"
+    },
+    {
+      "id": "elixir_consumption",
       "version": "0.1.0"
     },
     {
@@ -53,11 +57,11 @@
       "version": "0.1.0"
     },
     {
-      "id": "save_item_metadata",
+      "id": "active_elixir_effect_state",
       "version": "0.1.0"
     },
     {
-      "id": "weapon_attack_modifier",
+      "id": "active_elixir_effect_application",
       "version": "0.1.0"
     }
   ],
@@ -239,6 +243,118 @@
       ]
     },
     {
+      "id": "item_level_curve",
+      "kind": "function",
+      "mangledSymbol": "_Z14itemLevelCurve8CategoryiiR9BaronyRNG",
+      "demangledLabel": "itemLevelCurve(Category, int, int, BaronyRNG&)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "item_level_curve_entity",
+      "kind": "function",
+      "mangledSymbol": "_Z20itemLevelCurveEntityR6Entity8CategoryiiR9BaronyRNG",
+      "demangledLabel": "itemLevelCurveEntity(Entity&, Category, int, int, BaronyRNG&)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "item_level_curve_post_process",
+      "kind": "function",
+      "mangledSymbol": "_Z25itemLevelCurvePostProcessP6EntityP4ItemR9BaronyRNGiPiS5_",
+      "demangledLabel": "itemLevelCurvePostProcess(Entity*, Item*, BaronyRNG&, int, int*, int*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_item_metadata",
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "drop_item_monster",
+      "kind": "function",
+      "mangledSymbol": "_Z15dropItemMonsterP4ItemP6EntityP4Stats",
+      "demangledLabel": "dropItemMonster(Item*, Entity*, Stat*, short)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "use_item",
+      "kind": "function",
+      "mangledSymbol": "_Z7useItemP4ItemiP6Entitybb",
+      "demangledLabel": "useItem(Item*, int, Entity*, bool, bool)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_consumption",
+        "active_elixir_effect_state"
+      ]
+    },
+    {
+      "id": "consume_item",
+      "kind": "function",
+      "mangledSymbol": "_Z11consumeItemRP4Itemi",
+      "demangledLabel": "consumeItem(Item*&, int)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_consumption"
+      ]
+    },
+    {
+      "id": "item_get_name",
+      "kind": "function",
+      "mangledSymbol": "_ZNK4Item7getNameEv",
+      "demangledLabel": "Item::getName() const",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "item_name_tooltip_rendering"
+      ]
+    },
+    {
+      "id": "stat_get_str",
+      "kind": "function",
+      "mangledSymbol": "_Z10statGetSTRP4StatP6Entity",
+      "demangledLabel": "statGetSTR(Stat*, Entity*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
+      "id": "stat_get_dex",
+      "kind": "function",
+      "mangledSymbol": "_Z10statGetDEXP4StatP6Entity",
+      "demangledLabel": "statGetDEX(Stat*, Entity*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
+      "id": "stat_get_chr",
+      "kind": "function",
+      "mangledSymbol": "_Z10statGetCHRP4StatP6Entity",
+      "demangledLabel": "statGetCHR(Stat*, Entity*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
+      "id": "item_armor_get_ac",
+      "kind": "function",
+      "mangledSymbol": "_ZNK4Item10armorGetACEPK4Stat",
+      "demangledLabel": "Item::armorGetAC(Stat const*) const",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
       "id": "list_free_all",
       "kind": "function",
       "mangledSymbol": "_Z12list_FreeAllP6list_t",
@@ -343,6 +459,28 @@
       ]
     },
     {
+      "id": "client_classes",
+      "kind": "data",
+      "mangledSymbol": "client_classes",
+      "demangledLabel": "client_classes",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation",
+        "multiplayer_version_metadata"
+      ]
+    },
+    {
+      "id": "client_disconnected",
+      "kind": "data",
+      "mangledSymbol": "client_disconnected",
+      "demangledLabel": "client_disconnected",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation",
+        "multiplayer_version_metadata"
+      ]
+    },
+    {
       "id": "opened_chest",
       "kind": "data",
       "mangledSymbol": "openedChest",
@@ -389,54 +527,125 @@
   "notes": [
     "hookTargets mirror required Stash gameplay capabilities for the linux-x86_64-direct-stash-detour backend; production manifests load with failClosed=false when the required target set is installed, while unsupported builds or missing symbols/targets still fail closed.",
     "The prompt-scoped target set includes uidToEntity, Language::get, and selectedEntity so selected-entity and hover-tooltip prompts can be scoped to framework Stash access points.",
-    "Static readiness remains conservative: it proves 42 ready, 0 blocked, and 0 missing targets across 30 required symbols, not full player-facing scenario coverage."
+    "Static readiness remains conservative for Stash: it proves 42 ready, 0 blocked, and 0 missing targets across 30 required symbols, not full player-facing scenario coverage.",
+    "Runebound: Elixirs target notes are scaffold-only for fake-provider/self-test planning; this manifest does not install live elixir generation, consumption, display, persistence, party, stat, or armor hooks."
   ],
-  "runeboundLootSymbolNotes": [
+  "runeboundElixirTargetNotes": [
     {
-      "capability": "item_instance_metadata",
-      "targetIntent": "Item instance metadata sidecar around item creation/postprocess and save/load boundaries.",
+      "capability": "elixir_item_metadata",
+      "targetIntent": "Attach BML elixir carrier metadata to POTION_EMPTY item instances created by future verified item postprocess/drop-generation hooks.",
+      "targetSymbolIds": [
+        "new_item",
+        "item_level_curve_post_process"
+      ],
       "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
+      "symbolStatus": "candidate_exports_identified",
       "installStatus": "not_installed",
       "requiredForStash": false
     },
     {
-      "capability": "loot_affix_rolls",
-      "targetIntent": "Deterministic affix roll attachment during loot/item postprocess.",
+      "capability": "elixir_drop_generation",
+      "targetIntent": "Host-side deterministic elixir drop selection at item level-curve/postprocess boundaries, filtered by catalog class and party-size eligibility.",
+      "targetSymbolIds": [
+        "item_level_curve",
+        "item_level_curve_entity",
+        "item_level_curve_post_process",
+        "drop_item_monster",
+        "new_item",
+        "map_rng",
+        "map_server_rng"
+      ],
       "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
+      "symbolStatus": "candidate_exports_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    },
+    {
+      "capability": "elixir_drop_generation",
+      "targetIntent": "Read present player slots and class IDs from client_classes/client_disconnected plus multiplayer/clientnum to constrain solo and co-op elixir eligibility.",
+      "targetSymbolIds": [
+        "client_classes",
+        "client_disconnected",
+        "multiplayer",
+        "clientnum",
+        "stats"
+      ],
+      "analysisStatus": "scaffold",
+      "symbolStatus": "candidate_exports_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    },
+    {
+      "capability": "elixir_consumption",
+      "targetIntent": "Intercept useItem for BML-marked POTION_EMPTY elixir carriers, then delegate item decrement/free/paper-doll updates through consumeItem-equivalent semantics.",
+      "targetSymbolIds": [
+        "use_item",
+        "consume_item"
+      ],
+      "analysisStatus": "scaffold",
+      "symbolStatus": "candidate_exports_identified",
       "installStatus": "not_installed",
       "requiredForStash": false
     },
     {
       "capability": "item_name_tooltip_rendering",
-      "targetIntent": "Item name and tooltip rendering hook points for affix names.",
+      "targetIntent": "Render marked elixir carriers with catalog display names and short tradeoff text while leaving unmarked POTION_EMPTY items vanilla.",
+      "targetSymbolIds": [
+        "item_get_name",
+        "language_get"
+      ],
       "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
+      "symbolStatus": "candidate_exports_identified",
       "installStatus": "not_installed",
       "requiredForStash": false
     },
     {
-      "capability": "save_item_metadata",
-      "targetIntent": "Save/load metadata persistence for Runebound Loot item instance records.",
+      "capability": "active_elixir_effect_state",
+      "targetIntent": "Persist elixir carrier metadata and active effect sidecar state with package/catalog checksum metadata; unsupported state must fail closed.",
+      "targetSymbolIds": [],
       "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
+      "symbolStatus": "sidecar_surface_not_symbol_bound",
       "installStatus": "not_installed",
       "requiredForStash": false
     },
     {
-      "capability": "weapon_attack_modifier",
-      "targetIntent": "Weapon attack calculation modifier hook point for affix attack bonuses.",
+      "capability": "active_elixir_effect_application",
+      "targetIntent": "First active-effect stat hook candidates for authored STR/DEX/CHR modifiers applied only to verified active elixir state.",
+      "targetSymbolIds": [
+        "stat_get_str",
+        "stat_get_dex",
+        "stat_get_chr"
+      ],
       "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
+      "symbolStatus": "candidate_exports_identified",
       "installStatus": "not_installed",
       "requiredForStash": false
+    },
+    {
+      "capability": "active_elixir_effect_application",
+      "targetIntent": "First active-effect armor hook candidate for authored armor AC modifiers applied only to verified active elixir state.",
+      "targetSymbolIds": [
+        "item_armor_get_ac"
+      ],
+      "analysisStatus": "scaffold",
+      "symbolStatus": "candidate_exports_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false,
+      "notes": [
+        "First armor effect hook candidate covers authored armor AC modifiers from verified active elixir state; no armor mutation is installed."
+      ]
     },
     {
       "capability": "multiplayer_version_metadata",
-      "targetIntent": "Runebound Loot package/version metadata for future multiplayer compatibility gates.",
+      "targetIntent": "Runebound: Elixirs package version, catalog checksum, active-effect schema, and capability metadata for future multiplayer compatibility gates.",
+      "targetSymbolIds": [
+        "multiplayer",
+        "clientnum",
+        "client_classes",
+        "client_disconnected"
+      ],
       "analysisStatus": "scaffold",
-      "symbolStatus": "uses_existing_metadata_surface",
+      "symbolStatus": "uses_existing_metadata_surface_with_candidate_party_fields",
       "installStatus": "not_installed",
       "requiredForStash": false
     }
@@ -535,81 +744,168 @@
       "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
     },
     {
-      "id": "runebound_loot_item_postprocess_metadata",
-      "capability": "item_instance_metadata",
+      "id": "runebound_elixir_carrier_metadata",
+      "capability": "elixir_item_metadata",
       "required": false,
-      "targetSymbolIds": [],
+      "targetSymbolIds": [
+        "new_item",
+        "item_level_curve_post_process"
+      ],
       "installStrategy": "analyze-scaffold-only",
       "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
       "claimBoundary": "future-target-identification-only",
       "notes": [
-        "Runebound Loot item metadata hooks are not installed by this manifest; BML owns any future runtime implementation after installed-executable symbols are verified."
+        "Runebound: Elixirs carrier metadata hooks are not installed by this manifest; fake-provider reports may exercise metadata serialization without claiming live gameplay support."
       ]
     },
     {
-      "id": "runebound_loot_affix_rolls",
-      "capability": "loot_affix_rolls",
+      "id": "runebound_elixir_drop_generation",
+      "capability": "elixir_drop_generation",
       "required": false,
-      "targetSymbolIds": [],
+      "targetSymbolIds": [
+        "item_level_curve",
+        "item_level_curve_entity",
+        "item_level_curve_post_process",
+        "drop_item_monster",
+        "new_item",
+        "map_rng",
+        "map_server_rng"
+      ],
       "installStrategy": "analyze-scaffold-only",
       "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
       "claimBoundary": "future-target-identification-only",
       "notes": [
-        "Affix roll hook points are scaffolded for analysis only and are not required for Stash."
+        "Item postprocess/drop-generation hooks are scaffolded for future host-side elixir rolls only; no live item generation behavior is installed."
       ]
     },
     {
-      "id": "runebound_loot_name_tooltip_rendering",
-      "capability": "item_name_tooltip_rendering",
+      "id": "runebound_elixir_party_snapshot",
+      "capability": "elixir_drop_generation",
       "required": false,
-      "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
-      "notes": [
-        "Name and tooltip rendering hooks are intentionally not installed; the native self-test covers only deterministic fake-provider rendering."
-      ]
-    },
-    {
-      "id": "runebound_loot_save_item_metadata",
-      "capability": "save_item_metadata",
-      "required": false,
-      "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
-      "notes": [
-        "Save metadata hooks are scaffolded for future symbol analysis only."
-      ]
-    },
-    {
-      "id": "runebound_loot_weapon_attack_modifier",
-      "capability": "weapon_attack_modifier",
-      "required": false,
-      "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
-      "notes": [
-        "Weapon attack modifier hooks are not installed; the native self-test covers only base-plus-affix arithmetic."
-      ]
-    },
-    {
-      "id": "runebound_loot_multiplayer_version_metadata",
-      "capability": "multiplayer_version_metadata",
-      "required": false,
-      "targetSymbolIds": [],
+      "targetSymbolIds": [
+        "client_classes",
+        "client_disconnected",
+        "multiplayer",
+        "clientnum",
+        "stats"
+      ],
       "installStrategy": "metadata-scaffold-only",
       "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-runtime-party-filtering-only",
+      "notes": [
+        "client_classes and client_disconnected are candidate party-snapshot data surfaces for class and connection filtering; no live drop filtering is installed."
+      ]
+    },
+    {
+      "id": "runebound_elixir_use_item",
+      "capability": "elixir_consumption",
+      "required": false,
+      "targetSymbolIds": [
+        "use_item"
+      ],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-target-identification-only",
+      "notes": [
+        "useItem is the candidate intercept point for marked POTION_EMPTY elixir carriers before vanilla empty-bottle handling; no live consumption behavior is installed."
+      ]
+    },
+    {
+      "id": "runebound_elixir_consume_item",
+      "capability": "elixir_consumption",
+      "required": false,
+      "targetSymbolIds": [
+        "consume_item"
+      ],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-consumption-semantics-only",
+      "notes": [
+        "consumeItem is recorded as the decrement/free/paper-doll update surface to preserve Barony-equivalent item consumption if useItem is later installed."
+      ]
+    },
+    {
+      "id": "runebound_elixir_display_name",
+      "capability": "item_name_tooltip_rendering",
+      "required": false,
+      "targetSymbolIds": [
+        "item_get_name",
+        "language_get"
+      ],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-target-identification-only",
+      "notes": [
+        "Display/name hooks are scaffolded for catalog-backed elixir carrier names and tradeoff text; unmarked POTION_EMPTY items remain vanilla until hooks are truly installed."
+      ]
+    },
+    {
+      "id": "runebound_elixir_sidecar_state",
+      "capability": "active_elixir_effect_state",
+      "required": false,
+      "targetSymbolIds": [],
+      "installStrategy": "sidecar-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-active-effect-state-only",
+      "notes": [
+        "Active elixir effect sidecar persistence is scaffolded for catalog/package checksum state; no live load/save mutation is installed."
+      ]
+    },
+    {
+      "id": "runebound_elixir_stat_effect_hooks",
+      "capability": "active_elixir_effect_application",
+      "required": false,
+      "targetSymbolIds": [
+        "stat_get_str",
+        "stat_get_dex",
+        "stat_get_chr"
+      ],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-active-effect-application-only",
+      "notes": [
+        "First stat effect hook candidates cover authored STR/DEX/CHR modifiers from verified active elixir state; no stat mutation is installed."
+      ]
+    },
+    {
+      "id": "runebound_elixir_armor_effect_hooks",
+      "capability": "active_elixir_effect_application",
+      "required": false,
+      "targetSymbolIds": [
+        "item_armor_get_ac"
+      ],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-active-effect-application-only",
+      "notes": [
+        "First armor effect hook candidate covers authored armor AC modifiers from verified active elixir state; no armor mutation is installed."
+      ]
+    },
+    {
+      "id": "runebound_elixir_multiplayer_version_metadata",
+      "capability": "multiplayer_version_metadata",
+      "required": false,
+      "targetSymbolIds": [
+        "multiplayer",
+        "clientnum",
+        "client_classes",
+        "client_disconnected"
+      ],
+      "installStrategy": "metadata-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
       "claimBoundary": "future-runtime-metadata-only",
       "notes": [
-        "Runtime report metadata can recognize jml.runebound-loot, but no live multiplayer compatibility behavior is claimed."
+        "Runtime report metadata can recognize jml.runebound-elixirs as Runebound: Elixirs, but no live multiplayer compatibility behavior is claimed."
       ]
     }
   ]

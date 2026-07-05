@@ -17,40 +17,76 @@
     "contract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version"],
+      "required": [
+        "id",
+        "version"
+      ],
       "properties": {
-        "id": { "const": "bml-runtime-contract" },
-        "version": { "$ref": "#/$defs/version" }
+        "id": {
+          "const": "bml-runtime-contract"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
       }
     },
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version", "strategy"],
+      "required": [
+        "id",
+        "version",
+        "strategy"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "version": { "$ref": "#/$defs/version" },
-        "strategy": { "type": "string", "minLength": 1 },
-        "gameRevision": { "type": "string", "minLength": 1 },
-        "executable": { "type": "string", "minLength": 1 }
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "strategy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gameRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
-    "profileId": { "$ref": "#/$defs/id" },
+    "profileId": {
+      "$ref": "#/$defs/id"
+    },
     "status": {
       "type": "string",
-      "enum": ["loaded", "failed"]
+      "enum": [
+        "loaded",
+        "failed"
+      ]
     },
     "loadedMods": {
+      "description": "Per-package runtime outcomes. Required packages that cannot fully load must be reported as failed or skipped, not as loaded with scaffold-only evidence.",
       "type": "array",
-      "items": { "$ref": "#/$defs/loadedMod" }
+      "items": {
+        "$ref": "#/$defs/loadedMod"
+      }
     },
     "warnings": {
       "type": "array",
-      "items": { "$ref": "#/$defs/reportError" }
+      "items": {
+        "$ref": "#/$defs/reportError"
+      }
     },
     "errors": {
       "type": "array",
-      "items": { "$ref": "#/$defs/reportError" }
+      "items": {
+        "$ref": "#/$defs/reportError"
+      }
     },
     "reportedAt": {
       "type": "string",
@@ -73,13 +109,28 @@
     "loadedMod": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version", "status", "capabilities", "modules"],
+      "required": [
+        "id",
+        "version",
+        "status",
+        "capabilities",
+        "modules"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/packageId" },
-        "version": { "$ref": "#/$defs/version" },
+        "id": {
+          "$ref": "#/$defs/packageId"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
         "status": {
+          "description": "Package outcome; scaffolded is intentionally not a status.",
           "type": "string",
-          "enum": ["loaded", "failed", "skipped"]
+          "enum": [
+            "loaded",
+            "failed",
+            "skipped"
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -91,7 +142,13 @@
               "void_chest_binding",
               "placement_lobby",
               "placement_shop",
-              "multiplayer_version_metadata"
+              "multiplayer_version_metadata",
+              "item_name_tooltip_rendering",
+              "elixir_item_metadata",
+              "elixir_drop_generation",
+              "elixir_consumption",
+              "active_elixir_effect_state",
+              "active_elixir_effect_application"
             ]
           }
         },
@@ -104,16 +161,134 @@
               "persistentInventories",
               "voidChestBindings",
               "placements",
-              "multiplayer"
+              "multiplayer",
+              "runeboundElixirs",
+              "modules.runeboundElixirs"
             ]
           }
+        },
+        "liveInstallReport": {
+          "type": "string",
+          "minLength": 1
+        },
+        "liveHookBehaviorClaimed": {
+          "type": "boolean"
+        },
+        "evidenceScope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claimBoundary": {
+          "type": "string",
+          "enum": [
+            "liveHookBehaviorClaimed",
+            "fake-provider-live-hook-install"
+          ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "jml.runebound-elixirs"
+              },
+              "status": {
+                "const": "loaded"
+              }
+            },
+            "required": [
+              "id",
+              "status"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "liveInstallReport",
+                  "liveHookBehaviorClaimed",
+                  "evidenceScope"
+                ]
+              },
+              {
+                "required": [
+                  "claimBoundary"
+                ],
+                "properties": {
+                  "claimBoundary": {
+                    "const": "liveHookBehaviorClaimed"
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "capabilities": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "elixir_item_metadata"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "elixir_drop_generation"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "elixir_consumption"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "active_elixir_effect_state"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "active_elixir_effect_application"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "item_name_tooltip_rendering"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "multiplayer_version_metadata"
+                    }
+                  }
+                ]
+              },
+              "modules": {
+                "contains": {
+                  "const": "runeboundElixirs"
+                }
+              },
+              "liveInstallReport": {
+                "const": "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
+              },
+              "liveHookBehaviorClaimed": {
+                "const": true
+              },
+              "evidenceScope": {
+                "const": "fake-provider-live-hook-install"
+              }
+            }
+          }
+        }
+      ]
     },
     "reportError": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["code", "severity", "message"],
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
       "properties": {
         "code": {
           "type": "string",
@@ -121,9 +296,16 @@
         },
         "severity": {
           "type": "string",
-          "enum": ["info", "warning", "error", "fatal"]
+          "enum": [
+            "info",
+            "warning",
+            "error",
+            "fatal"
+          ]
         },
-        "mod": { "$ref": "#/$defs/packageId" },
+        "mod": {
+          "$ref": "#/$defs/packageId"
+        },
         "capability": {
           "type": "string",
           "enum": [
@@ -132,11 +314,22 @@
             "void_chest_binding",
             "placement_lobby",
             "placement_shop",
-            "multiplayer_version_metadata"
+            "multiplayer_version_metadata",
+            "item_name_tooltip_rendering",
+            "elixir_item_metadata",
+            "elixir_drop_generation",
+            "elixir_consumption",
+            "active_elixir_effect_state",
+            "active_elixir_effect_application"
           ]
         },
-        "message": { "type": "string", "minLength": 1 },
-        "details": { "type": "object" },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "object"
+        },
         "action": {
           "type": "string",
           "enum": [

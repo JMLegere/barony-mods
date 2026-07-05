@@ -32,9 +32,29 @@
         "placements",
         "multiplayer"
       ]
+    },
+    {
+      "id": "jml.runebound-elixirs",
+      "version": "0.1.0",
+      "status": "loaded",
+      "capabilities": [
+        "elixir_item_metadata",
+        "elixir_drop_generation",
+        "elixir_consumption",
+        "active_elixir_effect_state",
+        "active_elixir_effect_application",
+        "item_name_tooltip_rendering",
+        "multiplayer_version_metadata"
+      ],
+      "modules": [
+        "runeboundElixirs"
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "evidenceScope": "fake-provider-live-hook-install"
     }
   ],
   "warnings": [],
   "errors": [],
-  "reportedAt": "2026-07-02T00:00:00Z"
+  "reportedAt": "2026-07-05T00:00:00Z"
 }

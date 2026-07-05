@@ -51,6 +51,30 @@
         {
           "id": "multiplayer_version_metadata",
           "version": "0.1.0"
+        },
+        {
+          "id": "item_name_tooltip_rendering",
+          "version": "0.1.0"
+        },
+        {
+          "id": "elixir_item_metadata",
+          "version": "0.1.0"
+        },
+        {
+          "id": "elixir_drop_generation",
+          "version": "0.1.0"
+        },
+        {
+          "id": "elixir_consumption",
+          "version": "0.1.0"
+        },
+        {
+          "id": "active_elixir_effect_state",
+          "version": "0.1.0"
+        },
+        {
+          "id": "active_elixir_effect_application",
+          "version": "0.1.0"
         }
       ],
       "registeredAt": "2026-07-05T00:00:00Z",
@@ -62,7 +86,7 @@
       "launcherExecutable": null,
       "launcherPath": null,
       "verificationStatus": "verified_steam_linux_production_lobby_evidence",
-      "notes": "Registered runtime is Linux-only for Steam app 371970 build 22630456 and matches runtime-info/release provenance. Windows is intentionally not registered here; scaffold DLL/launcher self-test builds are not playable registrations. A future Windows runtime must fail closed until barony.exe, barony_bml.dll, canonical bml-win-launcher.exe launcher path, production build manifest, artifact checksums, and live Windows evidence are present."
+      "notes": "Registered runtime is Linux-only for Steam app 371970 build 22630456 and matches runtime-info/release provenance. The capability list includes Stash plus Runebound: Elixirs fake-provider/live-hook report support; Runebound is still not claimed as Steam-playable gameplay evidence. Windows is intentionally not registered here; scaffold DLL/launcher self-test builds are not playable registrations. A future Windows runtime must fail closed until barony.exe, barony_bml.dll, canonical bml-win-launcher.exe launcher path, production build manifest, artifact checksums, and live Windows evidence are present."
     }
   ]
 }

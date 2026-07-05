@@ -23,93 +23,200 @@
     "runtimeReports"
   ],
   "properties": {
-    "formatVersion": { "const": "0.1.0" },
-    "id": { "$ref": "#/$defs/packageId" },
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "$ref": "#/$defs/version" },
-    "kind": { "type": "string", "enum": ["gameplay-mod", "content-pack", "library", "runtime-support"] },
-    "summary": { "type": "string", "minLength": 1 },
-    "description": { "type": "string" },
-    "license": { "type": "string", "minLength": 1 },
+    "formatVersion": {
+      "const": "0.1.0"
+    },
+    "id": {
+      "$ref": "#/$defs/packageId"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "$ref": "#/$defs/version"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "gameplay-mod",
+        "content-pack",
+        "library",
+        "runtime-support"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1
+    },
     "authors": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "additionalProperties": true,
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "email": { "type": "string" },
-          "url": { "type": "string" }
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "email": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
         }
       }
     },
     "layout": {
       "type": "object",
-      "required": ["contentRoot", "assetRoot", "nativeRoot", "migrationRoot"],
+      "required": [
+        "contentRoot",
+        "assetRoot",
+        "nativeRoot",
+        "migrationRoot"
+      ],
       "additionalProperties": false,
       "properties": {
-        "contentRoot": { "$ref": "#/$defs/relativeDirectory" },
-        "assetRoot": { "$ref": "#/$defs/relativeDirectory" },
-        "nativeRoot": { "$ref": "#/$defs/relativeDirectory" },
-        "migrationRoot": { "$ref": "#/$defs/relativeDirectory" }
+        "contentRoot": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "assetRoot": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "nativeRoot": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "migrationRoot": {
+          "$ref": "#/$defs/relativeDirectory"
+        }
       }
     },
     "barony": {
       "type": "object",
-      "required": ["supportedGameVersions", "upstreamRepository"],
+      "required": [
+        "supportedGameVersions",
+        "upstreamRepository"
+      ],
       "additionalProperties": true,
       "properties": {
         "supportedGameVersions": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "officialContentSystems": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "upstreamRepository": { "type": "string", "minLength": 1 },
-        "workingForkRepository": { "type": "string", "minLength": 1 },
-        "notes": { "type": "string" }
+        "upstreamRepository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workingForkRepository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "framework": {
       "type": "object",
-      "required": ["id", "minimumAppVersion", "packageSchema", "runtimeContract"],
+      "required": [
+        "id",
+        "minimumAppVersion",
+        "packageSchema",
+        "runtimeContract"
+      ],
       "additionalProperties": true,
       "properties": {
-        "id": { "const": "BaronyModLoader" },
-        "minimumAppVersion": { "$ref": "#/$defs/version" },
-        "packageSchema": { "const": "bml-package@0.1.0" },
-        "runtimeContract": { "const": "bml-runtime-contract@0.1.0" }
+        "id": {
+          "const": "BaronyModLoader"
+        },
+        "minimumAppVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "packageSchema": {
+          "const": "bml-package@0.1.0"
+        },
+        "runtimeContract": {
+          "const": "bml-runtime-contract@0.1.0"
+        }
       }
     },
     "content": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "entries": { "type": "array", "items": { "type": "object" } }
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
     "assets": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "icon": { "type": ["string", "null"] },
-        "previewImages": { "type": "array", "items": { "type": "string" } },
-        "readme": { "type": ["string", "null"] }
+        "icon": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previewImages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "readme": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "engine": {
       "type": "object",
-      "required": ["runtimeContract", "minimumRuntimeVersion", "capabilities"],
+      "required": [
+        "runtimeContract",
+        "minimumRuntimeVersion",
+        "capabilities"
+      ],
       "additionalProperties": true,
       "properties": {
-        "runtimeContract": { "const": "bml-runtime-contract@0.1.0" },
-        "minimumRuntimeVersion": { "$ref": "#/$defs/version" },
-        "capabilities": { "$ref": "#/$defs/requiredCapabilitySet" }
+        "runtimeContract": {
+          "const": "bml-runtime-contract@0.1.0"
+        },
+        "minimumRuntimeVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/requiredCapabilitySet"
+        }
       }
     },
     "modules": {
@@ -118,15 +225,36 @@
       "properties": {
         "persistentStorage": {
           "type": "object",
-          "required": ["namespace", "scope", "savePolicy", "schemaVersion", "failurePolicy"],
+          "required": [
+            "namespace",
+            "scope",
+            "savePolicy",
+            "schemaVersion",
+            "failurePolicy"
+          ],
           "additionalProperties": true,
           "properties": {
-            "namespace": { "$ref": "#/$defs/idFragment" },
-            "scope": { "type": "string", "minLength": 1 },
-            "savePolicy": { "type": "string", "minLength": 1 },
-            "fileHint": { "$ref": "#/$defs/relativePath" },
-            "schemaVersion": { "$ref": "#/$defs/version" },
-            "failurePolicy": { "type": "string", "minLength": 1 }
+            "namespace": {
+              "$ref": "#/$defs/idFragment"
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "savePolicy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fileHint": {
+              "$ref": "#/$defs/relativePath"
+            },
+            "schemaVersion": {
+              "$ref": "#/$defs/version"
+            },
+            "failurePolicy": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "persistentInventories": {
@@ -134,19 +262,58 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["id", "storageKey", "scope", "authority", "access", "savePolicy", "itemEncoding", "failurePolicy"],
+            "required": [
+              "id",
+              "storageKey",
+              "scope",
+              "authority",
+              "access",
+              "savePolicy",
+              "itemEncoding",
+              "failurePolicy"
+            ],
             "additionalProperties": true,
             "properties": {
-              "id": { "$ref": "#/$defs/idFragment" },
-              "displayName": { "type": "string" },
-              "storageKey": { "$ref": "#/$defs/idFragment" },
-              "scope": { "type": "string", "minLength": 1 },
-              "authority": { "type": "string", "minLength": 1 },
-              "access": { "type": "string", "minLength": 1 },
-              "savePolicy": { "type": "string", "minLength": 1 },
-              "itemEncoding": { "type": "string", "minLength": 1 },
-              "preserves": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-              "failurePolicy": { "type": "string", "minLength": 1 }
+              "id": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "displayName": {
+                "type": "string"
+              },
+              "storageKey": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "authority": {
+                "type": "string",
+                "minLength": 1
+              },
+              "access": {
+                "type": "string",
+                "minLength": 1
+              },
+              "savePolicy": {
+                "type": "string",
+                "minLength": 1
+              },
+              "itemEncoding": {
+                "type": "string",
+                "minLength": 1
+              },
+              "preserves": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "failurePolicy": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         },
@@ -155,15 +322,34 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["id", "inventory", "source", "mode", "exclusive"],
+            "required": [
+              "id",
+              "inventory",
+              "source",
+              "mode",
+              "exclusive"
+            ],
             "additionalProperties": true,
             "properties": {
-              "id": { "$ref": "#/$defs/idFragment" },
-              "inventory": { "$ref": "#/$defs/idFragment" },
-              "source": { "$ref": "#/$defs/idFragment" },
-              "mode": { "type": "string", "minLength": 1 },
-              "exclusive": { "type": "boolean" },
-              "description": { "type": "string" }
+              "id": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "inventory": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "source": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "mode": {
+                "type": "string",
+                "minLength": 1
+              },
+              "exclusive": {
+                "type": "boolean"
+              },
+              "description": {
+                "type": "string"
+              }
             }
           }
         },
@@ -172,71 +358,314 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["id", "hook", "entity", "inventory", "frequency", "placementPolicy", "deterministic", "failurePolicy"],
+            "required": [
+              "id",
+              "hook",
+              "entity",
+              "inventory",
+              "frequency",
+              "placementPolicy",
+              "deterministic",
+              "failurePolicy"
+            ],
             "additionalProperties": true,
             "properties": {
-              "id": { "$ref": "#/$defs/idFragment" },
-              "hook": { "$ref": "#/$defs/idFragment" },
-              "entity": { "$ref": "#/$defs/idFragment" },
-              "inventory": { "$ref": "#/$defs/idFragment" },
-              "frequency": { "type": "string", "minLength": 1 },
-              "placementPolicy": { "type": "string", "minLength": 1 },
-              "deterministic": { "type": "boolean" },
-              "failurePolicy": { "type": "string", "minLength": 1 },
-              "description": { "type": "string" }
+              "id": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "hook": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "entity": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "inventory": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "frequency": {
+                "type": "string",
+                "minLength": 1
+              },
+              "placementPolicy": {
+                "type": "string",
+                "minLength": 1
+              },
+              "deterministic": {
+                "type": "boolean"
+              },
+              "failurePolicy": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string"
+              }
             }
           }
         },
         "multiplayer": {
           "type": "object",
-          "required": ["policy", "versionPolicy", "syncInventories", "clientCompatibility", "failurePolicy"],
+          "required": [
+            "policy",
+            "versionPolicy",
+            "syncInventories",
+            "clientCompatibility",
+            "failurePolicy"
+          ],
           "additionalProperties": true,
           "properties": {
-            "policy": { "type": "string", "minLength": 1 },
-            "versionPolicy": { "type": "string", "minLength": 1 },
-            "syncInventories": { "type": "array", "items": { "$ref": "#/$defs/idFragment" } },
-            "clientCompatibility": { "type": "object", "additionalProperties": true },
-            "failurePolicy": { "type": "string", "minLength": 1 }
+            "policy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "versionPolicy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "syncInventories": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/idFragment"
+              }
+            },
+            "clientCompatibility": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "failurePolicy": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
-        "lootAffixes": {
+        "runeboundElixirs": {
           "type": "object",
+          "required": [
+            "namespace",
+            "schemaVersion",
+            "authority",
+            "carrierItemType",
+            "dataFiles",
+            "dropPolicy",
+            "activeEffects",
+            "display",
+            "multiplayer",
+            "failurePolicy"
+          ],
           "additionalProperties": true,
           "properties": {
-            "namespace": { "$ref": "#/$defs/idFragment" },
-            "schemaVersion": { "$ref": "#/$defs/version" },
-            "rolls": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
-            "nameRendering": { "type": "object", "additionalProperties": true },
-            "itemMetadata": { "type": "object", "additionalProperties": true },
-            "attackModifiers": { "type": "object", "additionalProperties": true },
-            "multiplayer": { "type": "object", "additionalProperties": true },
-            "failurePolicy": { "type": "string", "minLength": 1 }
+            "namespace": {
+              "const": "runebound_elixirs"
+            },
+            "schemaVersion": {
+              "const": "0.1.0"
+            },
+            "authority": {
+              "const": "host"
+            },
+            "carrierItemType": {
+              "const": "POTION_EMPTY"
+            },
+            "dataFiles": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "uniqueItems": true,
+              "allOf": [
+                {
+                  "contains": {
+                    "const": "content/data/bml/elixir-catalog.json"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "content/data/bml/elixir-drop-tables.json"
+                  }
+                }
+              ]
+            },
+            "dropPolicy": {
+              "type": "object",
+              "required": [
+                "eligibleClasses",
+                "soloClassPolicy",
+                "partySizeEligibility",
+                "rngAuthority"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "eligibleClasses": {
+                  "const": "present_party_classes"
+                },
+                "soloClassPolicy": {
+                  "const": "local_player_only"
+                },
+                "partySizeEligibility": {
+                  "const": "generation_time_only"
+                },
+                "rngAuthority": {
+                  "const": "host"
+                }
+              }
+            },
+            "activeEffects": {
+              "type": "object",
+              "required": [
+                "stateScope",
+                "stateFile",
+                "savePolicy",
+                "duplicatePolicy",
+                "failurePolicy"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "stateScope": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stateFile": {
+                  "$ref": "#/$defs/relativePath"
+                },
+                "savePolicy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "duplicatePolicy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failurePolicy": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "display": {
+              "type": "object",
+              "required": [
+                "nameRendering",
+                "tooltipRendering",
+                "consumeMessages",
+                "reminderPolicy"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "nameRendering": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tooltipRendering": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "consumeMessages": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reminderPolicy": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "multiplayer": {
+              "type": "object",
+              "required": [
+                "versionPolicy",
+                "stateAuthority",
+                "clientCompatibility",
+                "failurePolicy"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "versionPolicy": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stateAuthority": {
+                  "const": "host"
+                },
+                "clientCompatibility": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "failurePolicy": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "failurePolicy": {
+              "const": "fail-closed"
+            }
           }
         }
       }
     },
     "native": {
       "type": "object",
-      "required": ["required", "mode", "plugins", "patches", "builds"],
+      "required": [
+        "required",
+        "mode",
+        "plugins",
+        "patches",
+        "builds"
+      ],
       "additionalProperties": true,
       "properties": {
-        "required": { "type": "boolean" },
-        "mode": { "type": "string", "enum": ["paired-engine-runtime", "none"] },
-        "plugins": { "type": "array", "maxItems": 0 },
+        "required": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "paired-engine-runtime",
+            "none"
+          ]
+        },
+        "plugins": {
+          "type": "array",
+          "maxItems": 0
+        },
         "patches": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "appliesTo", "baseRevision", "path", "required", "providesCapabilities"],
+            "required": [
+              "id",
+              "appliesTo",
+              "baseRevision",
+              "path",
+              "required",
+              "providesCapabilities"
+            ],
             "additionalProperties": true,
             "properties": {
-              "id": { "$ref": "#/$defs/idFragment" },
-              "appliesTo": { "type": "string", "minLength": 1 },
-              "baseRevision": { "type": "string", "minLength": 1 },
-              "path": { "$ref": "#/$defs/relativePath" },
-              "required": { "type": "boolean" },
-              "providesCapabilities": { "$ref": "#/$defs/capabilityIdList" },
-              "reviewStance": { "type": "string" }
+              "id": {
+                "$ref": "#/$defs/idFragment"
+              },
+              "appliesTo": {
+                "type": "string",
+                "minLength": 1
+              },
+              "baseRevision": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "providesCapabilities": {
+                "$ref": "#/$defs/capabilityIdList"
+              },
+              "reviewStance": {
+                "type": "string"
+              }
             }
           }
         },
@@ -244,14 +673,120 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["platform", "baronyRevision", "runtimeVersion", "artifact"],
+            "required": [
+              "platform",
+              "baronyRevision",
+              "runtimeVersion",
+              "artifact"
+            ],
             "additionalProperties": true,
             "properties": {
-              "platform": { "type": "string", "minLength": 1 },
-              "baronyRevision": { "type": "string", "minLength": 1 },
-              "runtimeVersion": { "$ref": "#/$defs/version" },
-              "artifact": { "$ref": "#/$defs/relativePath" },
-              "sha256": { "$ref": "#/$defs/sha256" }
+              "platform": {
+                "type": "string",
+                "minLength": 1
+              },
+              "baronyRevision": {
+                "type": "string",
+                "minLength": 1
+              },
+              "runtimeVersion": {
+                "$ref": "#/$defs/version"
+              },
+              "artifact": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        },
+        "runtimeStrategy": {
+          "type": "string",
+          "enum": [
+            "installed-binary-hook",
+            "none"
+          ]
+        },
+        "runtimeAuthority": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "platform",
+              "hostOs",
+              "gameExecutableName",
+              "artifactExtension",
+              "launchAdapter",
+              "verificationStatus"
+            ],
+            "additionalProperties": true,
+            "properties": {
+              "platform": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hostOs": {
+                "type": "string",
+                "enum": [
+                  "linux",
+                  "windows",
+                  "macos"
+                ]
+              },
+              "gameExecutableName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hookArtifact": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "hookLibraryName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "artifactExtension": {
+                "type": "string",
+                "minLength": 1
+              },
+              "launchAdapter": {
+                "type": "string",
+                "enum": [
+                  "linux-ld-preload",
+                  "windows-createprocess-loadlibrary"
+                ]
+              },
+              "launcherExecutable": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "verificationStatus": {
+                "type": "string",
+                "minLength": 1
+              },
+              "liveInstallReport": {
+                "$ref": "#/$defs/profileRelativePath"
+              },
+              "notes": {
+                "type": "string"
+              }
             }
           }
         }
@@ -260,14 +795,26 @@
     "dependencies": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/dependency" },
+      "items": {
+        "$ref": "#/$defs/dependency"
+      },
       "contains": {
         "type": "object",
-        "required": ["id", "kind", "required"],
+        "required": [
+          "id",
+          "kind",
+          "required"
+        ],
         "properties": {
-          "id": { "const": "bml.runtime" },
-          "kind": { "const": "engine-runtime" },
-          "required": { "const": true }
+          "id": {
+            "const": "bml.runtime"
+          },
+          "kind": {
+            "const": "engine-runtime"
+          },
+          "required": {
+            "const": true
+          }
         }
       }
     },
@@ -275,69 +822,247 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "kind", "reason"],
+        "required": [
+          "id",
+          "kind",
+          "reason"
+        ],
         "additionalProperties": true,
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "kind": { "type": "string", "minLength": 1 },
-          "reason": { "type": "string", "minLength": 1 }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
-    "loadAfter": { "type": "array", "items": { "$ref": "#/$defs/packageId" } },
-    "loadBefore": { "type": "array", "items": { "$ref": "#/$defs/packageId" } },
-    "migrations": { "type": "array", "items": { "type": "object", "required": ["id", "to", "phase", "path", "idempotent"], "additionalProperties": true } },
-    "checksums": { "type": "object", "additionalProperties": true },
-    "source": { "type": "object", "additionalProperties": true },
-    "build": { "type": "object", "additionalProperties": true },
+    "loadAfter": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/packageId"
+      }
+    },
+    "loadBefore": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/packageId"
+      }
+    },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "to",
+          "phase",
+          "path",
+          "idempotent"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "checksums": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "runtimeReports": {
       "type": "object",
-      "required": ["paths", "expectedLoadedCapabilities", "expectedLoadedModules", "blockOnErrors"],
+      "required": [
+        "paths",
+        "expectedLoadedCapabilities",
+        "expectedLoadedModules",
+        "blockOnErrors"
+      ],
       "additionalProperties": false,
       "properties": {
         "paths": {
           "type": "object",
-          "required": ["runtimeManifest", "runtimeLoadReport", "runtimeLog", "validationReport"],
+          "required": [
+            "runtimeManifest",
+            "runtimeLoadReport",
+            "runtimeLog",
+            "validationReport"
+          ],
           "additionalProperties": false,
           "properties": {
-            "runtimeManifest": { "$ref": "#/$defs/profileRelativePath" },
-            "runtimeLoadReport": { "$ref": "#/$defs/profileRelativePath" },
-            "runtimeLog": { "$ref": "#/$defs/profileRelativePath" },
-            "validationReport": { "$ref": "#/$defs/profileRelativePath" }
+            "runtimeManifest": {
+              "$ref": "#/$defs/profileRelativePath"
+            },
+            "runtimeLoadReport": {
+              "$ref": "#/$defs/profileRelativePath"
+            },
+            "runtimeLog": {
+              "$ref": "#/$defs/profileRelativePath"
+            },
+            "validationReport": {
+              "$ref": "#/$defs/profileRelativePath"
+            },
+            "liveInstallReport": {
+              "$ref": "#/$defs/profileRelativePath"
+            }
           }
         },
-        "expectedLoadedCapabilities": { "$ref": "#/$defs/capabilityIdSet" },
+        "expectedLoadedCapabilities": {
+          "$ref": "#/$defs/capabilityIdSet"
+        },
         "expectedLoadedModules": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer", "lootAffixes"] },
+          "items": {
+            "type": "string",
+            "enum": [
+              "persistentStorage",
+              "persistentInventories",
+              "voidChestBindings",
+              "placements",
+              "multiplayer",
+              "runeboundElixirs"
+            ]
+          },
           "uniqueItems": true
         },
-        "blockOnErrors": { "type": "boolean" },
-        "notes": { "type": "string" }
+        "blockOnErrors": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     }
   },
   "allOf": [
     {
       "if": {
-        "properties": { "id": { "const": "jml.stash" } },
-        "required": ["id"]
+        "properties": {
+          "id": {
+            "const": "jml.stash"
+          }
+        },
+        "required": [
+          "id"
+        ]
       },
       "then": {
         "properties": {
           "engine": {
             "properties": {
-              "capabilities": { "$ref": "#/$defs/stashRequiredCapabilitySet" }
+              "capabilities": {
+                "$ref": "#/$defs/stashRequiredCapabilitySet"
+              }
             }
           },
           "modules": {
-            "required": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"]
+            "required": [
+              "persistentStorage",
+              "persistentInventories",
+              "voidChestBindings",
+              "placements",
+              "multiplayer"
+            ]
           },
           "native": {
             "properties": {
-              "mode": { "const": "paired-engine-runtime" },
-              "patches": { "minItems": 1 }
+              "mode": {
+                "const": "paired-engine-runtime"
+              },
+              "patches": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "id": {
+            "const": "jml.runebound-elixirs"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "then": {
+        "properties": {
+          "engine": {
+            "properties": {
+              "capabilities": {
+                "$ref": "#/$defs/runeboundElixirsRequiredCapabilitySet"
+              }
+            }
+          },
+          "modules": {
+            "required": [
+              "runeboundElixirs"
+            ]
+          },
+          "runtimeReports": {
+            "properties": {
+              "expectedLoadedCapabilities": {
+                "$ref": "#/$defs/runeboundElixirsCapabilitySet"
+              },
+              "expectedLoadedModules": {
+                "contains": {
+                  "const": "runeboundElixirs"
+                }
+              },
+              "paths": {
+                "required": [
+                  "liveInstallReport"
+                ],
+                "properties": {
+                  "liveInstallReport": {
+                    "const": "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
+                  }
+                }
+              }
+            }
+          },
+          "native": {
+            "required": [
+              "required",
+              "mode",
+              "runtimeStrategy",
+              "runtimeAuthority",
+              "platforms"
+            ],
+            "properties": {
+              "required": {
+                "const": true
+              },
+              "mode": {
+                "const": "paired-engine-runtime"
+              },
+              "runtimeStrategy": {
+                "const": "installed-binary-hook"
+              },
+              "runtimeAuthority": {
+                "type": "string",
+                "minLength": 1
+              },
+              "platforms": {
+                "type": "array",
+                "minItems": 1
+              }
             }
           }
         }
@@ -345,13 +1070,41 @@
     }
   ],
   "$defs": {
-    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
-    "packageId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
-    "idFragment": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-    "relativePath": { "type": "string", "minLength": 1, "not": { "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))" } },
-    "relativeDirectory": { "type": "string", "minLength": 1, "pattern": "/$", "not": { "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))" } },
-    "profileRelativePath": { "type": "string", "pattern": "^BaronyModLoader/.+" },
-    "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "packageId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "idFragment": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))"
+      }
+    },
+    "relativeDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "/$",
+      "not": {
+        "pattern": "^(?:/|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))"
+      }
+    },
+    "profileRelativePath": {
+      "type": "string",
+      "pattern": "^BaronyModLoader/.+"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
     "capabilityId": {
       "type": "string",
       "enum": [
@@ -361,63 +1114,376 @@
         "placement_lobby",
         "placement_shop",
         "multiplayer_version_metadata",
-        "item_instance_metadata",
-        "loot_affix_rolls",
-        "item_name_tooltip_rendering",
-        "save_item_metadata",
-        "weapon_attack_modifier"
+        "elixir_item_metadata",
+        "elixir_drop_generation",
+        "elixir_consumption",
+        "active_elixir_effect_state",
+        "active_elixir_effect_application"
       ]
     },
     "capabilityRequest": {
       "type": "object",
-      "required": ["id", "version", "required", "reason"],
+      "required": [
+        "id",
+        "version",
+        "required",
+        "reason"
+      ],
       "additionalProperties": true,
       "properties": {
-        "id": { "$ref": "#/$defs/capabilityId" },
-        "version": { "$ref": "#/$defs/version" },
-        "required": { "const": true },
-        "reason": { "type": "string", "minLength": 1 }
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "required": {
+          "const": true
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "requiredCapabilitySet": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/capabilityRequest" }
+      "items": {
+        "$ref": "#/$defs/capabilityRequest"
+      }
     },
     "stashRequiredCapabilitySet": {
       "type": "array",
       "minItems": 6,
-      "items": { "$ref": "#/$defs/capabilityRequest" },
+      "items": {
+        "$ref": "#/$defs/capabilityRequest"
+      },
       "allOf": [
-        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "persistent_storage" }, "required": { "const": true } } } },
-        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "persistent_inventory" }, "required": { "const": true } } } },
-        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "void_chest_binding" }, "required": { "const": true } } } },
-        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "placement_lobby" }, "required": { "const": true } } } },
-        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "placement_shop" }, "required": { "const": true } } } },
-        { "contains": { "type": "object", "required": ["id", "required"], "properties": { "id": { "const": "multiplayer_version_metadata" }, "required": { "const": true } } } }
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "persistent_storage"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "persistent_inventory"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "void_chest_binding"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "placement_lobby"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "placement_shop"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "multiplayer_version_metadata"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runeboundElixirsRequiredCapabilitySet": {
+      "type": "array",
+      "minItems": 7,
+      "items": {
+        "$ref": "#/$defs/capabilityRequest"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "elixir_item_metadata"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "elixir_drop_generation"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "elixir_consumption"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "active_elixir_effect_state"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "active_elixir_effect_application"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "item_name_tooltip_rendering"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "required"
+            ],
+            "properties": {
+              "id": {
+                "const": "multiplayer_version_metadata"
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runeboundElixirsCapabilitySet": {
+      "type": "array",
+      "minItems": 7,
+      "items": {
+        "$ref": "#/$defs/capabilityId"
+      },
+      "uniqueItems": true,
+      "allOf": [
+        {
+          "contains": {
+            "const": "elixir_item_metadata"
+          }
+        },
+        {
+          "contains": {
+            "const": "elixir_drop_generation"
+          }
+        },
+        {
+          "contains": {
+            "const": "elixir_consumption"
+          }
+        },
+        {
+          "contains": {
+            "const": "active_elixir_effect_state"
+          }
+        },
+        {
+          "contains": {
+            "const": "active_elixir_effect_application"
+          }
+        },
+        {
+          "contains": {
+            "const": "item_name_tooltip_rendering"
+          }
+        },
+        {
+          "contains": {
+            "const": "multiplayer_version_metadata"
+          }
+        }
       ]
     },
     "capabilityIdList": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/capabilityId" },
+      "items": {
+        "$ref": "#/$defs/capabilityId"
+      },
       "uniqueItems": true
     },
     "capabilityIdSet": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/capabilityId" },
+      "items": {
+        "$ref": "#/$defs/capabilityId"
+      },
       "uniqueItems": true
     },
     "dependency": {
       "type": "object",
-      "required": ["id", "kind", "version", "required"],
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "required"
+      ],
       "additionalProperties": true,
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "enum": ["game", "engine-runtime", "app", "package", "capability"] },
-        "version": { "type": "string", "minLength": 1 },
-        "required": { "type": "boolean" }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "game",
+            "engine-runtime",
+            "app",
+            "package",
+            "capability"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        }
       }
     }
   }

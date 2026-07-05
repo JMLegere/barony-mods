@@ -1,0 +1,175 @@
+{
+  "schemaVersion": "0.1.0",
+  "namespace": "runebound_elixirs",
+  "carrierItemType": "POTION_EMPTY",
+  "generationAuthority": "host",
+  "liveGameplayVerified": false,
+  "failurePolicy": "fail-closed",
+  "eligibleSources": [
+    {
+      "id": "chest_loot_postprocess",
+      "description": "Placeholder first-slice source for generated chest loot after Barony item-level postprocessing.",
+      "enabled": true
+    },
+    {
+      "id": "floor_loot_postprocess",
+      "description": "Placeholder first-slice source for generated floor loot after Barony item-level postprocessing.",
+      "enabled": true
+    }
+  ],
+  "classPolicy": {
+    "soloPlayerClassOnly": true,
+    "soloEligibleClasses": "local_player_class",
+    "multiplayerPresentClasses": true,
+    "multiplayerEligibleClasses": "present_party_classes",
+    "excludeDisconnectedPlayers": true,
+    "noGlobalAllClassPool": true,
+    "onNoMatchingClass": "no_elixir_drop"
+  },
+  "partySizePolicy": {
+    "semantics": "generation_time_only",
+    "defaultMinPartySize": 1,
+    "defaultMaxPartySize": 4,
+    "applyElixirBounds": true,
+    "retroactiveUseInvalidation": false,
+    "examples": [
+      {
+        "partySize": 1,
+        "eligibleClassPool": "local_player_class",
+        "notes": "Solo generation only considers elixirs bound to the solo player's class."
+      },
+      {
+        "partySize": 2,
+        "eligibleClassPool": "present_party_classes",
+        "notes": "Two-player generation considers the union of both present classes and elixirs whose min/max party bounds include 2."
+      },
+      {
+        "partySize": 4,
+        "eligibleClassPool": "present_party_classes",
+        "notes": "Four-player generation excludes elixirs with maxPartySize below 4, but existing active effects are not retroactively removed."
+      }
+    ]
+  },
+  "antiBloatPolicy": {
+    "maxGeneratedElixirsPerFloor": 1,
+    "maxGeneratedElixirsPerSource": 1,
+    "minimumFloorsBetweenGeneratedElixirs": 1,
+    "preventDuplicateOfferForActiveElixirId": true,
+    "preventDuplicateOfferForInventoryElixirId": true,
+    "duplicateScope": "player_and_party",
+    "overflowBehavior": "skip_elixir_drop",
+    "notes": "Weights are semi-common placeholders, but generation is bounded to avoid inventory sorting burden and repeated duplicate offers."
+  },
+  "rolls": [
+    {
+      "id": "early_floor_elixirs",
+      "floorRange": {
+        "minInclusive": 1,
+        "maxInclusive": 4
+      },
+      "baseChance": 0.1,
+      "maxPerFloor": 1,
+      "cooldownFloors": 1,
+      "weightTable": [
+        {
+          "elixirId": "runebound_elixirs:iron_vow",
+          "weight": 18
+        },
+        {
+          "elixirId": "runebound_elixirs:glass_focus",
+          "weight": 16
+        },
+        {
+          "elixirId": "runebound_elixirs:quickening_pulse",
+          "weight": 14
+        },
+        {
+          "elixirId": "runebound_elixirs:tempered_guard",
+          "weight": 6,
+          "requiresPartySizeAtLeast": 2
+        }
+      ]
+    },
+    {
+      "id": "mid_floor_elixirs",
+      "floorRange": {
+        "minInclusive": 5,
+        "maxInclusive": 12
+      },
+      "baseChance": 0.16,
+      "maxPerFloor": 1,
+      "cooldownFloors": 1,
+      "weightTable": [
+        {
+          "elixirId": "runebound_elixirs:iron_vow",
+          "weight": 16
+        },
+        {
+          "elixirId": "runebound_elixirs:glass_focus",
+          "weight": 16
+        },
+        {
+          "elixirId": "runebound_elixirs:quickening_pulse",
+          "weight": 12
+        },
+        {
+          "elixirId": "runebound_elixirs:tempered_guard",
+          "weight": 12,
+          "requiresPartySizeAtLeast": 2
+        }
+      ]
+    },
+    {
+      "id": "late_floor_elixirs",
+      "floorRange": {
+        "minInclusive": 13,
+        "maxInclusive": 99
+      },
+      "baseChance": 0.2,
+      "maxPerFloor": 1,
+      "cooldownFloors": 1,
+      "weightTable": [
+        {
+          "elixirId": "runebound_elixirs:iron_vow",
+          "weight": 14
+        },
+        {
+          "elixirId": "runebound_elixirs:glass_focus",
+          "weight": 14
+        },
+        {
+          "elixirId": "runebound_elixirs:quickening_pulse",
+          "weight": 10,
+          "requiresPartySizeAtMost": 3
+        },
+        {
+          "elixirId": "runebound_elixirs:tempered_guard",
+          "weight": 14,
+          "requiresPartySizeAtLeast": 2
+        }
+      ]
+    }
+  ],
+  "weightPolicy": {
+    "units": "relative_placeholder_weights",
+    "boundedSemiCommonChance": true,
+    "baseChanceUpperBound": 0.2,
+    "renormalizeAfterClassAndPartyFilters": true,
+    "onEmptyWeightTableAfterFilters": "no_elixir_drop"
+  },
+  "runtimeRequirements": [
+    "elixir_item_metadata",
+    "elixir_drop_generation",
+    "elixir_consumption",
+    "active_elixir_effect_state",
+    "active_elixir_effect_application",
+    "item_name_tooltip_rendering",
+    "multiplayer_version_metadata"
+  ],
+  "notes": [
+    "This table is intentionally small and test-oriented; values are placeholders for contract validation, not final balance.",
+    "Class and party-size eligibility are evaluated when the elixir is generated. Existing active effects are not invalidated by later party-size changes.",
+    "Stock Barony cannot load these BML-owned data files as standalone behavior.",
+    "Live gameplay is not verified; the package must fail closed without a verified installed-executable BML hook runtime."
+  ]
+}

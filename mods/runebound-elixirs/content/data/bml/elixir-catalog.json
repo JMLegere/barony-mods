@@ -1,0 +1,368 @@
+{
+  "schemaVersion": "0.1.0",
+  "namespace": "runebound_elixirs",
+  "carrierItemType": "POTION_EMPTY",
+  "liveGameplayVerified": false,
+  "failurePolicy": "fail-closed",
+  "classIds": {
+    "CLASS_BARBARIAN": "barbarian",
+    "CLASS_WARRIOR": "warrior",
+    "CLASS_ROGUE": "rogue",
+    "CLASS_WIZARD": "wizard",
+    "CLASS_HEALER": "healer",
+    "CLASS_CONJURER": "conjurer",
+    "CLASS_MONK": "monk",
+    "CLASS_ACCURSED": "accursed"
+  },
+  "supportedEffectOpcodes": [
+    "stat_add",
+    "stat_multiply",
+    "armor_ac_add",
+    "resource_add",
+    "message_only"
+  ],
+  "defaultDuplicatePolicy": {
+    "scope": "per_player",
+    "key": "elixir_id",
+    "rule": "one_per_elixir_id_per_player",
+    "onDuplicateConsume": "reject_and_keep_item",
+    "tooltipText": "Already active for this player."
+  },
+  "defaultStackingPolicy": {
+    "rule": "non_stacking_by_elixir_id",
+    "crossElixirStacking": "allowed_when_effect_ids_differ",
+    "statCombination": "runtime_ordered_deterministic"
+  },
+  "effects": {
+    "iron_vow_strength": {
+      "opcode": "stat_add",
+      "target": "STR",
+      "value": 2,
+      "polarity": "upside",
+      "description": "+2 STR"
+    },
+    "iron_vow_weight": {
+      "opcode": "stat_add",
+      "target": "DEX",
+      "value": -1,
+      "polarity": "downside",
+      "description": "-1 DEX"
+    },
+    "glass_focus_mana": {
+      "opcode": "resource_add",
+      "target": "MAX_MP",
+      "value": 20,
+      "polarity": "upside",
+      "description": "+20 maximum MP"
+    },
+    "glass_focus_body": {
+      "opcode": "resource_add",
+      "target": "MAX_HP",
+      "value": -10,
+      "polarity": "downside",
+      "description": "-10 maximum HP"
+    },
+    "tempered_guard_ac": {
+      "opcode": "armor_ac_add",
+      "target": "ARMOR_AC",
+      "value": 1,
+      "polarity": "upside",
+      "description": "+1 armor AC"
+    },
+    "quickening_pulse_speed": {
+      "opcode": "stat_multiply",
+      "target": "DEX",
+      "multiplier": 1.12,
+      "polarity": "upside",
+      "description": "+12% DEX calculation"
+    },
+    "quickening_pulse_warning": {
+      "opcode": "message_only",
+      "trigger": "on_floor_start",
+      "polarity": "downside",
+      "description": "Displays a reminder that the bargain is active and defensive margins are reduced."
+    },
+    "tempered_guard_footwork": {
+      "opcode": "stat_add",
+      "target": "DEX",
+      "value": -1,
+      "polarity": "downside",
+      "description": "-1 DEX"
+    }
+  },
+  "elixirs": [
+    {
+      "id": "runebound_elixirs:iron_vow",
+      "displayName": "Elixir of the Iron Vow",
+      "shortName": "Iron Vow",
+      "carrierItemType": "POTION_EMPTY",
+      "classBindings": [
+        "CLASS_BARBARIAN",
+        "CLASS_WARRIOR"
+      ],
+      "partySizeEligibility": {
+        "minPartySize": 1,
+        "maxPartySize": 4,
+        "semantics": "generation_time_only"
+      },
+      "lifecycle": {
+        "duration": "run_permanent",
+        "expiresOn": "run_end_or_profile_disable",
+        "saveScope": "profile_save_sidecar"
+      },
+      "upside": {
+        "summary": "Commit to heavier blows.",
+        "effectIds": [
+          "iron_vow_strength"
+        ]
+      },
+      "downside": {
+        "summary": "The vow slows fine movement.",
+        "effectIds": [
+          "iron_vow_weight"
+        ]
+      },
+      "tradeoffSummary": "+2 STR, -1 DEX for the rest of the run.",
+      "effects": [
+        "iron_vow_strength",
+        "iron_vow_weight"
+      ],
+      "requiresRuntimeCapabilities": [
+        "elixir_item_metadata",
+        "elixir_consumption",
+        "active_elixir_effect_state",
+        "active_elixir_effect_application",
+        "item_name_tooltip_rendering"
+      ],
+      "duplicatePolicy": "one_per_elixir_id_per_player",
+      "stackingPolicy": "non_stacking_by_elixir_id",
+      "dropWeight": 18,
+      "readabilityText": "Warrior/Barbarian bargain: stronger hits, clumsier hands.",
+      "consumeText": "The Iron Vow settles into your bones.",
+      "visibilityText": "Active: Iron Vow (+2 STR, -1 DEX).",
+      "partySizeExamples": [
+        {
+          "partySize": 1,
+          "eligible": true,
+          "reason": "Solo Warrior or Barbarian can roll this at generation time."
+        },
+        {
+          "partySize": 4,
+          "eligible": true,
+          "reason": "A present Warrior or Barbarian keeps it in the multiplayer class pool."
+        }
+      ]
+    },
+    {
+      "id": "runebound_elixirs:glass_focus",
+      "displayName": "Elixir of Glass Focus",
+      "shortName": "Glass Focus",
+      "carrierItemType": "POTION_EMPTY",
+      "classBindings": [
+        "CLASS_WIZARD",
+        "CLASS_CONJURER",
+        "CLASS_ACCURSED"
+      ],
+      "partySizeEligibility": {
+        "minPartySize": 1,
+        "maxPartySize": 4,
+        "semantics": "generation_time_only"
+      },
+      "lifecycle": {
+        "duration": "run_permanent",
+        "expiresOn": "run_end_or_profile_disable",
+        "saveScope": "profile_save_sidecar"
+      },
+      "upside": {
+        "summary": "Widen your magical reserves.",
+        "effectIds": [
+          "glass_focus_mana"
+        ]
+      },
+      "downside": {
+        "summary": "Trade away physical resilience.",
+        "effectIds": [
+          "glass_focus_body"
+        ]
+      },
+      "tradeoffSummary": "+20 max MP, -10 max HP for the rest of the run.",
+      "effects": [
+        "glass_focus_mana",
+        "glass_focus_body"
+      ],
+      "requiresRuntimeCapabilities": [
+        "elixir_item_metadata",
+        "elixir_consumption",
+        "active_elixir_effect_state",
+        "active_elixir_effect_application",
+        "item_name_tooltip_rendering"
+      ],
+      "duplicatePolicy": "one_per_elixir_id_per_player",
+      "stackingPolicy": "non_stacking_by_elixir_id",
+      "dropWeight": 16,
+      "readabilityText": "Caster bargain: deeper mana, fragile body.",
+      "consumeText": "Your thoughts sharpen until your pulse sounds thin.",
+      "visibilityText": "Active: Glass Focus (+20 max MP, -10 max HP).",
+      "partySizeExamples": [
+        {
+          "partySize": 1,
+          "eligible": true,
+          "reason": "Solo Wizard, Conjurer, or Accursed can roll this at generation time."
+        },
+        {
+          "partySize": 3,
+          "eligible": true,
+          "reason": "Any present bound caster class keeps it eligible for the shared party pool."
+        }
+      ]
+    },
+    {
+      "id": "runebound_elixirs:tempered_guard",
+      "displayName": "Elixir of the Tempered Guard",
+      "shortName": "Tempered Guard",
+      "carrierItemType": "POTION_EMPTY",
+      "classBindings": [
+        "CLASS_HEALER",
+        "CLASS_MONK",
+        "CLASS_WARRIOR"
+      ],
+      "partySizeEligibility": {
+        "minPartySize": 2,
+        "maxPartySize": 4,
+        "semantics": "generation_time_only"
+      },
+      "lifecycle": {
+        "duration": "run_permanent",
+        "expiresOn": "run_end_or_profile_disable",
+        "saveScope": "profile_save_sidecar"
+      },
+      "upside": {
+        "summary": "Brace yourself behind a steadier guard.",
+        "effectIds": [
+          "tempered_guard_ac"
+        ]
+      },
+      "downside": {
+        "summary": "The reinforced guard slows footwork.",
+        "effectIds": [
+          "tempered_guard_footwork"
+        ]
+      },
+      "tradeoffSummary": "+1 armor AC, -1 DEX for the rest of the run.",
+      "effects": [
+        "tempered_guard_ac",
+        "tempered_guard_footwork"
+      ],
+      "requiresRuntimeCapabilities": [
+        "elixir_item_metadata",
+        "elixir_consumption",
+        "active_elixir_effect_state",
+        "active_elixir_effect_application",
+        "item_name_tooltip_rendering"
+      ],
+      "duplicatePolicy": "one_per_elixir_id_per_player",
+      "stackingPolicy": "non_stacking_by_elixir_id",
+      "dropWeight": 12,
+      "readabilityText": "Co-op guard bargain: sturdier defense, slower footwork.",
+      "consumeText": "A tempered calm locks around your stance.",
+      "visibilityText": "Active: Tempered Guard (+1 AC, -1 DEX).",
+      "partySizeExamples": [
+        {
+          "partySize": 1,
+          "eligible": false,
+          "reason": "This sample is multiplayer-oriented and requires at least two present players at generation time."
+        },
+        {
+          "partySize": 2,
+          "eligible": true,
+          "reason": "A present Healer, Monk, or Warrior in a two-player party can roll it."
+        }
+      ]
+    },
+    {
+      "id": "runebound_elixirs:quickening_pulse",
+      "displayName": "Elixir of the Quickening Pulse",
+      "shortName": "Quickening Pulse",
+      "carrierItemType": "POTION_EMPTY",
+      "classBindings": [
+        "CLASS_ROGUE",
+        "CLASS_MONK"
+      ],
+      "partySizeEligibility": {
+        "minPartySize": 1,
+        "maxPartySize": 3,
+        "semantics": "generation_time_only"
+      },
+      "lifecycle": {
+        "duration": "run_permanent",
+        "expiresOn": "run_end_or_profile_disable",
+        "saveScope": "profile_save_sidecar"
+      },
+      "upside": {
+        "summary": "Move and react with sharper timing.",
+        "effectIds": [
+          "quickening_pulse_speed"
+        ]
+      },
+      "downside": {
+        "summary": "The runtime must repeatedly warn that this bargain narrows defensive margins.",
+        "effectIds": [
+          "quickening_pulse_warning"
+        ]
+      },
+      "tradeoffSummary": "+12% DEX calculation, recurring warning reminder for reduced safety margin.",
+      "effects": [
+        "quickening_pulse_speed",
+        "quickening_pulse_warning"
+      ],
+      "requiresRuntimeCapabilities": [
+        "elixir_item_metadata",
+        "elixir_consumption",
+        "active_elixir_effect_state",
+        "active_elixir_effect_application",
+        "item_name_tooltip_rendering"
+      ],
+      "duplicatePolicy": "one_per_elixir_id_per_player",
+      "stackingPolicy": "non_stacking_by_elixir_id",
+      "dropWeight": 14,
+      "readabilityText": "Skirmisher bargain: faster DEX math, persistent risk reminder.",
+      "consumeText": "Your heartbeat starts answering before you ask.",
+      "visibilityText": "Active: Quickening Pulse (+12% DEX calculation; risk reminder).",
+      "partySizeExamples": [
+        {
+          "partySize": 1,
+          "eligible": true,
+          "reason": "Solo Rogue or Monk can roll this at generation time."
+        },
+        {
+          "partySize": 4,
+          "eligible": false,
+          "reason": "This sample is bounded out of full four-player parties to keep drop variety constrained."
+        }
+      ]
+    }
+  ],
+  "validationRules": {
+    "requireClassBinding": true,
+    "requireUpside": true,
+    "requireDownsideOrTradeoff": true,
+    "requireLifecycle": true,
+    "requireSupportedEffectOpcode": true,
+    "requireDuplicatePolicy": true,
+    "requireStackingPolicy": true,
+    "requirePartySizeBounds": true,
+    "partySizeEligibilityDefault": "generation_time_only",
+    "allowedEffectOpcodes": [
+      "stat_add",
+      "stat_multiply",
+      "armor_ac_add",
+      "resource_add",
+      "message_only"
+    ]
+  },
+  "notes": [
+    "This is a small test-oriented catalog for loader/schema/runtime contract validation, not final balance.",
+    "Stock Barony cannot load these BML-owned data files as standalone behavior.",
+    "Live gameplay is not verified; the package must fail closed without a verified installed-executable BML hook runtime."
+  ]
+}

@@ -77,6 +77,7 @@ typedef struct BmlFakeMapPrefix {
 #define BML_FAKE_CHEST_SPRITE 1791
 #define BML_FAKE_CHEST_LID_SPRITE 1790
 #define BML_FAKE_INTERNAL_MARKER_SKILL58 ((int32_t)0x424D4C00)
+#define BML_FAKE_MAXPLAYERS 4U
 void *bml_fake_selected_entity[4] __asm__("selectedEntity") = { NULL, NULL, NULL, NULL };
 
 static void bml_fake_write_u32(void *base, size_t offset, uint32_t value) {
@@ -210,9 +211,35 @@ void bml_fake_list_FreeAll(BmlFakeList *list) {
     }
 }
 
+enum {
+    BML_FAKE_POTION_EMPTY_TYPE_DEFAULT = 210
+};
+
+int bml_fake_potion_empty_type __asm__("bml_fake_potion_empty_type") = BML_FAKE_POTION_EMPTY_TYPE_DEFAULT;
+int bml_fake_new_item_calls __asm__("bml_fake_new_item_calls") = 0;
+int bml_fake_new_item_last_type __asm__("bml_fake_new_item_last_type") = 0;
+int bml_fake_new_item_last_status __asm__("bml_fake_new_item_last_status") = 0;
+int16_t bml_fake_new_item_last_beatitude __asm__("bml_fake_new_item_last_beatitude") = 0;
+int16_t bml_fake_new_item_last_count __asm__("bml_fake_new_item_last_count") = 0;
+uint32_t bml_fake_new_item_last_appearance __asm__("bml_fake_new_item_last_appearance") = 0U;
+bool bml_fake_new_item_last_identified __asm__("bml_fake_new_item_last_identified") = false;
+void *bml_fake_new_item_last_inventory __asm__("bml_fake_new_item_last_inventory") = NULL;
+void *bml_fake_new_item_last_result __asm__("bml_fake_new_item_last_result") = NULL;
+
 void *bml_fake_newItem(int type, int status, int16_t beatitude, int16_t count, uint32_t appearance, bool identified, BmlFakeList *inventory) __asm__("_Z7newItem8ItemType6StatusssjbP6list_t");
 void *bml_fake_newItem(int type, int status, int16_t beatitude, int16_t count, uint32_t appearance, bool identified, BmlFakeList *inventory) {
-    BmlFakeItem *item = (BmlFakeItem *)calloc(1, sizeof(BmlFakeItem));
+    BmlFakeItem *item;
+    bml_fake_new_item_calls += 1;
+    bml_fake_new_item_last_type = type;
+    bml_fake_new_item_last_status = status;
+    bml_fake_new_item_last_beatitude = beatitude;
+    bml_fake_new_item_last_count = count;
+    bml_fake_new_item_last_appearance = appearance;
+    bml_fake_new_item_last_identified = identified;
+    bml_fake_new_item_last_inventory = inventory;
+    bml_fake_new_item_last_result = NULL;
+
+    item = (BmlFakeItem *)calloc(1, sizeof(BmlFakeItem));
     if (item == NULL) {
         return NULL;
     }
@@ -232,8 +259,211 @@ void *bml_fake_newItem(int type, int status, int16_t beatitude, int16_t count, u
         item->node->element = item;
         item->node->deconstructor = bml_fake_item_deconstructor;
     }
+    bml_fake_new_item_last_result = item;
     return item;
 }
+
+int bml_fake_item_is_potion_empty_carrier_calls __asm__("bml_fake_item_is_potion_empty_carrier_calls") = 0;
+void *bml_fake_item_is_potion_empty_carrier_last_item __asm__("bml_fake_item_is_potion_empty_carrier_last_item") = NULL;
+int bml_fake_item_is_potion_empty_carrier_last_type __asm__("bml_fake_item_is_potion_empty_carrier_last_type") = 0;
+uint32_t bml_fake_item_is_potion_empty_carrier_last_appearance __asm__("bml_fake_item_is_potion_empty_carrier_last_appearance") = 0U;
+uint32_t bml_fake_item_is_potion_empty_carrier_last_uid __asm__("bml_fake_item_is_potion_empty_carrier_last_uid") = 0U;
+bool bml_fake_item_is_potion_empty_carrier_result __asm__("bml_fake_item_is_potion_empty_carrier_result") = false;
+
+bool bml_fake_item_is_potion_empty_carrier(void *item) __asm__("bml_fake_item_is_potion_empty_carrier");
+bool bml_fake_item_is_potion_empty_carrier(void *item) {
+    BmlFakeItem *fake_item = (BmlFakeItem *)item;
+    bml_fake_item_is_potion_empty_carrier_calls += 1;
+    bml_fake_item_is_potion_empty_carrier_last_item = item;
+    bml_fake_item_is_potion_empty_carrier_last_type = fake_item != NULL ? fake_item->type : 0;
+    bml_fake_item_is_potion_empty_carrier_last_appearance = fake_item != NULL ? fake_item->appearance : 0U;
+    bml_fake_item_is_potion_empty_carrier_last_uid = fake_item != NULL ? fake_item->uid : 0U;
+    bml_fake_item_is_potion_empty_carrier_result = fake_item != NULL && fake_item->type == bml_fake_potion_empty_type;
+    return bml_fake_item_is_potion_empty_carrier_result;
+}
+
+int bml_fake_use_item_calls __asm__("bml_fake_use_item_calls") = 0;
+void *bml_fake_use_item_last_item __asm__("bml_fake_use_item_last_item") = NULL;
+int bml_fake_use_item_last_player __asm__("bml_fake_use_item_last_player") = -1;
+void *bml_fake_use_item_last_entity __asm__("bml_fake_use_item_last_entity") = NULL;
+bool bml_fake_use_item_last_arg4 __asm__("bml_fake_use_item_last_arg4") = false;
+bool bml_fake_use_item_last_arg5 __asm__("bml_fake_use_item_last_arg5") = false;
+
+void bml_fake_use_item_impl(void *item, int player, void *entity, bool arg4, bool arg5) {
+    bml_fake_use_item_calls += 1;
+    bml_fake_use_item_last_item = item;
+    bml_fake_use_item_last_player = player;
+    bml_fake_use_item_last_entity = entity;
+    bml_fake_use_item_last_arg4 = arg4;
+    bml_fake_use_item_last_arg5 = arg5;
+}
+
+void bml_fake_useItem(void) __asm__("_Z7useItemP4ItemiP6Entitybb");
+
+__asm__(
+    ".text\n"
+    ".globl _Z7useItemP4ItemiP6Entitybb\n"
+    ".type _Z7useItemP4ItemiP6Entitybb, @function\n"
+    "_Z7useItemP4ItemiP6Entitybb:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_use_item_impl@PLT\n"
+    "  xorl %eax, %eax\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z7useItemP4ItemiP6Entitybb, .-_Z7useItemP4ItemiP6Entitybb\n");
+
+int bml_fake_consume_item_calls __asm__("bml_fake_consume_item_calls") = 0;
+void *bml_fake_consume_item_last_ref __asm__("bml_fake_consume_item_last_ref") = NULL;
+void *bml_fake_consume_item_last_item __asm__("bml_fake_consume_item_last_item") = NULL;
+int bml_fake_consume_item_last_player __asm__("bml_fake_consume_item_last_player") = -1;
+
+void bml_fake_consume_item_impl(void **item_ref, int player) {
+    bml_fake_consume_item_calls += 1;
+    bml_fake_consume_item_last_ref = item_ref;
+    bml_fake_consume_item_last_item = item_ref != NULL ? *item_ref : NULL;
+    bml_fake_consume_item_last_player = player;
+}
+
+void bml_fake_consumeItem(void) __asm__("_Z11consumeItemRP4Itemi");
+
+__asm__(
+    ".text\n"
+    ".globl _Z11consumeItemRP4Itemi\n"
+    ".type _Z11consumeItemRP4Itemi, @function\n"
+    "_Z11consumeItemRP4Itemi:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_consume_item_impl@PLT\n"
+    "  xorl %eax, %eax\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z11consumeItemRP4Itemi, .-_Z11consumeItemRP4Itemi\n");
+
+int bml_fake_item_get_name_calls __asm__("bml_fake_item_get_name_calls") = 0;
+void *bml_fake_item_get_name_last_item __asm__("bml_fake_item_get_name_last_item") = NULL;
+char bml_fake_item_get_name_result[64] __asm__("bml_fake_item_get_name_result") = "Fake Barony item";
+
+const char *bml_fake_item_get_name_impl(void *item) {
+    bml_fake_item_get_name_calls += 1;
+    bml_fake_item_get_name_last_item = item;
+    return bml_fake_item_get_name_result;
+}
+
+void bml_fake_itemGetName(void) __asm__("_ZNK4Item7getNameEv");
+
+__asm__(
+    ".text\n"
+    ".globl _ZNK4Item7getNameEv\n"
+    ".type _ZNK4Item7getNameEv, @function\n"
+    "_ZNK4Item7getNameEv:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_item_get_name_impl@PLT\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _ZNK4Item7getNameEv, .-_ZNK4Item7getNameEv\n");
+
+int bml_fake_stat_get_str_calls __asm__("bml_fake_stat_get_str_calls") = 0;
+void *bml_fake_stat_get_str_last_stat __asm__("bml_fake_stat_get_str_last_stat") = NULL;
+void *bml_fake_stat_get_str_last_entity __asm__("bml_fake_stat_get_str_last_entity") = NULL;
+int bml_fake_stat_get_str_value __asm__("bml_fake_stat_get_str_value") = 10;
+int bml_fake_stat_get_dex_calls __asm__("bml_fake_stat_get_dex_calls") = 0;
+void *bml_fake_stat_get_dex_last_stat __asm__("bml_fake_stat_get_dex_last_stat") = NULL;
+void *bml_fake_stat_get_dex_last_entity __asm__("bml_fake_stat_get_dex_last_entity") = NULL;
+int bml_fake_stat_get_dex_value __asm__("bml_fake_stat_get_dex_value") = 10;
+
+int bml_fake_stat_get_str_impl(void *stat, void *entity) {
+    bml_fake_stat_get_str_calls += 1;
+    bml_fake_stat_get_str_last_stat = stat;
+    bml_fake_stat_get_str_last_entity = entity;
+    return bml_fake_stat_get_str_value;
+}
+
+int bml_fake_stat_get_dex_impl(void *stat, void *entity) {
+    bml_fake_stat_get_dex_calls += 1;
+    bml_fake_stat_get_dex_last_stat = stat;
+    bml_fake_stat_get_dex_last_entity = entity;
+    return bml_fake_stat_get_dex_value;
+}
+
+void bml_fake_statGetSTR(void) __asm__("_Z10statGetSTRP4StatP6Entity");
+
+__asm__(
+    ".text\n"
+    ".globl _Z10statGetSTRP4StatP6Entity\n"
+    ".type _Z10statGetSTRP4StatP6Entity, @function\n"
+    "_Z10statGetSTRP4StatP6Entity:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_stat_get_str_impl@PLT\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z10statGetSTRP4StatP6Entity, .-_Z10statGetSTRP4StatP6Entity\n");
+
+void bml_fake_statGetDEX(void) __asm__("_Z10statGetDEXP4StatP6Entity");
+
+__asm__(
+    ".text\n"
+    ".globl _Z10statGetDEXP4StatP6Entity\n"
+    ".type _Z10statGetDEXP4StatP6Entity, @function\n"
+    "_Z10statGetDEXP4StatP6Entity:\n"
+    "  push %rbp\n"
+    "  mov %rsp, %rbp\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  nop\n"
+    "  call bml_fake_stat_get_dex_impl@PLT\n"
+    "  pop %rbp\n"
+    "  ret\n"
+    ".size _Z10statGetDEXP4StatP6Entity, .-_Z10statGetDEXP4StatP6Entity\n");
 
 void *bml_fake_add_item_to_void_chest_server_impl(void *entity, int player, void *item, bool force_new_stack, void *picked_up_stack) {
     (void)entity;
@@ -796,5 +1026,7 @@ int bml_fake_map_rng __asm__("map_rng") = 1;
 int bml_fake_map_server_rng __asm__("map_server_rng") = 1;
 int bml_fake_multiplayer __asm__("multiplayer") = 1;
 int bml_fake_clientnum __asm__("clientnum") = 1;
+int32_t bml_fake_client_classes[BML_FAKE_MAXPLAYERS] __asm__("client_classes") = { 0, 1, 0, 0 };
+bool bml_fake_client_disconnected[BML_FAKE_MAXPLAYERS] __asm__("client_disconnected") = { false, true, true, true };
 int bml_fake_openedChest __asm__("openedChest") = 1;
 bool *bml_fake_shoparea __asm__("shoparea") = bml_fake_shoparea_storage;

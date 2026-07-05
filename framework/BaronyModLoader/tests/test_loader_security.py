@@ -83,37 +83,127 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         (package_dir / "content" / "marker.txt").write_text("installed\n", encoding="utf-8")
         return package_dir
 
-    def make_runebound_loot_package(self, workspace: Path) -> Path:
-        package_dir = workspace / "runebound-loot"
+    def make_runebound_elixirs_package(self, workspace: Path) -> Path:
+        package_dir = workspace / "runebound-elixirs"
         package_dir.mkdir(parents=True)
-        capabilities = [
-            "item_instance_metadata",
-            "loot_affix_rolls",
-            "item_name_tooltip_rendering",
-            "save_item_metadata",
-            "weapon_attack_modifier",
-            "multiplayer_version_metadata",
-        ]
+        data_dir = package_dir / "content" / "data" / "bml"
+        data_dir.mkdir(parents=True)
+        capabilities = list(loader.CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES)
+        write_json(
+            data_dir / "elixir-catalog.json",
+            {
+                "schemaVersion": "0.1.0",
+                "namespace": "runebound_elixirs",
+                "classIds": {"CLASS_BARBARIAN": "barbarian"},
+                "effects": [
+                    {
+                        "id": "iron_skin_ac",
+                        "opcode": "armor_ac_add",
+                        "amount": 2,
+                        "target": "player",
+                    }
+                ],
+                "elixirs": [
+                    {
+                        "id": "iron_skin_bargain",
+                        "displayName": "Elixir of Iron Skin",
+                        "shortName": "Iron Skin",
+                        "carrierItemType": "POTION_EMPTY",
+                        "classBindings": ["CLASS_BARBARIAN"],
+                        "partySizeEligibility": {"minPartySize": 1, "maxPartySize": 4},
+                        "lifecycle": "run_permanent",
+                        "effects": ["iron_skin_ac"],
+                        "upside": "Gain armor class.",
+                        "tradeoffSummary": "Move more slowly after drinking.",
+                        "dropWeight": 1,
+                        "readabilityText": "Barbarian bargain: armor for speed.",
+                        "consumeText": "Your skin hardens like iron.",
+                        "visibilityText": "Iron Skin bargain active.",
+                    }
+                ],
+                "validationRules": {
+                    "requireClassBinding": True,
+                    "requireTradeoff": True,
+                    "requirePartySizeBounds": True,
+                },
+            },
+        )
+        write_json(
+            data_dir / "elixir-drop-tables.json",
+            {
+                "schemaVersion": "0.1.0",
+                "eligibleSources": ["chest"],
+                "classPolicy": {
+                    "soloPlayerClassOnly": True,
+                    "multiplayerPresentClasses": True,
+                },
+                "partySizePolicy": {
+                    "minPartySize": 1,
+                    "maxPartySize": 4,
+                    "eligibility": "generation_time_only",
+                },
+                "rolls": [
+                    {
+                        "source": "chest",
+                        "baseChance": 0.12,
+                        "weightTable": [{"elixirId": "iron_skin_bargain", "weight": 1}],
+                        "maxPerFloor": 1,
+                    }
+                ],
+                "antiBloatPolicy": {"maxConcurrentDrops": 2, "preventDuplicateElixirIds": True},
+            },
+        )
         write_json(
             package_dir / loader.PACKAGE_MANIFEST_NAME,
             {
                 "formatVersion": loader.SCHEMA_VERSION,
-                "id": "jml.runebound-loot",
-                "name": "Runebound Loot",
+                "id": "jml.runebound-elixirs",
+                "name": "Runebound: Elixirs",
                 "version": "0.1.0",
                 "kind": "gameplay-mod",
                 "engine": {
                     "runtimeContract": loader.RUNTIME_CONTRACT,
                     "minimumRuntimeVersion": "0.1.0",
                     "capabilities": [
-                        {"id": capability, "version": "0.1.0", "required": True, "reason": "Runebound Loot MVP validation"}
+                        {"id": capability, "version": "0.1.0", "required": True, "reason": "Runebound: Elixirs MVP validation"}
                         for capability in capabilities
                     ],
                 },
                 "modules": {
-                    "lootAffixes": {
-                        "namespace": "runebound_loot",
+                    "runeboundElixirs": {
+                        "namespace": "runebound_elixirs",
                         "schemaVersion": "0.1.0",
+                        "authority": "host",
+                        "carrierItemType": "POTION_EMPTY",
+                        "dataFiles": [
+                            "content/data/bml/elixir-catalog.json",
+                            "content/data/bml/elixir-drop-tables.json",
+                        ],
+                        "dropPolicy": {
+                            "eligibleClasses": "present_party_classes",
+                            "soloClassPolicy": "local_player_only",
+                            "partySizeEligibility": "generation_time_only",
+                            "rngAuthority": "host",
+                        },
+                        "activeEffects": {
+                            "stateScope": "profile_save_sidecar",
+                            "stateFile": "state/jml.runebound-elixirs/elixir-effects-v1.json",
+                            "savePolicy": "runtime_owned",
+                            "duplicatePolicy": "onePerElixirIdPerPlayer",
+                            "failurePolicy": "fail-closed",
+                        },
+                        "display": {
+                            "nameRendering": "elixir_display_name",
+                            "tooltipRendering": "upside_and_tradeoff",
+                            "consumeMessages": True,
+                            "reminderPolicy": "runtime_diagnostics",
+                        },
+                        "multiplayer": {
+                            "versionPolicy": "exact_package_and_contract",
+                            "stateAuthority": "host",
+                            "clientCompatibility": "reject_mismatch",
+                            "failurePolicy": "fail-closed",
+                        },
                         "failurePolicy": "fail-closed",
                     }
                 },
@@ -264,20 +354,109 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertEqual(archive_install.returncode, 0, archive_install.stdout)
             self.assertEqual((archive_store / "jml.stash" / "0.1.0" / "content" / "marker.txt").read_text(encoding="utf-8"), "installed\n")
 
-    def test_runebound_loot_capabilities_do_not_require_stash_modules(self) -> None:
+    def test_runebound_elixirs_capabilities_do_not_require_stash_modules(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
-            package_dir = self.make_runebound_loot_package(workspace)
+            package_dir = self.make_runebound_elixirs_package(workspace)
 
             validate = self.run_cli("package", "validate", str(package_dir))
             self.assertEqual(validate.returncode, 0, validate.stdout)
             self.assertNotIn("BML_PACKAGE_CAPABILITY_REQUIRED_MISSING", validate.stdout)
             self.assertNotIn("BML_PACKAGE_STASH_MODULE_MISSING", validate.stdout)
 
+    def test_runebound_elixirs_rejects_missing_module(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_elixirs_package(workspace)
+            manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["modules"] = {}
+            write_json(manifest_path, manifest)
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertNotEqual(validate.returncode, 0, validate.stdout)
+            self.assertIn("BML_PACKAGE_RUNEBOUND_ELIXIRS_MODULE_MISSING", validate.stdout)
+
+    def test_runebound_elixirs_rejects_missing_data_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_elixirs_package(workspace)
+            (package_dir / "content" / "data" / "bml" / "elixir-catalog.json").unlink()
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertNotEqual(validate.returncode, 0, validate.stdout)
+            self.assertIn("BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_MISSING", validate.stdout)
+
+    def test_runebound_elixirs_rejects_data_file_outside_bml_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_elixirs_package(workspace)
+            manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["modules"]["runeboundElixirs"]["dataFiles"][0] = "content/elixir-catalog.json"
+            write_json(manifest_path, manifest)
+            write_json(package_dir / "content" / "elixir-catalog.json", {"schemaVersion": "0.1.0"})
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertNotEqual(validate.returncode, 0, validate.stdout)
+            self.assertIn("BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_OUTSIDE_ROOT", validate.stdout)
+
+    def test_runebound_elixirs_rejects_catalog_missing_tradeoff(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_elixirs_package(workspace)
+            catalog_path = package_dir / "content" / "data" / "bml" / "elixir-catalog.json"
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+            catalog["elixirs"][0].pop("tradeoffSummary")
+            write_json(catalog_path, catalog)
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertNotEqual(validate.returncode, 0, validate.stdout)
+            self.assertIn("BML_PACKAGE_RUNEBOUND_ELIXIR_TRADEOFF_MISSING", validate.stdout)
+
+    def test_runebound_elixirs_rejects_unsupported_effect_opcode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_elixirs_package(workspace)
+            catalog_path = package_dir / "content" / "data" / "bml" / "elixir-catalog.json"
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+            catalog["effects"][0]["opcode"] = "teleport_player"
+            write_json(catalog_path, catalog)
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertNotEqual(validate.returncode, 0, validate.stdout)
+            self.assertIn("BML_PACKAGE_RUNEBOUND_ELIXIR_EFFECT_OPCODE_UNSUPPORTED", validate.stdout)
+
+    def test_runebound_elixirs_rejects_runtime_missing_required_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_elixirs_package(workspace)
+            package, package_result = loader.load_package(str(package_dir))
+            self.assertTrue(package_result.ok, [problem.code for problem in package_result.problems])
+            assert package is not None
+            validation = loader.validate_package(package)
+            self.assertTrue(validation.ok, [problem.code for problem in validation.problems])
+            runtime_info = {
+                "runtimeId": "runebound-test-runtime",
+                "runtimeVersion": "0.1.0",
+                "contract": {"id": loader.RUNTIME_CONTRACT_ID, "versions": [loader.RUNTIME_CONTRACT_VERSION]},
+                "capabilities": [
+                    {"id": capability, "version": "0.1.0"}
+                    for capability in loader.CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES
+                    if capability != "elixir_consumption"
+                ],
+            }
+
+            result = loader.validate_runtime_info(runtime_info, package)
+            self.assertFalse(result.ok)
+            missing = [problem for problem in result.problems if problem.code == "BML_RUNTIME_CAPABILITY_MISSING"]
+            self.assertEqual(len(missing), 1, [problem.code for problem in result.problems])
+            self.assertEqual(missing[0].details["capability"], "elixir_consumption")
+
     def test_stash_package_still_requires_canonical_stash_capabilities(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
-            package_dir = self.make_runebound_loot_package(workspace)
+            package_dir = self.make_runebound_elixirs_package(workspace)
             manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["id"] = "jml.stash"
@@ -290,7 +469,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                     "reason": "Stash must keep canonical capability enforcement",
                 }
             ]
-            manifest["modules"] = {"lootAffixes": manifest["modules"]["lootAffixes"]}
+            manifest["modules"] = {"runeboundElixirs": manifest["modules"]["runeboundElixirs"]}
             write_json(manifest_path, manifest)
 
             validate = self.run_cli("package", "validate", str(package_dir))

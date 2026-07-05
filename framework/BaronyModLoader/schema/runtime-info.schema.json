@@ -74,7 +74,8 @@
           "persistentInventories",
           "voidChestBindings",
           "placements",
-          "multiplayer"
+          "multiplayer",
+          "runeboundElixirs"
         ]
       },
       "uniqueItems": true
@@ -138,7 +139,13 @@
         "void_chest_binding",
         "placement_lobby",
         "placement_shop",
-        "multiplayer_version_metadata"
+        "multiplayer_version_metadata",
+        "item_name_tooltip_rendering",
+        "elixir_item_metadata",
+        "elixir_drop_generation",
+        "elixir_consumption",
+        "active_elixir_effect_state",
+        "active_elixir_effect_application"
       ]
     },
     "capabilityRequest": {

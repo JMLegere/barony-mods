@@ -105,7 +105,50 @@
       "id": "multiplayer_version_metadata",
       "version": "0.1.0",
       "requiredForStash": true,
-      "description": "Host/client compatibility metadata for package, runtime, and persistent inventory schema versions."
+      "requiredForRuneboundElixirs": true,
+      "description": "Host/client compatibility metadata for package, runtime, persistent inventory schema versions, and Runebound elixir package/runtime data contracts."
+    },
+    {
+      "id": "item_name_tooltip_rendering",
+      "version": "0.1.0",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "description": "Engine-owned item name and tooltip rendering hooks for catalog-backed Runebound elixir carriers."
+    },
+    {
+      "id": "elixir_item_metadata",
+      "version": "0.1.0",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "description": "Runtime sidecar metadata associating inert POTION_EMPTY carrier items with authored Runebound elixir ids."
+    },
+    {
+      "id": "elixir_drop_generation",
+      "version": "0.1.0",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "description": "Host-authoritative class-aware and party-size-aware Runebound elixir generation metadata for the live-hook report path."
+    },
+    {
+      "id": "elixir_consumption",
+      "version": "0.1.0",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "description": "Live useItem handling for eligible Runebound elixir carrier consumption under engine-owned inventory semantics."
+    },
+    {
+      "id": "active_elixir_effect_state",
+      "version": "0.1.0",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "description": "Profile/save sidecar ownership for consumed Runebound elixir effects."
+    },
+    {
+      "id": "active_elixir_effect_application",
+      "version": "0.1.0",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "description": "Live stat effect application hooks for supported Runebound elixir opcodes."
     }
   ],
   "moduleSupport": [
@@ -113,7 +156,8 @@
     "persistentInventories",
     "voidChestBindings",
     "placements",
-    "multiplayer"
+    "multiplayer",
+    "runeboundElixirs"
   ],
   "runtimeReportPaths": {
     "runtimeManifest": "BaronyModLoader/runtime-manifest.json",

@@ -124,18 +124,63 @@ CANONICAL_STASH_CAPABILITIES = (
     "multiplayer_version_metadata",
 )
 
-CANONICAL_RUNEBOUND_LOOT_CAPABILITIES = (
-    "item_instance_metadata",
-    "loot_affix_rolls",
+CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES = (
+    "elixir_item_metadata",
+    "elixir_drop_generation",
+    "elixir_consumption",
+    "active_elixir_effect_state",
+    "active_elixir_effect_application",
     "item_name_tooltip_rendering",
-    "save_item_metadata",
-    "weapon_attack_modifier",
     "multiplayer_version_metadata",
 )
 
-RECOGNIZED_CAPABILITIES = frozenset(
-    (*CANONICAL_STASH_CAPABILITIES, *CANONICAL_RUNEBOUND_LOOT_CAPABILITIES)
+
+RUNEBOUND_ELIXIRS_PACKAGE_ID = "jml.runebound-elixirs"
+RUNEBOUND_ELIXIRS_MODULE_NAME = "runeboundElixirs"
+RUNEBOUND_ELIXIRS_NAMESPACE = "runebound_elixirs"
+RUNEBOUND_ELIXIRS_CARRIER_ITEM_TYPE = "POTION_EMPTY"
+RUNEBOUND_ELIXIRS_DATA_ROOT = "content/data/bml"
+RUNEBOUND_ELIXIRS_CATALOG_FILE = f"{RUNEBOUND_ELIXIRS_DATA_ROOT}/elixir-catalog.json"
+RUNEBOUND_ELIXIRS_DROP_TABLE_FILE = f"{RUNEBOUND_ELIXIRS_DATA_ROOT}/elixir-drop-tables.json"
+RUNEBOUND_ELIXIRS_REQUIRED_DATA_FILES = (RUNEBOUND_ELIXIRS_CATALOG_FILE, RUNEBOUND_ELIXIRS_DROP_TABLE_FILE)
+RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT = "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
+
+RUNEBOUND_ELIXIRS_REQUIRED_MODULE_KEYS = (
+    "namespace",
+    "schemaVersion",
+    "authority",
+    "carrierItemType",
+    "dataFiles",
+    "dropPolicy",
+    "activeEffects",
+    "display",
+    "multiplayer",
+    "failurePolicy",
 )
+RUNEBOUND_ELIXIRS_SUPPORTED_EFFECT_OPCODES = frozenset(
+    {
+        "stat_add",
+        "stat_multiply",
+        "armor_ac_add",
+        "resource_add",
+        "message_only",
+    }
+)
+
+RECOGNIZED_CAPABILITIES = frozenset((*CANONICAL_STASH_CAPABILITIES, *CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES))
+RECOGNIZED_RUNTIME_MODULES = frozenset(
+    {
+        "persistentStorage",
+        "persistentInventories",
+        "voidChestBindings",
+        "placements",
+        "multiplayer",
+        "runeboundElixirs",
+    }
+)
+RECOGNIZED_RUNTIME_REPORT_MODULES = frozenset((*RECOGNIZED_RUNTIME_MODULES, f"modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}"))
+
+
 
 
 OUTDATED_CAPABILITY_ALIASES = {
@@ -605,6 +650,33 @@ def validate_capability_name_list(result: ValidationResult, values: Any, source:
             result.add("BML_PACKAGE_CAPABILITY_VERSION_INVALID", "error", f"Capability version must be semver-ish: {item_source}", source=item_source, capability=cap_id, version=version)
     return seen
 
+def validate_runtime_module_name_list(result: ValidationResult, values: Any, source: str, *, required_source: bool = False) -> set[str]:
+    seen: set[str] = set()
+    if values is None:
+        if required_source:
+            result.add("BML_PACKAGE_RUNTIME_MODULES_MISSING", "error", f"Missing runtime module list: {source}", source=source)
+        return seen
+    if not isinstance(values, list):
+        result.add("BML_PACKAGE_RUNTIME_MODULES_INVALID", "error", f"Runtime module list must be an array: {source}", source=source)
+        return seen
+    for index, raw in enumerate(values):
+        item_source = f"{source}[{index}]"
+        if not isinstance(raw, str) or not raw:
+            result.add("BML_PACKAGE_RUNTIME_MODULE_INVALID", "error", f"Runtime module entry must be a non-empty string: {item_source}", source=item_source, value=raw)
+            continue
+        seen.add(raw)
+        if raw not in RECOGNIZED_RUNTIME_MODULES:
+            result.add(
+                "BML_PACKAGE_RUNTIME_MODULE_UNKNOWN",
+                "error",
+                f"Unknown runtime module {raw!r} for v0 BaronyModLoader.",
+                module=raw,
+                allowed=sorted(RECOGNIZED_RUNTIME_MODULES),
+                source=item_source,
+            )
+    return seen
+
+
 
 def is_stash_package(manifest: dict[str, Any]) -> bool:
     return manifest.get("id") == "jml.stash" or manifest.get("name") == "Stash"
@@ -724,6 +796,294 @@ def validate_stash_modules(manifest: dict[str, Any], result: ValidationResult) -
                     )
 
 
+
+def is_runebound_elixirs_package(manifest: dict[str, Any]) -> bool:
+    return manifest.get("id") == RUNEBOUND_ELIXIRS_PACKAGE_ID
+
+
+def package_json_file(loaded: LoadedPackage, relative_name: str) -> tuple[Any | None, str | None]:
+    try:
+        if loaded.archive_members is not None:
+            with zipfile.ZipFile(loaded.manifest_path) as archive:
+                return json.loads(archive.read(relative_name).decode("utf-8")), None
+        return parse_json_file(loaded.package_root / relative_name), None
+    except KeyError:
+        return None, "archive member is missing"
+    except UnicodeDecodeError:
+        return None, "file is not UTF-8 JSON"
+    except json.JSONDecodeError as exc:
+        return None, f"file is not valid JSON: line {exc.lineno}, column {exc.colno}: {exc.msg}"
+    except OSError as exc:
+        return None, f"could not read file: {exc}"
+
+
+def non_empty_contract_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(non_empty_contract_value(item) for item in value)
+    if isinstance(value, dict):
+        return any(non_empty_contract_value(item) for item in value.values())
+    return value is not None
+
+
+def named_contract_entries(value: Any, source: str) -> list[tuple[str, Any, str]]:
+    if isinstance(value, list):
+        return [(str(index), item, f"{source}[{index}]") for index, item in enumerate(value)]
+    if isinstance(value, dict):
+        return [(str(key), item, f"{source}.{key}") for key, item in value.items()]
+    return []
+
+
+def validate_party_size_bounds(result: ValidationResult, value: Any, source: str) -> None:
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            validate_party_size_bounds(result, item, f"{source}[{index}]")
+        return
+    if not isinstance(value, dict):
+        return
+
+    minimum = value.get("minPartySize")
+    maximum = value.get("maxPartySize")
+    min_ok = minimum is None or (isinstance(minimum, int) and not isinstance(minimum, bool) and 1 <= minimum <= 4)
+    max_ok = maximum is None or (isinstance(maximum, int) and not isinstance(maximum, bool) and 1 <= maximum <= 4)
+    if not min_ok or not max_ok:
+        result.add(
+            "BML_PACKAGE_RUNEBOUND_ELIXIRS_PARTY_SIZE_INVALID",
+            "error",
+            "Runebound elixir party-size bounds must be integer player counts between 1 and 4.",
+            source=source,
+            minPartySize=minimum,
+            maxPartySize=maximum,
+        )
+    elif isinstance(minimum, int) and isinstance(maximum, int) and minimum > maximum:
+        result.add(
+            "BML_PACKAGE_RUNEBOUND_ELIXIRS_PARTY_SIZE_INVALID",
+            "error",
+            "Runebound elixir minPartySize must not exceed maxPartySize.",
+            source=source,
+            minPartySize=minimum,
+            maxPartySize=maximum,
+        )
+
+    for key, item in value.items():
+        if isinstance(item, (dict, list)):
+            validate_party_size_bounds(result, item, f"{source}.{key}")
+
+
+def validate_runebound_elixir_effect_opcodes(result: ValidationResult, value: Any, source: str) -> None:
+    if value is None:
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIRS_EFFECTS_MISSING", "error", "Runebound elixir catalog must declare effect opcodes.", source=source)
+        return
+    if not isinstance(value, (list, dict)):
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIRS_EFFECTS_INVALID", "error", "Runebound elixir effects must be an array or object.", source=source)
+        return
+
+    for _name, effect, effect_source in named_contract_entries(value, source):
+        if not isinstance(effect, dict):
+            result.add("BML_PACKAGE_RUNEBOUND_ELIXIR_EFFECT_INVALID", "error", "Runebound elixir effect definition must be an object.", source=effect_source)
+            continue
+        opcode = effect.get("opcode")
+        if not isinstance(opcode, str) or not opcode:
+            result.add("BML_PACKAGE_RUNEBOUND_ELIXIR_EFFECT_OPCODE_MISSING", "error", "Runebound elixir effect definition must declare an opcode.", source=effect_source)
+            continue
+        if opcode not in RUNEBOUND_ELIXIRS_SUPPORTED_EFFECT_OPCODES:
+            result.add(
+                "BML_PACKAGE_RUNEBOUND_ELIXIR_EFFECT_OPCODE_UNSUPPORTED",
+                "error",
+                "Runebound elixir effect opcode is not supported by this loader contract.",
+                source=effect_source,
+                opcode=opcode,
+                supported=sorted(RUNEBOUND_ELIXIRS_SUPPORTED_EFFECT_OPCODES),
+            )
+
+
+def validate_runebound_elixir_catalog(result: ValidationResult, catalog: Any, source: str) -> None:
+    if not isinstance(catalog, dict):
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIR_CATALOG_INVALID", "error", "Runebound elixir catalog root must be an object.", source=source)
+        return
+
+    validate_runebound_elixir_effect_opcodes(result, catalog.get("effects"), f"{source}.effects")
+    validate_party_size_bounds(result, catalog, source)
+
+    elixirs = catalog.get("elixirs")
+    entries = named_contract_entries(elixirs, f"{source}.elixirs")
+    if not entries:
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIR_CATALOG_EMPTY", "error", "Runebound elixir catalog must declare at least one elixir.", source=f"{source}.elixirs")
+        return
+
+    for _name, elixir, elixir_source in entries:
+        if not isinstance(elixir, dict):
+            result.add("BML_PACKAGE_RUNEBOUND_ELIXIR_INVALID", "error", "Runebound elixir definition must be an object.", source=elixir_source)
+            continue
+        class_bindings = elixir.get("classBindings")
+        if not isinstance(class_bindings, (list, dict)) or not class_bindings:
+            result.add(
+                "BML_PACKAGE_RUNEBOUND_ELIXIR_CLASS_BINDINGS_MISSING",
+                "error",
+                "Every Runebound elixir must declare at least one class binding.",
+                source=f"{elixir_source}.classBindings",
+            )
+        if not any(non_empty_contract_value(elixir.get(key)) for key in ("upside", "upsideText", "upsideSummary", "benefit", "benefits")):
+            result.add(
+                "BML_PACKAGE_RUNEBOUND_ELIXIR_UPSIDE_MISSING",
+                "error",
+                "Every Runebound elixir must declare explicit upside text or fields.",
+                source=elixir_source,
+            )
+        if not any(
+            non_empty_contract_value(elixir.get(key))
+            for key in ("downside", "downsideText", "downsideSummary", "tradeoff", "tradeoffs", "tradeoffText", "tradeoffSummary")
+        ):
+            result.add(
+                "BML_PACKAGE_RUNEBOUND_ELIXIR_TRADEOFF_MISSING",
+                "error",
+                "Every Runebound elixir must declare explicit downside or tradeoff text or fields.",
+                source=elixir_source,
+            )
+        inline_effects = elixir.get("effects")
+        if isinstance(inline_effects, (list, dict)):
+            for _effect_name, effect, effect_source in named_contract_entries(inline_effects, f"{elixir_source}.effects"):
+                if isinstance(effect, dict) and "opcode" in effect:
+                    validate_runebound_elixir_effect_opcodes(result, [effect], effect_source)
+
+
+def validate_runebound_elixir_drop_tables(result: ValidationResult, drop_tables: Any, source: str) -> None:
+    if not isinstance(drop_tables, dict):
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIR_DROP_TABLES_INVALID", "error", "Runebound elixir drop table root must be an object.", source=source)
+        return
+    validate_party_size_bounds(result, drop_tables, source)
+
+
+def validate_runebound_elixirs_data_file_path(loaded: LoadedPackage, result: ValidationResult, value: Any, source: str) -> str | None:
+    if not isinstance(value, str) or not value:
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_INVALID", "error", "Runebound elixir data file must be a non-empty relative path.", source=source, path=value)
+        return None
+    relative_name = safe_archive_name(value)
+    if relative_name is None:
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_INVALID", "error", "Runebound elixir data file path must be safe.", source=source, path=value)
+        return None
+    if not relative_path_is_under_directory(relative_name, RUNEBOUND_ELIXIRS_DATA_ROOT):
+        result.add(
+            "BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_OUTSIDE_ROOT",
+            "error",
+            "Runebound elixir data files must live under content/data/bml/.",
+            source=source,
+            path=value,
+            requiredRoot=RUNEBOUND_ELIXIRS_DATA_ROOT,
+        )
+        return None
+    if not package_contains_file(loaded, relative_name):
+        result.add("BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_MISSING", "error", "Runebound elixir data file does not exist in the package.", source=source, path=relative_name)
+        return None
+    return relative_name
+
+
+def validate_runebound_elixirs_modules(loaded: LoadedPackage, result: ValidationResult) -> None:
+    manifest = loaded.manifest
+    modules = manifest.get("modules")
+    if not isinstance(modules, dict):
+        result.add("BML_PACKAGE_MODULES_MISSING", "error", "Runebound: Elixirs package must declare a modules object.")
+        return
+
+    module = modules.get(RUNEBOUND_ELIXIRS_MODULE_NAME)
+    if not isinstance(module, dict):
+        result.add(
+            "BML_PACKAGE_RUNEBOUND_ELIXIRS_MODULE_MISSING",
+            "error",
+            "Runebound: Elixirs package must declare modules.runeboundElixirs.",
+            module=RUNEBOUND_ELIXIRS_MODULE_NAME,
+        )
+        return
+
+    for key in RUNEBOUND_ELIXIRS_REQUIRED_MODULE_KEYS:
+        if key not in module:
+            result.add(
+                "BML_PACKAGE_RUNEBOUND_ELIXIRS_MODULE_KEY_MISSING",
+                "error",
+                f"Runebound elixir module is missing required key modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.{key}.",
+                field=f"modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.{key}",
+            )
+
+    expected_strings = {
+        "namespace": RUNEBOUND_ELIXIRS_NAMESPACE,
+        "authority": "host",
+        "carrierItemType": RUNEBOUND_ELIXIRS_CARRIER_ITEM_TYPE,
+        "failurePolicy": "fail-closed",
+    }
+    for key, expected in expected_strings.items():
+        value = module.get(key)
+        if value != expected:
+            result.add(
+                "BML_PACKAGE_RUNEBOUND_ELIXIRS_MODULE_FIELD_INVALID",
+                "error",
+                f"Runebound elixir module field modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.{key} must be {expected!r}.",
+                field=f"modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.{key}",
+                expected=expected,
+                value=value,
+            )
+
+    schema_version = module.get("schemaVersion")
+    if not isinstance(schema_version, str) or not is_semverish(schema_version):
+        result.add(
+            "BML_PACKAGE_RUNEBOUND_ELIXIRS_MODULE_FIELD_INVALID",
+            "error",
+            "Runebound elixir module schemaVersion must be semver-ish x.y.z.",
+            field=f"modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.schemaVersion",
+            value=schema_version,
+        )
+
+    for key in ("dropPolicy", "activeEffects", "display", "multiplayer"):
+        if key in module and not isinstance(module.get(key), dict):
+            result.add(
+                "BML_PACKAGE_RUNEBOUND_ELIXIRS_MODULE_FIELD_INVALID",
+                "error",
+                f"Runebound elixir module field modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.{key} must be an object.",
+                field=f"modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.{key}",
+                value=module.get(key),
+            )
+
+    data_files = module.get("dataFiles")
+    if not isinstance(data_files, list):
+        result.add(
+            "BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILES_INVALID",
+            "error",
+            "Runebound elixir module dataFiles must be an array.",
+            field=f"modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.dataFiles",
+        )
+        data_files = []
+
+    validated_files: set[str] = set()
+    for index, raw_path in enumerate(data_files):
+        relative_name = validate_runebound_elixirs_data_file_path(
+            loaded,
+            result,
+            raw_path,
+            f"modules.{RUNEBOUND_ELIXIRS_MODULE_NAME}.dataFiles[{index}]",
+        )
+        if relative_name is not None:
+            validated_files.add(relative_name)
+
+    missing_required = [relative_name for relative_name in RUNEBOUND_ELIXIRS_REQUIRED_DATA_FILES if relative_name not in validated_files]
+    if missing_required:
+        result.add(
+            "BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_REQUIRED_MISSING",
+            "error",
+            "Runebound elixir module must list the required elixir catalog and drop-table data files.",
+            missing=missing_required,
+            required=list(RUNEBOUND_ELIXIRS_REQUIRED_DATA_FILES),
+        )
+
+    for relative_name in sorted(validated_files):
+        payload, error = package_json_file(loaded, relative_name)
+        if error is not None:
+            result.add("BML_PACKAGE_RUNEBOUND_ELIXIRS_DATA_FILE_PARSE_FAILED", "error", "Runebound elixir data file could not be parsed.", path=relative_name, error=error)
+            continue
+        if relative_name == RUNEBOUND_ELIXIRS_CATALOG_FILE:
+            validate_runebound_elixir_catalog(result, payload, relative_name)
+        elif relative_name == RUNEBOUND_ELIXIRS_DROP_TABLE_FILE:
+            validate_runebound_elixir_drop_tables(result, payload, relative_name)
+
 def relative_path_is_under_directory(path_name: str, directory_name: str) -> bool:
     return path_name.startswith(f"{directory_name.rstrip('/')}/")
 
@@ -836,7 +1196,54 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
                 present=sorted(engine_cap_ids),
             )
 
+
     native = manifest.get("native")
+
+    if is_runebound_elixirs_package(manifest):
+        missing = [capability for capability in CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES if capability not in required_ids]
+        if missing:
+            result.add(
+                "BML_PACKAGE_CAPABILITY_REQUIRED_MISSING",
+                "error",
+                "Runebound: Elixirs package is missing required canonical elixir capability ids.",
+                missing=missing,
+                required=list(CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES),
+                present=sorted(engine_cap_ids),
+            )
+        if isinstance(native, dict):
+            native_expectations = {
+                "required": True,
+                "mode": "paired-engine-runtime",
+                "runtimeStrategy": RUNTIME_STRATEGY_INSTALLED_HOOK,
+            }
+            for field, expected in native_expectations.items():
+                if native.get(field) != expected:
+                    result.add(
+                        "BML_PACKAGE_RUNEBOUND_ELIXIRS_NATIVE_REQUIREMENT_INVALID",
+                        "error",
+                        f"Runebound: Elixirs native.{field} must be {expected!r} when declared.",
+                        field=f"native.{field}",
+                        expected=expected,
+                        value=native.get(field),
+                    )
+            if not non_empty_contract_value(native.get("runtimeAuthority")):
+                result.add(
+                    "BML_PACKAGE_RUNEBOUND_ELIXIRS_NATIVE_REQUIREMENT_INVALID",
+                    "error",
+                    "Runebound: Elixirs native.runtimeAuthority must name the paired installed-binary hook runtime when native requirements are declared.",
+                    field="native.runtimeAuthority",
+                    value=native.get("runtimeAuthority"),
+                )
+            platforms = native.get("platforms")
+            if platforms is not None and (not isinstance(platforms, list) or not platforms):
+                result.add(
+                    "BML_PACKAGE_RUNEBOUND_ELIXIRS_NATIVE_REQUIREMENT_INVALID",
+                    "error",
+                    "Runebound: Elixirs native.platforms must be a non-empty array when declared.",
+                    field="native.platforms",
+                    value=platforms,
+                )
+
     if isinstance(native, dict):
         patches = native.get("patches")
         if isinstance(patches, list):
@@ -850,17 +1257,55 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
 
     runtime_reports = manifest.get("runtimeReports")
     if isinstance(runtime_reports, dict):
-        validate_capability_name_list(
+        expected_report_capabilities = validate_capability_name_list(
             result,
             runtime_reports.get("expectedLoadedCapabilities"),
             "runtimeReports.expectedLoadedCapabilities",
         )
+        expected_report_modules = validate_runtime_module_name_list(
+            result,
+            runtime_reports.get("expectedLoadedModules"),
+            "runtimeReports.expectedLoadedModules",
+        )
+        if is_runebound_elixirs_package(manifest):
+            missing_report_caps = [
+                capability for capability in CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES if capability not in expected_report_capabilities
+            ]
+            if missing_report_caps:
+                result.add(
+                    "BML_PACKAGE_RUNEBOUND_ELIXIRS_RUNTIME_REPORT_CAPABILITY_MISSING",
+                    "error",
+                    "Runebound: Elixirs runtimeReports.expectedLoadedCapabilities must list every canonical elixir runtime capability.",
+                    missing=missing_report_caps,
+                    required=list(CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES),
+                    present=sorted(expected_report_capabilities),
+                )
+            if RUNEBOUND_ELIXIRS_MODULE_NAME not in expected_report_modules:
+                result.add(
+                    "BML_PACKAGE_RUNEBOUND_ELIXIRS_RUNTIME_REPORT_MODULE_MISSING",
+                    "error",
+                    "Runebound: Elixirs runtimeReports.expectedLoadedModules must include runeboundElixirs.",
+                    module=RUNEBOUND_ELIXIRS_MODULE_NAME,
+                    present=sorted(expected_report_modules),
+                )
+            paths = runtime_reports.get("paths")
+            if isinstance(paths, dict) and paths.get("liveInstallReport") != RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT:
+                result.add(
+                    "BML_PACKAGE_RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT_MISSING",
+                    "error",
+                    "Runebound: Elixirs runtime report paths must include the live hook install report.",
+                    field="runtimeReports.paths.liveInstallReport",
+                    expected=RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT,
+                    value=paths.get("liveInstallReport"),
+                )
 
     validate_package_asset_references(loaded, result)
 
     if is_stash_package(manifest):
         validate_stash_modules(manifest, result)
 
+    if is_runebound_elixirs_package(manifest):
+        validate_runebound_elixirs_modules(loaded, result)
     return result
 
 
@@ -1120,7 +1565,7 @@ def validate_runtime_report_capabilities(result: ValidationResult, raw: Any, sou
         result.add("BML_RUNTIME_REPORT_CAPABILITIES_INVALID", "error", f"Capabilities must be an array or object when present: {source}", source=source)
         return capabilities
 
-    canonical = set(CANONICAL_STASH_CAPABILITIES)
+    canonical = set(RECOGNIZED_CAPABILITIES)
     for cap_id in capabilities:
         replacement = OUTDATED_CAPABILITY_ALIASES.get(cap_id)
         if replacement:
@@ -1142,6 +1587,125 @@ def validate_runtime_report_capabilities(result: ValidationResult, raw: Any, sou
                 canonical=sorted(canonical),
             )
     return capabilities
+
+
+def validate_runtime_report_modules(result: ValidationResult, raw: Any, source: str) -> list[str]:
+    modules: list[str] = []
+    if raw is None:
+        return modules
+    if not isinstance(raw, list):
+        result.add("BML_RUNTIME_REPORT_MODULES_INVALID", "error", f"Modules must be an array when present: {source}", source=source)
+        return modules
+
+    canonical = set(RECOGNIZED_RUNTIME_REPORT_MODULES)
+    for index, item in enumerate(raw):
+        module_source = f"{source}[{index}]"
+        if not isinstance(item, str) or not item:
+            result.add("BML_RUNTIME_REPORT_MODULE_INVALID", "error", f"Module entry must be a non-empty string: {module_source}", source=module_source)
+            continue
+        modules.append(item)
+        if item not in canonical:
+            result.add(
+                "BML_RUNTIME_REPORT_MODULE_NONCANONICAL",
+                "error",
+                f"Runtime report module is not canonical for the v0 contract: {item!r}.",
+                source=module_source,
+                module=item,
+                canonical=sorted(canonical),
+            )
+    return modules
+
+
+def validate_runebound_elixirs_runtime_report_mod(
+    result: ValidationResult,
+    mod: dict[str, Any],
+    source: str,
+    capabilities: list[str],
+    modules: list[str],
+) -> None:
+    status = mod.get("status")
+    if status != "loaded":
+        return
+
+    missing_capabilities = [capability for capability in CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES if capability not in capabilities]
+    if missing_capabilities:
+        result.add(
+            "BML_RUNTIME_REPORT_RUNEBOUND_ELIXIRS_CAPABILITY_MISSING",
+            "fatal",
+            "Loaded Runebound: Elixirs runtime report entry must include every canonical elixir capability.",
+            source=source,
+            missing=missing_capabilities,
+            required=list(CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES),
+            present=sorted(capabilities),
+        )
+
+    if RUNEBOUND_ELIXIRS_MODULE_NAME not in modules:
+        result.add(
+            "BML_RUNTIME_REPORT_RUNEBOUND_ELIXIRS_MODULE_MISSING",
+            "fatal",
+            "Loaded Runebound: Elixirs runtime report entry must include the runeboundElixirs module.",
+            source=source,
+            module=RUNEBOUND_ELIXIRS_MODULE_NAME,
+            present=sorted(modules),
+        )
+
+    live_install_report = mod.get("liveInstallReport")
+    claim_boundary = mod.get("claimBoundary")
+    if live_install_report is not None and live_install_report != RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT:
+        result.add(
+            "BML_RUNTIME_REPORT_RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT_INVALID",
+            "fatal",
+            "Loaded Runebound: Elixirs runtime report entry must not point at an unexpected live hook install report.",
+            source=source,
+            field=f"{source}.liveInstallReport",
+            expected=RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT,
+            value=live_install_report,
+        )
+
+    if live_install_report is None and claim_boundary != "liveHookBehaviorClaimed":
+        result.add(
+            "BML_RUNTIME_REPORT_RUNEBOUND_ELIXIRS_PROOF_BOUNDARY_MISSING",
+            "fatal",
+            "Loaded Runebound: Elixirs runtime report entry must include the live install report path or the native claimBoundary marker used by current live reports.",
+            source=source,
+            field=f"{source}.liveInstallReport",
+            expected=RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT,
+            claimBoundary=claim_boundary,
+        )
+
+    explicit_live_hook_claim = mod.get("liveHookBehaviorClaimed")
+    if explicit_live_hook_claim is not None and explicit_live_hook_claim is not True:
+        result.add(
+            "BML_RUNTIME_REPORT_RUNEBOUND_ELIXIRS_LIVE_HOOK_CLAIM_INVALID",
+            "fatal",
+            "Loaded Runebound: Elixirs runtime report entry must not deny live-hook behavior.",
+            source=source,
+            field=f"{source}.liveHookBehaviorClaimed",
+            value=explicit_live_hook_claim,
+        )
+
+    if explicit_live_hook_claim is not True and claim_boundary != "liveHookBehaviorClaimed":
+        result.add(
+            "BML_RUNTIME_REPORT_RUNEBOUND_ELIXIRS_LIVE_HOOK_CLAIM_MISSING",
+            "fatal",
+            "Loaded Runebound: Elixirs runtime report entry must carry live-hook proof via liveHookBehaviorClaimed or the current native claimBoundary marker.",
+            source=source,
+            field=f"{source}.liveHookBehaviorClaimed",
+            value=explicit_live_hook_claim,
+            claimBoundary=claim_boundary,
+        )
+
+    evidence_scope = mod.get("evidenceScope")
+    if evidence_scope is not None and evidence_scope != "fake-provider-live-hook-install":
+        result.add(
+            "BML_RUNTIME_REPORT_RUNEBOUND_ELIXIRS_EVIDENCE_SCOPE_INVALID",
+            "fatal",
+            "Loaded Runebound: Elixirs runtime report entry must not overclaim beyond the current fake-provider live-hook install scope when evidenceScope is present.",
+            source=source,
+            field=f"{source}.evidenceScope",
+            expected="fake-provider-live-hook-install",
+            value=evidence_scope,
+        )
 
 
 def validate_runtime_report(report: dict[str, Any]) -> ValidationResult:
@@ -1197,8 +1761,10 @@ def validate_runtime_report(report: dict[str, Any]) -> ValidationResult:
             if not isinstance(mod, dict):
                 result.add("BML_RUNTIME_REPORT_LOADED_MOD_INVALID", "fatal", f"loadedMods[{index}] must be an object.", source=f"loadedMods[{index}]")
                 continue
-            if "capabilities" in mod:
-                validate_runtime_report_capabilities(result, mod.get("capabilities"), f"loadedMods[{index}].capabilities")
+            capabilities = validate_runtime_report_capabilities(result, mod.get("capabilities"), f"loadedMods[{index}].capabilities")
+            modules = validate_runtime_report_modules(result, mod.get("modules"), f"loadedMods[{index}].modules")
+            if mod.get("id") == RUNEBOUND_ELIXIRS_PACKAGE_ID:
+                validate_runebound_elixirs_runtime_report_mod(result, mod, f"loadedMods[{index}]", capabilities, modules)
 
     return result
 

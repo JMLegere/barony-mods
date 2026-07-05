@@ -65,6 +65,14 @@ ROLLBACK_REPORT="$ROLLBACK_REPORT_DIR/runtime-load-report.json"
 ROLLBACK_SYMBOL_REPORT="$ROLLBACK_REPORT_DIR/symbol-probe-report.json"
 ROLLBACK_STASH_REPORT="$ROLLBACK_REPORT_DIR/stash-hook-report.json"
 ROLLBACK_PLAYABLE_INSTALL_REPORT="$ROLLBACK_REPORT_DIR/stash-playable-install-report.json"
+ELIXIR_PROFILE_DIR="$PROFILE_DIR/elixir-profile"
+ELIXIR_REPORT_DIR="$ELIXIR_PROFILE_DIR/BaronyModLoader/reports"
+ELIXIR_REPORT="$ELIXIR_REPORT_DIR/runtime-load-report.json"
+ELIXIR_SYMBOL_REPORT="$ELIXIR_REPORT_DIR/symbol-probe-report.json"
+ELIXIR_STASH_REPORT="$ELIXIR_REPORT_DIR/stash-hook-report.json"
+ELIXIR_ELIXIR_REPORT="$ELIXIR_REPORT_DIR/runebound-elixir-self-test-report.json"
+ELIXIR_LIVE_INSTALL_REPORT="$ELIXIR_REPORT_DIR/runebound-elixir-live-install-report.json"
+ELIXIR_RUNTIME_MANIFEST="$ELIXIR_PROFILE_DIR/BaronyModLoader/runtime-manifest.json"
 
 
 cleanup() {
@@ -72,7 +80,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$PLAYABLE_PROFILE_DIR/BaronyModLoader" "$ROLLBACK_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
+mkdir -p "$PROFILE_DIR/BaronyModLoader" "$NO_STASH_PROFILE_DIR/BaronyModLoader" "$INSTALL_PROFILE_DIR/BaronyModLoader" "$CORE_INSTALL_PROFILE_DIR/BaronyModLoader" "$ACCESS_INSTALL_PROFILE_DIR/BaronyModLoader" "$BEHAVIOR_PROFILE_DIR/BaronyModLoader" "$PLAYABLE_PROFILE_DIR/BaronyModLoader" "$ROLLBACK_PROFILE_DIR/BaronyModLoader" "$ELIXIR_PROFILE_DIR/BaronyModLoader" "$(dirname -- "$HOOK_MANIFEST")"
 cat > "$RUNTIME_MANIFEST" <<'JSON'
 {
   "contract": {
@@ -128,6 +136,98 @@ cat > "$NO_STASH_RUNTIME_MANIFEST" <<'JSON'
     }
   },
   "mods": []
+}
+JSON
+ELIXIR_RUNES_PACKAGE_PATH="$ROOT_DIR/../../mods/runebound-elixirs/bml-package.json"
+cat > "$ELIXIR_RUNTIME_MANIFEST" <<JSON
+{
+  "contract": {
+    "id": "bml-runtime-contract",
+    "version": "0.1.0"
+  },
+  "launch": {
+    "profileId": "steam-elixir",
+    "runtimeStrategy": "installed-binary-hook",
+    "gameVersionString": "v5.0.2",
+    "runtime": {
+      "runtimeId": "barony-bml-runtime-stash",
+      "runtimeVersion": "0.1.0"
+    }
+  },
+  "mods": [
+    {
+      "id": "jml.stash",
+      "version": "0.1.0",
+      "packagePath": "/tmp/jml.stash/bml-package.json",
+      "capabilities": [
+        { "id": "persistent_storage", "version": "0.1.0", "required": true },
+        { "id": "persistent_inventory", "version": "0.1.0", "required": true },
+        { "id": "void_chest_binding", "version": "0.1.0", "required": true },
+        { "id": "placement_lobby", "version": "0.1.0", "required": true },
+        { "id": "placement_shop", "version": "0.1.0", "required": true },
+        { "id": "multiplayer_version_metadata", "version": "0.1.0", "required": true }
+      ],
+      "modules": {
+        "persistentStorage": {},
+        "persistentInventories": {},
+        "voidChestBindings": {},
+        "placements": {},
+        "multiplayer": {}
+      }
+    },
+    {
+      "id": "jml.runebound-elixirs",
+      "version": "0.1.0",
+      "packagePath": "$ELIXIR_RUNES_PACKAGE_PATH",
+      "capabilities": [
+        { "id": "elixir_item_metadata", "version": "0.1.0", "required": true },
+        { "id": "elixir_drop_generation", "version": "0.1.0", "required": true },
+        { "id": "elixir_consumption", "version": "0.1.0", "required": true },
+        { "id": "active_elixir_effect_state", "version": "0.1.0", "required": true },
+        { "id": "active_elixir_effect_application", "version": "0.1.0", "required": true },
+        { "id": "item_name_tooltip_rendering", "version": "0.1.0", "required": true },
+        { "id": "multiplayer_version_metadata", "version": "0.1.0", "required": true }
+      ],
+      "modules": {
+        "runeboundElixirs": {
+          "namespace": "runebound_elixirs",
+          "schemaVersion": "0.1.0",
+          "authority": "host",
+          "carrierItemType": "POTION_EMPTY",
+          "dataFiles": [
+            "content/data/bml/elixir-catalog.json",
+            "content/data/bml/elixir-drop-tables.json"
+          ],
+          "dropPolicy": {
+            "eligibleClasses": "present_party_classes",
+            "soloClassPolicy": "local_player_only",
+            "partySizeEligibility": "generation_time_only",
+            "rngAuthority": "host"
+          },
+          "activeEffects": {
+            "stateScope": "profile_save_sidecar",
+            "stateFile": "BaronyModLoader/state/jml.runebound-elixirs/active-elixir-effects.json",
+            "savePolicy": "on_safe_save_boundary",
+            "duplicatePolicy": "onePerElixirIdPerPlayer",
+            "failurePolicy": "fail-closed"
+          },
+          "display": {
+            "nameRendering": "elixir_display_name",
+            "tooltipRendering": "upside_downside_lifecycle_duplicate_policy",
+            "consumeMessages": "explicit_bargain_result",
+            "reminderPolicy": "runtime_report_and_tooltip"
+          },
+          "multiplayer": {
+            "versionPolicy": "matching_package_and_runtime_metadata_required",
+            "stateAuthority": "host",
+            "clientCompatibility": "reject_mismatched_elixir_contract",
+            "failurePolicy": "fail-closed"
+          },
+          "failurePolicy": "fail-closed"
+        }
+      }
+    }
+  ]
 }
 JSON
 
@@ -905,4 +1005,286 @@ assert stash_report["summary"]["installed"] == 0
 assert stash_report["summary"]["notInstalled"] == 5
 assert any(error["code"] == "BML_STASH_HOOKS_NOT_INSTALLED" and error["severity"] == "fatal" for error in stash_report["errors"]), stash_report["errors"]
 print(f"smoke missing hook manifest failure ok: {runtime_report_path}")
+PY
+# ── Runebound: Elixirs live-hook smoke ─────────────────────────────────────────
+
+BML_STASH_PLAYABLE_INSTALL_SELF_TEST=1 \
+BML_RUNEBOUND_ELIXIRS_SELF_TEST=1 \
+BML_RUNEBOUND_ELIXIRS_LIVE_INSTALL_SELF_TEST=1 \
+BML_RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT="$ELIXIR_LIVE_INSTALL_REPORT" \
+BML_PROFILE_DIR="$ELIXIR_PROFILE_DIR" \
+BML_RUNTIME_MANIFEST="$ELIXIR_RUNTIME_MANIFEST" \
+BML_HOOK_MANIFEST="$HOOK_MANIFEST" \
+BML_HOOK_LIBRARY="$HOOK_LIBRARY" \
+LD_PRELOAD="$FAKE_SYMBOL_PROVIDER:$HOOK_LIBRARY" \
+/usr/bin/true
+
+python - "$ELIXIR_REPORT" "$ELIXIR_SYMBOL_REPORT" "$ELIXIR_STASH_REPORT" "$ELIXIR_ELIXIR_REPORT" "$ELIXIR_LIVE_INSTALL_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+runtime_report_path = pathlib.Path(sys.argv[1])
+symbol_report_path = pathlib.Path(sys.argv[2])
+stash_report_path = pathlib.Path(sys.argv[3])
+elixir_report_path = pathlib.Path(sys.argv[4])
+live_install_report_path = pathlib.Path(sys.argv[5])
+for path in (runtime_report_path, symbol_report_path, stash_report_path, elixir_report_path, live_install_report_path):
+    if not path.is_file():
+        raise SystemExit(f"missing elixir smoke report: {path}")
+
+
+def assert_no_error_code(errors, code):
+    assert not any(error.get("code") == code for error in errors), errors
+
+
+def find_loaded_mod(report, mod_id):
+    for mod in report.get("loadedMods", []):
+        if mod.get("id") == mod_id:
+            return mod
+    raise AssertionError(report.get("loadedMods", []))
+
+
+
+
+report = json.loads(runtime_report_path.read_text(encoding="utf-8"))
+symbol_report = json.loads(symbol_report_path.read_text(encoding="utf-8"))
+stash_report = json.loads(stash_report_path.read_text(encoding="utf-8"))
+elixir_report = json.loads(elixir_report_path.read_text(encoding="utf-8"))
+live_install_report = json.loads(live_install_report_path.read_text(encoding="utf-8"))
+
+# Runtime report: jml.runebound-elixirs is present, live hooks installed under
+# the fake Barony symbol provider, and the mod is reported as loaded with its
+# gameplay/data capabilities. Stash playable disabling is intentionally not set
+# for this run so Runebound live-hook installation is not masked by that guard.
+assert report["contract"] == {"id": "bml-runtime-contract", "version": "0.1.0"}
+assert report["runtime"]["id"] == "barony-bml-runtime-stash"
+assert report["runtime"]["version"] == "0.1.0"
+assert report["runtime"]["strategy"] == "installed-binary-hook"
+assert report["profileId"] == "steam-elixir"
+assert report["status"] == "loaded", report
+runtime_errors = report["errors"]
+assert_no_error_code(runtime_errors, "BML_RUNES_ELIXIR_HOOKS_NOT_INSTALLED")
+assert_no_error_code(runtime_errors, "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED")
+runebound_mod = find_loaded_mod(report, "jml.runebound-elixirs")
+assert runebound_mod["status"] == "loaded", runebound_mod
+assert set(runebound_mod["capabilities"]) == {
+    "elixir_item_metadata",
+    "elixir_drop_generation",
+    "elixir_consumption",
+    "active_elixir_effect_state",
+    "active_elixir_effect_application",
+    "item_name_tooltip_rendering",
+    "multiplayer_version_metadata",
+}, runebound_mod
+assert "runeboundElixirs" in runebound_mod["modules"], runebound_mod
+assert runebound_mod.get("claimBoundary") == "liveHookBehaviorClaimed", runebound_mod
+
+assert symbol_report["schemaVersion"] == "0.1.0"
+assert symbol_report["runtime"]["id"] == "barony-bml-runtime-stash"
+assert symbol_report["profileId"] == "steam-elixir"
+assert symbol_report["status"] == "loaded"
+assert symbol_report["summary"]["required"] >= 20
+assert symbol_report["summary"]["resolved"] == symbol_report["summary"]["required"]
+assert symbol_report["summary"]["missing"] == 0
+assert symbol_report["errors"] == []
+
+# Stash may load alongside Runebound in this profile; this smoke is only
+# concerned with ensuring Stash did not force the Runebound path closed.
+assert stash_report["mod"] == {"id": "jml.stash", "version": "0.1.0", "manifestDetected": True}
+assert stash_report["status"] != "failed", stash_report
+if "schemaVersion" in live_install_report:
+    assert live_install_report["schemaVersion"] == "0.1.0", live_install_report
+assert live_install_report["status"] in ("passed", "loaded", "installed"), live_install_report
+assert live_install_report["modId"] == "jml.runebound-elixirs", live_install_report
+assert live_install_report["liveHookBehaviorClaimed"] is True, live_install_report
+assert live_install_report.get("errors", []) == [], live_install_report
+assert live_install_report["playableBehaviorClaimed"] is False, live_install_report
+summary = live_install_report["summary"]
+assert summary["installedHooks"] == 4, live_install_report
+assert summary["installedHookCount"] == 4, live_install_report
+assert summary["failedHookCount"] == 0, live_install_report
+assert summary["targetSymbolCount"] == 4, live_install_report
+assert summary["allHooksInstalled"] is True, live_install_report
+assert summary["useHookInstalled"] is True, live_install_report
+assert summary["displayHookInstalled"] is True, live_install_report
+assert summary["statHooksInstalled"] is True, live_install_report
+assert summary["fakeProviderSelfProbe"] is True, live_install_report
+expected_hook_symbols = {
+    "useItem": "_Z7useItemP4ItemiP6Entitybb",
+    "Item::getName": "_ZNK4Item7getNameEv",
+    "statGetSTR": "_Z10statGetSTRP4StatP6Entity",
+    "statGetDEX": "_Z10statGetDEXP4StatP6Entity",
+}
+assert set(live_install_report["targetSymbols"]) == set(expected_hook_symbols.values()), live_install_report
+installed_hooks = {hook["name"]: hook for hook in live_install_report["installedHooks"]}
+assert set(installed_hooks) == set(expected_hook_symbols), live_install_report
+for hook_name, expected_symbol in expected_hook_symbols.items():
+    hook = installed_hooks[hook_name]
+    assert hook["symbol"] == expected_symbol, hook
+    assert hook["status"] == "installed", hook
+    assert hook["patchSize"] >= 14, hook
+    assert int(hook["address"], 16) > 0, hook
+    assert hook["replacementInvocations"] > 0, hook
+counters = live_install_report["invocationCounters"]
+for counter_name in (
+    "useItemReplacementCalls",
+    "useItem",
+    "getName",
+    "statGetSTR",
+    "statGetDEX",
+    "useItemRecognizedCarrierCalls",
+    "activeEffectsCreated",
+    "itemGetNameReplacementCalls",
+    "itemGetNameIronVowReturns",
+    "statGetSTRReplacementCalls",
+    "statGetSTRBonusApplications",
+    "statGetDEXReplacementCalls",
+    "statGetDEXPenaltyApplications",
+):
+    assert counters[counter_name] > 0, live_install_report
+recognized_carrier = live_install_report["recognizedCarrier"]
+assert recognized_carrier["catalogId"] == "runebound_elixirs:iron_vow", live_install_report
+assert recognized_carrier["carrierItemType"] == "POTION_EMPTY", live_install_report
+assert recognized_carrier["display"] == "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)", live_install_report
+active_effect = live_install_report["activeEffect"]
+assert active_effect["active"] is True, live_install_report
+assert active_effect["catalogId"] == "runebound_elixirs:iron_vow", live_install_report
+assert active_effect["effectOpcode"] == "stat_add", live_install_report
+assert active_effect["effectMagnitude"] == 2, live_install_report
+assert active_effect["strDelta"] == 2, live_install_report
+assert active_effect["dexDelta"] == -1, live_install_report
+assert active_effect["lastStrResult"] == 12, live_install_report
+assert active_effect["lastDexResult"] == 9, live_install_report
+assert active_effect["lastDisplay"] == "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)", live_install_report
+
+# ── Elixir fake-provider self-test assertions ──────────────────────────────────
+# The same run still emits the data-path self-test report; live hook evidence is
+# asserted above in runebound-elixir-live-install-report.json.
+
+assert elixir_report["schemaVersion"] == "0.1.0", elixir_report
+assert elixir_report["test"] == "runebound-elixir-fake-provider-self-test", elixir_report
+assert elixir_report["status"] == "passed", elixir_report
+assert elixir_report["mod"]["id"] == "jml.runebound-elixirs", elixir_report
+assert elixir_report["mod"]["version"] == "0.1.0", elixir_report
+assert elixir_report["mod"]["manifestDetected"] is True, elixir_report
+assert elixir_report["playableBehaviorClaimed"] is False, elixir_report
+
+assert "fixture" not in elixir_report, elixir_report
+results = elixir_report["results"]
+assert "catalog" in results, results
+catalog = results["catalog"]
+assert catalog["fixtureDefinitionSupported"] is True, results
+assert catalog["elixirId"] == "runebound_elixirs:iron_vow", results
+assert catalog["displayName"] == "Elixir of the Iron Vow", results
+assert catalog["eligibleClassId"] == 1, results
+assert catalog["minPartySize"] == 1, results
+assert catalog["maxPartySize"] == 4, results
+assert catalog["effectOpcode"] == "stat_add", results
+assert "packageData" in results, results
+package_data = results["packageData"]
+assert package_data["catalogFileLoaded"] is True, results
+assert package_data["catalogContainsIronVow"] is True, results
+assert package_data["dropTableFileExists"] is True, results
+assert package_data["dropTableGenerationAuthorityHost"] is True, results
+assert package_data["dropTablePresentPartyClassesPolicy"] is True, results
+assert package_data["dropTableGenerationTimePartySizePolicy"] is True, results
+assert package_data["dropTableNoGlobalAllClassPool"] is True, results
+assert package_data["dropTableAntiBloatMaxOnePerSource"] is True, results
+assert package_data["dropTableAntiBloatMaxOnePerFloor"] is True, results
+assert "eligibility" in results, results
+eligibility = results["eligibility"]
+assert eligibility["soloClassEligible"] is True, results
+assert eligibility["soloClassId"] == catalog["eligibleClassId"], results
+assert eligibility["twoPlayerPartySizeEligible"] is True, results
+assert eligibility["twoPlayerPartySize"] == 2, results
+assert "dropGeneration" in results, results
+drop_generation = results["dropGeneration"]
+assert drop_generation["authority"] == "host", results
+assert drop_generation["stateAuthority"] == "host", results
+assert drop_generation["source"] == "chest_loot_postprocess", results
+assert drop_generation["carrierItem"] == "POTION_EMPTY", results
+assert drop_generation["carrierMetadataReused"] is True, results
+assert drop_generation["selectedElixirId"] == "runebound_elixirs:iron_vow", results
+assert drop_generation["eligible"] is True, results
+assert drop_generation["generated"] is True, results
+assert drop_generation["reason"] == "generated_host_authoritative_class_bound", results
+assert drop_generation["partyClassPolicy"] == "present_party_classes", results
+assert drop_generation["soloClassPolicy"] == "local_player_class", results
+assert drop_generation["presentPartyClassesSemantics"] == "connected_party_members_only", results
+assert drop_generation["presentPartyClasses"] == [catalog["eligibleClassId"], 7], results
+assert drop_generation["boundClassId"] == catalog["eligibleClassId"], results
+assert drop_generation["matchedClassId"] == catalog["eligibleClassId"], results
+assert drop_generation["partySize"] == 2, results
+assert drop_generation["partySizePolicy"] == "generation_time_only", results
+assert drop_generation["noGlobalAllClassPool"] is True, results
+assert drop_generation["playableBehaviorClaimed"] is False, results
+assert drop_generation["maxGeneratedElixirsPerSource"] == 1, results
+assert drop_generation["maxGeneratedElixirsPerFloor"] == 1, results
+assert drop_generation["generatedCarrierCountForSource"] == 1, results
+assert drop_generation["generatedCarrierCountForFloor"] == 1, results
+no_matching_class_control = drop_generation["noMatchingClassControl"]
+assert no_matching_class_control["presentPartyClasses"] == [7], results
+assert no_matching_class_control["eligible"] is False, results
+assert no_matching_class_control["generated"] is False, results
+assert no_matching_class_control["reason"] == "no_present_party_class_match", results
+assert no_matching_class_control["selectedElixirId"] == "", results
+assert no_matching_class_control["noGlobalAllClassPool"] is True, results
+assert "carrierMetadata" in results, results
+assert results["carrierMetadata"]["carrierItem"] == "POTION_EMPTY", results
+assert results["carrierMetadata"]["renderedDisplay"] == "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)", results
+assert drop_generation["carrierInstanceId"] == results["carrierMetadata"]["instanceId"], results
+assert "consumption" in results, results
+assert results["consumption"]["activeEffectCreated"] is True, results
+assert "activeEffectState" in results, results
+active_effect_state = results["activeEffectState"]
+serialized_active_effect = active_effect_state["serialized"]
+assert serialized_active_effect.startswith("runebound-elixir-active-effect-v1"), results
+assert "packageId=jml.runebound-elixirs" in serialized_active_effect, results
+assert "catalogId=runebound_elixirs:iron_vow" in serialized_active_effect, results
+assert "opcode=stat_add" in serialized_active_effect, results
+if "roundTripLoaded" in active_effect_state:
+    assert active_effect_state["roundTripLoaded"] is True, active_effect_state
+if "roundTripMatches" in active_effect_state:
+    assert active_effect_state["roundTripMatches"] is True, active_effect_state
+multiplayer_metadata = results["multiplayerVersionMetadata"]
+assert multiplayer_metadata["stateAuthority"] == "host", results
+assert multiplayer_metadata["versionPolicy"] == "matching_package_and_runtime_metadata_required", results
+assert multiplayer_metadata["clientCompatibility"] == "reject_mismatched_elixir_contract", results
+assert multiplayer_metadata["packageId"] == "jml.runebound-elixirs", results
+assert multiplayer_metadata["packageVersion"] == "0.1.0", results
+assert multiplayer_metadata["runtimeContractId"] == "bml-runtime-contract", results
+assert multiplayer_metadata["runtimeContractVersion"] == "0.1.0", results
+assert multiplayer_metadata["nativeRuntimeId"] == "barony-bml-native-hook", results
+assert multiplayer_metadata["nativeRuntimeVersion"] == "0.1.0", results
+assert multiplayer_metadata["playableBehaviorClaimed"] is False, results
+
+assertions = elixir_report.get("assertions", {})
+for name in (
+    "catalogLoaded",
+    "fixtureDefinitionSupported",
+    "dropTableExists",
+    "dropTableContractLoaded",
+    "soloClassEligibility",
+    "twoPlayerPartySizeEligibility",
+    "hostDropAuthority",
+    "dropEligibilityMatched",
+    "dropGeneratedCarrier",
+    "noGlobalAllClassPool",
+    "antiBloatLimitApplied",
+    "carrierDisplayMatched",
+    "consumptionCreatedActiveEffect",
+    "activeEffectSerialized",
+    "unsupportedDataRejected",
+    "multiplayerStateAuthorityHost",
+    "multiplayerRejectsMismatchedContract",
+    "playableBehaviorNotClaimed",
+):
+    assert assertions.get(name) is True, assertions
+if "roundTripLoaded" in assertions:
+    assert assertions["roundTripLoaded"] is True, assertions
+if "roundTripMatches" in assertions:
+    assert assertions["roundTripMatches"] is True, assertions
+
+print(f"Runebound: Elixirs live-hook smoke ok: {live_install_report_path}")
 PY

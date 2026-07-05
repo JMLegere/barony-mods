@@ -41,11 +41,15 @@
       "version": "0.1.0"
     },
     {
-      "id": "item_instance_metadata",
+      "id": "elixir_item_metadata",
       "version": "0.1.0"
     },
     {
-      "id": "loot_affix_rolls",
+      "id": "elixir_drop_generation",
+      "version": "0.1.0"
+    },
+    {
+      "id": "elixir_consumption",
       "version": "0.1.0"
     },
     {
@@ -53,11 +57,11 @@
       "version": "0.1.0"
     },
     {
-      "id": "save_item_metadata",
+      "id": "active_elixir_effect_state",
       "version": "0.1.0"
     },
     {
-      "id": "weapon_attack_modifier",
+      "id": "active_elixir_effect_application",
       "version": "0.1.0"
     }
   ],
@@ -239,6 +243,118 @@
       ]
     },
     {
+      "id": "item_level_curve",
+      "kind": "function",
+      "mangledSymbol": "_Z14itemLevelCurve8CategoryiiR9BaronyRNG",
+      "demangledLabel": "itemLevelCurve(Category, int, int, BaronyRNG&)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "item_level_curve_entity",
+      "kind": "function",
+      "mangledSymbol": "_Z20itemLevelCurveEntityR6Entity8CategoryiiR9BaronyRNG",
+      "demangledLabel": "itemLevelCurveEntity(Entity&, Category, int, int, BaronyRNG&)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "item_level_curve_post_process",
+      "kind": "function",
+      "mangledSymbol": "_Z25itemLevelCurvePostProcessP6EntityP4ItemR9BaronyRNGiPiS5_",
+      "demangledLabel": "itemLevelCurvePostProcess(Entity*, Item*, BaronyRNG&, int, int*, int*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_item_metadata",
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "drop_item_monster",
+      "kind": "function",
+      "mangledSymbol": "_Z15dropItemMonsterP4ItemP6EntityP4Stats",
+      "demangledLabel": "dropItemMonster(Item*, Entity*, Stat*, short)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation"
+      ]
+    },
+    {
+      "id": "use_item",
+      "kind": "function",
+      "mangledSymbol": "_Z7useItemP4ItemiP6Entitybb",
+      "demangledLabel": "useItem(Item*, int, Entity*, bool, bool)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_consumption",
+        "active_elixir_effect_state"
+      ]
+    },
+    {
+      "id": "consume_item",
+      "kind": "function",
+      "mangledSymbol": "_Z11consumeItemRP4Itemi",
+      "demangledLabel": "consumeItem(Item*&, int)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_consumption"
+      ]
+    },
+    {
+      "id": "item_get_name",
+      "kind": "function",
+      "mangledSymbol": "_ZNK4Item7getNameEv",
+      "demangledLabel": "Item::getName() const",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "item_name_tooltip_rendering"
+      ]
+    },
+    {
+      "id": "stat_get_str",
+      "kind": "function",
+      "mangledSymbol": "_Z10statGetSTRP4StatP6Entity",
+      "demangledLabel": "statGetSTR(Stat*, Entity*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
+      "id": "stat_get_dex",
+      "kind": "function",
+      "mangledSymbol": "_Z10statGetDEXP4StatP6Entity",
+      "demangledLabel": "statGetDEX(Stat*, Entity*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
+      "id": "stat_get_chr",
+      "kind": "function",
+      "mangledSymbol": "_Z10statGetCHRP4StatP6Entity",
+      "demangledLabel": "statGetCHR(Stat*, Entity*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
+      "id": "item_armor_get_ac",
+      "kind": "function",
+      "mangledSymbol": "_ZNK4Item10armorGetACEPK4Stat",
+      "demangledLabel": "Item::armorGetAC(Stat const*) const",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "active_elixir_effect_application"
+      ]
+    },
+    {
       "id": "list_free_all",
       "kind": "function",
       "mangledSymbol": "_Z12list_FreeAllP6list_t",
@@ -343,6 +459,28 @@
       ]
     },
     {
+      "id": "client_classes",
+      "kind": "data",
+      "mangledSymbol": "client_classes",
+      "demangledLabel": "client_classes",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation",
+        "multiplayer_version_metadata"
+      ]
+    },
+    {
+      "id": "client_disconnected",
+      "kind": "data",
+      "mangledSymbol": "client_disconnected",
+      "demangledLabel": "client_disconnected",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_drop_generation",
+        "multiplayer_version_metadata"
+      ]
+    },
+    {
       "id": "opened_chest",
       "kind": "data",
       "mangledSymbol": "openedChest",
@@ -389,56 +527,140 @@
   "notes": [
     "hookTargets mirror required Stash gameplay capabilities for the linux-x86_64-direct-stash-detour backend; production manifests load with failClosed=false when the required target set is installed, while unsupported builds or missing symbols/targets still fail closed.",
     "The prompt-scoped target set includes uidToEntity, Language::get, and selectedEntity so selected-entity and hover-tooltip prompts can be scoped to framework Stash access points.",
-    "Static readiness remains conservative: it proves 42 ready, 0 blocked, and 0 missing targets across 30 required symbols, not full player-facing scenario coverage."
+    "Static readiness remains conservative for Stash: it proves 42 ready, 0 blocked, and 0 missing targets across 30 required symbols, not full player-facing scenario coverage.",
+    "Runebound: Elixirs target notes now describe the fake-provider/live-hook contract: useItem, Item::getName, statGetSTR, and statGetDEX detours are expected to install for the live pass; host-authoritative drop generation, metadata, sidecar state, and multiplayer metadata are exposed through the dedicated Runebound live install report rather than claimed as Steam-ready inventory injection; unsupported builds still fail closed."
   ],
-  "runeboundLootSymbolNotes": [
+  "runeboundElixirTargetNotes": [
     {
-      "capability": "item_instance_metadata",
-      "targetIntent": "Item instance metadata sidecar around item creation/postprocess and save/load boundaries.",
-      "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
-      "installStatus": "not_installed",
-      "requiredForStash": false
+      "capability": "elixir_item_metadata",
+      "targetIntent": "Associate BML elixir carrier metadata with fake-provider live-hook observations without mutating base Barony item state.",
+      "targetSymbolIds": [
+        "use_item",
+        "item_get_name"
+      ],
+      "analysisStatus": "live-hook-report-backed",
+      "symbolStatus": "fake_provider_live_report_verified",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
     },
     {
-      "capability": "loot_affix_rolls",
-      "targetIntent": "Deterministic affix roll attachment during loot/item postprocess.",
-      "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
-      "installStatus": "not_installed",
-      "requiredForStash": false
+      "capability": "elixir_drop_generation",
+      "targetIntent": "Report host-authoritative elixir drop-generation capability for the fake-provider/live-hook path while keeping real Barony inventory injection evidence-gated.",
+      "targetSymbolIds": [],
+      "analysisStatus": "live-hook-report-backed",
+      "symbolStatus": "fake_provider_live_report_verified",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "claimBoundary": "fake-provider-live-report-only"
+    },
+    {
+      "capability": "elixir_drop_generation",
+      "targetIntent": "Report present-party class metadata inputs for host-authoritative fake-provider/live-hook eligibility checks; real multiplayer drop filtering remains evidence-gated.",
+      "targetSymbolIds": [
+        "client_classes",
+        "client_disconnected",
+        "multiplayer",
+        "clientnum",
+        "stats"
+      ],
+      "analysisStatus": "live-hook-report-backed",
+      "symbolStatus": "fake_provider_live_report_verified",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "claimBoundary": "fake-provider-live-report-only"
+    },
+    {
+      "capability": "elixir_consumption",
+      "targetIntent": "Install the useItem detour for BML-marked POTION_EMPTY elixir carriers and resolve consumeItem as an optional helper symbol rather than a detour target.",
+      "targetSymbolIds": [
+        "use_item",
+        "consume_item"
+      ],
+      "analysisStatus": "live-detour",
+      "symbolStatus": "fake_provider_detour_exports_verified",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
     },
     {
       "capability": "item_name_tooltip_rendering",
-      "targetIntent": "Item name and tooltip rendering hook points for affix names.",
-      "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
-      "installStatus": "not_installed",
-      "requiredForStash": false
+      "targetIntent": "Install the Item::getName detour so marked elixir carriers can render catalog display names while unmarked POTION_EMPTY items remain vanilla.",
+      "targetSymbolIds": [
+        "item_get_name"
+      ],
+      "analysisStatus": "live-detour",
+      "symbolStatus": "fake_provider_detour_exports_verified",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
     },
     {
-      "capability": "save_item_metadata",
-      "targetIntent": "Save/load metadata persistence for Runebound Loot item instance records.",
-      "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
-      "installStatus": "not_installed",
-      "requiredForStash": false
+      "capability": "active_elixir_effect_state",
+      "targetIntent": "Expose active elixir sidecar-state ownership and package/catalog checksum metadata through the live install/runtime report path.",
+      "targetSymbolIds": [],
+      "analysisStatus": "live-hook-report-backed",
+      "symbolStatus": "runtime_report_sidecar_surface",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "claimBoundary": "fake-provider-live-report-only"
     },
     {
-      "capability": "weapon_attack_modifier",
-      "targetIntent": "Weapon attack calculation modifier hook point for affix attack bonuses.",
-      "analysisStatus": "scaffold",
-      "symbolStatus": "not_identified",
-      "installStatus": "not_installed",
-      "requiredForStash": false
+      "capability": "active_elixir_effect_application",
+      "targetIntent": "Install initial STR/DEX stat getter detours for verified active elixir effect state under the fake-provider/live-hook path.",
+      "targetSymbolIds": [
+        "stat_get_str",
+        "stat_get_dex"
+      ],
+      "analysisStatus": "live-detour",
+      "symbolStatus": "fake_provider_detour_exports_verified",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
+    },
+    {
+      "capability": "active_elixir_effect_application",
+      "targetIntent": "Armor AC effect application remains unsupported in this live pass and must fail closed rather than claiming a Steam-ready armor mutation hook.",
+      "targetSymbolIds": [
+        "item_armor_get_ac"
+      ],
+      "analysisStatus": "unsupported-fail-closed",
+      "symbolStatus": "candidate_export_deferred_for_live_pass",
+      "installStatus": "unsupported_fail_closed",
+      "requiredForStash": false,
+      "notes": [
+        "First armor effect hook candidate covers authored armor AC modifiers from verified active elixir state; armor mutation is not claimed by this live pass."
+      ],
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "claimBoundary": "not-claimed-by-live-pass"
     },
     {
       "capability": "multiplayer_version_metadata",
-      "targetIntent": "Runebound Loot package/version metadata for future multiplayer compatibility gates.",
-      "analysisStatus": "scaffold",
-      "symbolStatus": "uses_existing_metadata_surface",
-      "installStatus": "not_installed",
-      "requiredForStash": false
+      "targetIntent": "Expose Runebound package version, catalog checksum, active-effect schema, and capability metadata through the live runtime report for compatibility gates.",
+      "targetSymbolIds": [
+        "multiplayer",
+        "clientnum",
+        "client_classes",
+        "client_disconnected"
+      ],
+      "analysisStatus": "live-hook-report-backed",
+      "symbolStatus": "runtime_report_metadata_surface",
+      "installStatus": "installed",
+      "requiredForStash": false,
+      "requiredForRuneboundElixirs": true,
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "claimBoundary": "runtime-report-metadata-only"
     }
   ],
   "hookTargets": [
@@ -535,82 +757,189 @@
       "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
     },
     {
-      "id": "runebound_loot_item_postprocess_metadata",
-      "capability": "item_instance_metadata",
+      "id": "runebound_elixir_carrier_metadata",
+      "capability": "elixir_item_metadata",
       "required": false,
-      "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
+      "targetSymbolIds": [
+        "use_item",
+        "item_get_name"
+      ],
+      "installStrategy": "live-runtime-sidecar-with-detour-consumers",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "fake-provider-live-hook-only",
       "notes": [
-        "Runebound Loot item metadata hooks are not installed by this manifest; BML owns any future runtime implementation after installed-executable symbols are verified."
-      ]
+        "Carrier metadata is live-report-backed and consumed by use/display detours under the fake Barony symbol provider; no Steam inventory mutation claim is made."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
     },
     {
-      "id": "runebound_loot_affix_rolls",
-      "capability": "loot_affix_rolls",
+      "id": "runebound_elixir_drop_generation",
+      "capability": "elixir_drop_generation",
       "required": false,
       "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
+      "installStrategy": "host-authoritative-live-report-capability",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "fake-provider-live-report-only",
       "notes": [
-        "Affix roll hook points are scaffolded for analysis only and are not required for Stash."
-      ]
+        "Drop-generation capability is exposed as host-authoritative fake-provider/live-hook report evidence only; real Barony inventory/drop injection remains evidence-gated."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
     },
     {
-      "id": "runebound_loot_name_tooltip_rendering",
+      "id": "runebound_elixir_party_snapshot",
+      "capability": "elixir_drop_generation",
+      "required": false,
+      "targetSymbolIds": [
+        "client_classes",
+        "client_disconnected",
+        "multiplayer",
+        "clientnum",
+        "stats"
+      ],
+      "installStrategy": "runtime-report-metadata-capability",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "fake-provider-live-report-only",
+      "notes": [
+        "Party snapshot fields are metadata inputs for host-authoritative fake-provider/live-hook reports; real multiplayer drop filtering remains evidence-gated."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
+    },
+    {
+      "id": "runebound_elixir_use_item",
+      "capability": "elixir_consumption",
+      "required": false,
+      "targetSymbolIds": [
+        "use_item"
+      ],
+      "installStrategy": "live-detour-required",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "fake-provider-live-hook-only",
+      "notes": [
+        "useItem is a required live detour for BML-marked POTION_EMPTY elixir carriers under the fake Barony symbol provider."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
+    },
+    {
+      "id": "runebound_elixir_consume_item",
+      "capability": "elixir_consumption",
+      "required": false,
+      "targetSymbolIds": [
+        "consume_item"
+      ],
+      "installStrategy": "optional-helper-symbol-resolved",
+      "installStatus": "helper_resolved",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "helper-symbol-not-detour",
+      "notes": [
+        "consumeItem is resolved as an optional helper for Barony-equivalent item consumption semantics; it is not a live detour target in this pass."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": false,
+      "requiredForRuneboundElixirs": true
+    },
+    {
+      "id": "runebound_elixir_display_name",
       "capability": "item_name_tooltip_rendering",
       "required": false,
-      "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
+      "targetSymbolIds": [
+        "item_get_name"
+      ],
+      "installStrategy": "live-detour-required",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "fake-provider-live-hook-only",
       "notes": [
-        "Name and tooltip rendering hooks are intentionally not installed; the native self-test covers only deterministic fake-provider rendering."
-      ]
+        "Item::getName is a required live detour for catalog-backed elixir names under the fake Barony symbol provider; unmarked POTION_EMPTY items remain vanilla."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
     },
     {
-      "id": "runebound_loot_save_item_metadata",
-      "capability": "save_item_metadata",
+      "id": "runebound_elixir_sidecar_state",
+      "capability": "active_elixir_effect_state",
       "required": false,
       "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
+      "installStrategy": "runtime-report-sidecar-capability",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "fake-provider-live-report-only",
       "notes": [
-        "Save metadata hooks are scaffolded for future symbol analysis only."
-      ]
+        "Active elixir sidecar ownership is reported through the Runebound live install/runtime report path; save/resume gameplay remains evidence-gated."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
     },
     {
-      "id": "runebound_loot_weapon_attack_modifier",
-      "capability": "weapon_attack_modifier",
+      "id": "runebound_elixir_stat_effect_hooks",
+      "capability": "active_elixir_effect_application",
       "required": false,
-      "targetSymbolIds": [],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
+      "targetSymbolIds": [
+        "stat_get_str",
+        "stat_get_dex"
+      ],
+      "installStrategy": "live-detour-required",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "fake-provider-live-hook-only",
       "notes": [
-        "Weapon attack modifier hooks are not installed; the native self-test covers only base-plus-affix arithmetic."
-      ]
+        "statGetSTR and statGetDEX are required live detours for initial active elixir effect application under the fake Barony symbol provider."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
     },
     {
-      "id": "runebound_loot_multiplayer_version_metadata",
+      "id": "runebound_elixir_armor_effect_hooks",
+      "capability": "active_elixir_effect_application",
+      "required": false,
+      "targetSymbolIds": [
+        "item_armor_get_ac"
+      ],
+      "installStrategy": "unsupported-fail-closed",
+      "installStatus": "unsupported_fail_closed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "not-claimed-by-live-pass",
+      "notes": [
+        "Armor AC mutation is not claimed by this live pass; unsupported armor effect hooks must fail closed until native evidence exists."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": false,
+      "requiredForRuneboundElixirs": true
+    },
+    {
+      "id": "runebound_elixir_multiplayer_version_metadata",
       "capability": "multiplayer_version_metadata",
       "required": false,
-      "targetSymbolIds": [],
-      "installStrategy": "metadata-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-runtime-metadata-only",
+      "targetSymbolIds": [
+        "multiplayer",
+        "clientnum",
+        "client_classes",
+        "client_disconnected"
+      ],
+      "installStrategy": "runtime-report-metadata-capability",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "runtime-report-metadata-only",
       "notes": [
-        "Runtime report metadata can recognize jml.runebound-loot, but no live multiplayer compatibility behavior is claimed."
-      ]
+        "Runtime report metadata recognizes jml.runebound-elixirs and required capabilities for compatibility gates; no live network compatibility scenario is claimed."
+      ],
+      "liveInstallReport": "BaronyModLoader/reports/runebound-elixir-live-install-report.json",
+      "liveHookBehaviorClaimed": true,
+      "requiredForRuneboundElixirs": true
     }
   ]
 }
