@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -47,6 +48,33 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             text=True,
             check=False,
         )
+
+    @contextmanager
+    def simulated_platform(
+        self,
+        sys_platform: str,
+        machine: str = "AMD64",
+        env: dict[str, str] | None = None,
+    ):
+        original_sys_platform = loader.sys.platform
+        original_machine = loader.platform.machine
+        original_env: dict[str, str | None] = {}
+        if env:
+            original_env = {key: os.environ.get(key) for key in env}
+        try:
+            loader.sys.platform = sys_platform
+            loader.platform.machine = lambda: machine
+            if env:
+                os.environ.update(env)
+            yield
+        finally:
+            loader.sys.platform = original_sys_platform
+            loader.platform.machine = original_machine
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def make_package(self, workspace: Path, name: str = "package") -> Path:
         package_dir = workspace / name
@@ -339,6 +367,220 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertIn("assets.icon", validate.stdout)
             self.assertIn("assets.previewImages[0]", validate.stdout)
             self.assertIn("assets.readme", validate.stdout)
+
+
+    def test_windows_platform_target_uses_barony_exe_and_normalized_windows_id(self) -> None:
+        with self.simulated_platform("win32", "AMD64"):
+            target = loader.current_platform_target()
+
+            self.assertEqual(target.os_name, "windows")
+            self.assertEqual(target.executable_name, "barony.exe")
+            self.assertEqual(target.hook_artifact_extension, ".dll")
+            self.assertEqual(target.launch_adapter, loader.LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY)
+            self.assertEqual(loader.current_platform_id(), "windows-x86_64")
+            self.assertEqual(target.platform_id("x64"), "windows-x86_64")
+            self.assertEqual(target.platform_id("x86_64"), "windows-x86_64")
+            self.assertEqual(target.platform_id("ARM64"), "windows-arm64")
+            self.assertEqual(target.platform_id("aarch64"), "windows-arm64")
+
+    def test_windows_steam_discovery_uses_program_files_and_library_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            program_files = workspace / "Program Files (x86)"
+            steam_root = program_files / "Steam"
+            steamapps = steam_root / "steamapps"
+            install_path = steamapps / "common" / "Barony"
+            install_path.mkdir(parents=True)
+            executable = install_path / "barony.exe"
+            executable.write_bytes(b"fake windows executable v5.0.0\n")
+            manifest = steamapps / loader.STEAM_MANIFEST_NAME
+            manifest.write_text(
+                '"appid" "371970"\n'
+                '"name" "Barony"\n'
+                '"installdir" "Barony"\n'
+                '"buildid" "123456"\n',
+                encoding="utf-8",
+            )
+
+            with self.simulated_platform("win32", "AMD64", {"ProgramFiles(x86)": str(program_files)}):
+                detected, result = loader.detect_steam_install()
+                self.assertTrue(result.ok, [problem.code for problem in result.problems])
+                self.assertIsNotNone(detected)
+                assert detected is not None
+                self.assertEqual(detected["platform"], "windows-x86_64")
+                self.assertEqual(detected["executableName"], "barony.exe")
+                self.assertEqual(detected["launchAdapter"], loader.LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY)
+                self.assertEqual(Path(detected["executable"]), executable.resolve())
+                self.assertEqual(Path(detected["manifestPath"]), manifest.resolve())
+
+                from_library_root, library_result = loader.detect_steam_install(install_arg=str(steam_root))
+                self.assertTrue(library_result.ok, [problem.code for problem in library_result.problems])
+                self.assertIsNotNone(from_library_root)
+                assert from_library_root is not None
+                self.assertEqual(Path(from_library_root["installPath"]), install_path.resolve())
+                self.assertEqual(Path(from_library_root["executable"]), executable.resolve())
+
+    def test_windows_runtime_requires_adapter_launcher_and_verified_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_package(workspace)
+            package, package_result = loader.load_package(str(package_dir))
+            self.assertTrue(package_result.ok, [problem.code for problem in package_result.problems])
+            assert package is not None
+
+            profile_dir = workspace / "profile"
+            bml_root = profile_dir / loader.APP_ID
+            bml_root.mkdir(parents=True)
+            profile = {
+                "schemaVersion": loader.SCHEMA_VERSION,
+                "profile": {"id": "windows-contract-test"},
+                "runtime": {"gameSource": "manual", "baronyExecutable": str(workspace / "runtime" / "barony.exe"), "steam": None},
+                "activeMods": [],
+            }
+
+            runtime_dir = workspace / "runtime"
+            runtime_dir.mkdir()
+            steam_executable = runtime_dir / "barony.exe"
+            hook_library = runtime_dir / "barony_bml.dll"
+            hook_manifest = runtime_dir / "hook-manifest.json"
+            launcher_executable = runtime_dir / loader.WINDOWS_LAUNCHER_EXECUTABLE
+            runtime_info_path = runtime_dir / "runtime-info.json"
+            steam_executable.write_bytes(b"fake windows executable v5.0.0\n")
+            hook_library.write_bytes(b"fake dll\n")
+            hook_manifest.write_text('{"hook":"manifest"}\n', encoding="utf-8")
+            launcher_executable.write_bytes(b"fake launcher\n")
+            wrong_steam_executable = runtime_dir / "not-barony.exe"
+            wrong_steam_executable.write_bytes(b"fake wrong windows executable v5.0.0\n")
+
+            package_manifest = json.loads((package_dir / loader.PACKAGE_MANIFEST_NAME).read_text(encoding="utf-8"))
+            runtime_info = {
+                "runtimeId": "windows-test-runtime",
+                "runtimeVersion": "0.1.0",
+                "contract": {"id": loader.RUNTIME_CONTRACT_ID, "versions": [loader.RUNTIME_CONTRACT_VERSION]},
+                "platforms": [{"platform": "windows-x86_64"}],
+                "capabilities": [
+                    {"id": cap["id"], "version": cap.get("version", "0.1.0")}
+                    for cap in package_manifest["engine"]["capabilities"]
+                ],
+            }
+            write_json(runtime_info_path, runtime_info)
+            base_runtime = {
+                "id": "windows-runtime",
+                "runtimeStrategy": loader.RUNTIME_STRATEGY_INSTALLED_HOOK,
+                "platform": "windows-x86_64",
+                "platformTarget": "windows",
+                "hookArtifactExtension": ".dll",
+                "steamExecutable": str(steam_executable),
+                "steamExecutableSha256": sha256(steam_executable),
+                "hookLibrary": str(hook_library),
+                "hookLibrarySha256": sha256(hook_library),
+                "hookManifest": str(hook_manifest),
+                "hookManifestSha256": sha256(hook_manifest),
+                "runtimeInfo": str(runtime_info_path),
+                "capabilities": runtime_info["capabilities"],
+            }
+
+            with self.simulated_platform("win32", "AMD64"):
+                _runtime_info, _runtime_info_path, _launch_executable, missing_result = loader.validate_registered_runtime(
+                    base_runtime,
+                    profile,
+                    package,
+                )
+                missing_codes = {problem.code for problem in missing_result.problems}
+                self.assertIn("BML_REGISTERED_RUNTIME_LAUNCH_ADAPTER_MISSING", missing_codes)
+                self.assertIn("BML_REGISTERED_RUNTIME_LAUNCHER_EXECUTABLE_MISSING", missing_codes)
+                self.assertIn("BML_REGISTERED_RUNTIME_WINDOWS_VERIFICATION_MISSING", missing_codes)
+
+                fake_runtime = {
+                    **base_runtime,
+                    "launchAdapter": loader.LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY,
+                    "launcherExecutable": str(launcher_executable),
+                    "launcherExecutableSha256": sha256(launcher_executable),
+                }
+                _fake_info, _fake_info_path, _fake_launch_executable, fake_result = loader.validate_registered_runtime(
+                    fake_runtime,
+                    profile,
+                    package,
+                )
+                fake_codes = {problem.code for problem in fake_result.problems}
+                bare_verified_runtime = {
+                    **fake_runtime,
+                    "windowsRuntimeStatus": {"status": "verified"},
+                }
+                _bare_info, _bare_info_path, _bare_launch_executable, bare_result = loader.validate_registered_runtime(
+                    bare_verified_runtime,
+                    profile,
+                    package,
+                )
+                bare_codes = {problem.code for problem in bare_result.problems}
+                self.assertFalse(bare_result.ok)
+                self.assertIn("BML_REGISTERED_RUNTIME_WINDOWS_VERIFICATION_MISSING", bare_codes)
+
+                self.assertFalse(fake_result.ok)
+                self.assertIn("BML_REGISTERED_RUNTIME_WINDOWS_VERIFICATION_MISSING", fake_codes)
+
+                wrong_target_runtime = {
+                    **fake_runtime,
+                    "steamExecutable": str(wrong_steam_executable),
+                    "steamExecutableSha256": sha256(wrong_steam_executable),
+                }
+                _wrong_info, _wrong_info_path, _wrong_launch_executable, wrong_target_result = loader.validate_registered_runtime(
+                    wrong_target_runtime,
+                    profile,
+                    package,
+                )
+                wrong_target_codes = {problem.code for problem in wrong_target_result.problems}
+                self.assertFalse(wrong_target_result.ok)
+                self.assertIn("BML_REGISTERED_RUNTIME_STEAM_EXECUTABLE_NAME_MISMATCH", wrong_target_codes)
+
+                verified_runtime = {
+                    **fake_runtime,
+                    "windowsRuntimeStatus": {
+                        "status": "verified",
+                        "evidence": {
+                            "platform": "windows-x86_64",
+                            "hostOs": "windows",
+                            "gameExecutableName": "barony.exe",
+                            "hookLibraryName": "barony_bml.dll",
+                            "launcherExecutableName": loader.WINDOWS_LAUNCHER_EXECUTABLE,
+                            "runtimeLoadReportSha256": "a" * 64,
+                            "verifiedAt": "2026-07-05T00:00:00Z",
+                        },
+                    },
+                }
+                selected_info, selected_info_path, launch_executable, valid_result = loader.validate_registered_runtime(
+                    verified_runtime,
+                    profile,
+                    package,
+                )
+                self.assertTrue(valid_result.ok, [problem.code for problem in valid_result.problems])
+                self.assertEqual(selected_info, runtime_info)
+                self.assertEqual(selected_info_path, runtime_info_path.resolve())
+                self.assertEqual(launch_executable, launcher_executable.resolve())
+
+                out_path = bml_root / "runtime-manifest.json"
+                manifest_payload, _active_mods_path = loader.write_launch_artifacts(
+                    profile,
+                    profile_dir,
+                    package,
+                    runtime_info,
+                    out_path,
+                    launch_executable,
+                    verified_runtime,
+                )
+                launch = manifest_payload["launch"]
+                self.assertEqual(launch["launchAdapter"], loader.LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY)
+                self.assertEqual(launch["launcherExecutable"], str(launcher_executable))
+                self.assertEqual(launch["hookLibrary"], str(hook_library))
+                self.assertEqual(launch["steamExecutable"], str(steam_executable))
+                self.assertEqual(launch["launchExecutable"], str(launcher_executable.resolve()))
+
+                environment = loader.launch_environment(profile, profile_dir, out_path, verified_runtime)
+                self.assertEqual(environment["BML_LAUNCH_ADAPTER"], loader.LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY)
+                self.assertEqual(environment["BML_TARGET_EXECUTABLE"], str(steam_executable))
+                self.assertEqual(environment["BML_LAUNCHER_EXECUTABLE"], str(launcher_executable))
+                self.assertEqual(environment["BML_HOOK_LIBRARY"], str(hook_library))
+                self.assertNotIn("LD_PRELOAD", environment)
 
     def test_steam_client_process_detection_uses_proc_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

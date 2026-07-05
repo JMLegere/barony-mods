@@ -1,7 +1,7 @@
 {
   "runtimeId": "barony-bml-runtime-stash",
   "runtimeVersion": "0.1.0",
-  "runtimeName": "BaronyModLoader Stash installed executable hook runtime",
+  "runtimeName": "BaronyModLoader Stash installed executable hook runtime (Linux verified, Windows scaffolded)",
   "gameRevision": "steam-371970-22630456",
   "contractVersions": [
     "0.1.0"
@@ -24,9 +24,39 @@
   "platforms": [
     {
       "platform": "linux-x86_64",
+      "hostOs": "linux",
+      "cpuArch": "x86_64",
+      "gameExecutableName": "barony.x86_64",
+      "gameExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
       "executable": "/home/jerry/Workspace/barony-mods/native/barony-modloader-hook/build/libbarony_bml.so",
       "artifact": "native/barony-modloader-hook/build/libbarony_bml.so",
-      "sha256": "b55e92227c3e8d869c8e4fffdc606f2c985e9d7e70dbb0d9b3107d240dc065db"
+      "artifactKind": "native-hook-library",
+      "artifactExtension": ".so",
+      "hookLibraryName": "libbarony_bml.so",
+      "sha256": "b55e92227c3e8d869c8e4fffdc606f2c985e9d7e70dbb0d9b3107d240dc065db",
+      "launchAdapter": "linux-ld-preload",
+      "launcherExecutable": null,
+      "launcherPath": null,
+      "status": "verified_steam_linux_production_lobby_evidence",
+      "notes": "Verified only on the installed Steam/Linux build 22630456 path using LD_PRELOAD plus BML_RUNTIME_MANIFEST/BML_PROFILE_DIR/BML_HOOK_MANIFEST/BML_HOOK_LIBRARY. Live evidence covers the Start Map lobby access point and Open stash prompt; remaining player scenarios are still pending."
+    },
+    {
+      "platform": "windows-x86_64",
+      "hostOs": "windows",
+      "cpuArch": "x86_64",
+      "gameExecutableName": "barony.exe",
+      "gameExecutable": null,
+      "executable": null,
+      "artifact": null,
+      "artifactKind": "native-hook-library",
+      "artifactExtension": ".dll",
+      "hookLibraryName": "barony_bml.dll",
+      "sha256": null,
+      "launchAdapter": "windows-createprocess-loadlibrary",
+      "launcherExecutable": "bml-win-launcher.exe",
+      "launcherPath": null,
+      "status": "scaffold_pending_native_artifact_launcher_and_live_windows_verification",
+      "notes": "Contract only. A Windows runtime must provide a real barony_bml.dll plus canonical bml-win-launcher.exe launcher path for the windows-createprocess-loadlibrary adapter and must be validated on a Windows host against a live Barony runtime before any playable Windows support is claimed."
     }
   ],
   "capabilities": [
@@ -84,6 +114,8 @@
     "runtimeStrategy": "installed-binary-hook",
     "requiresValidatedManifest": true,
     "rejectsUnknownRequiredCapabilities": true,
-    "partialStashLoadAllowed": false
+    "partialStashLoadAllowed": false,
+    "platformMismatchPolicy": "fail_closed_if_host_platform_or_required_artifact_does_not_match_registered_platform",
+    "windowsSupportStatus": "scaffold_only_pending_barony_bml_dll_bml_win_launcher_and_live_verification"
   }
 }

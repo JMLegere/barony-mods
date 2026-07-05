@@ -12,18 +12,18 @@
     "manifestPath": "mods/stash/bml-package.json",
     "checksum": {
       "algorithm": "sha256",
-      "sha256": "6ad84954039df01363971f211872eaa3696a4d20401b7ba85e179ba8a0902c89",
-      "size": 12135
+      "sha256": "e1c48d4ec1eee173002155992f0c5c533c9f636bc911263e2dbc8b6c9dfe003e",
+      "size": 14153
     },
     "archive": {
       "path": "framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "008a9c15ab87737d1c307550009a833771ed4eb3e672cfdc764872aa8ef83415",
-        "size": 19215
+        "sha256": "5c2249df482ace6aff4c1ae7481389f600658944f611551ac8d634d9958e1347",
+        "size": 20053
       },
       "status": "packed_fixture",
-      "notes": "Deterministic archive produced by `python framework/BaronyModLoader/app/barony_mod_loader.py package pack mods/stash --out framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg`."
+      "notes": "Deterministic archive fixture regenerated from current mods/stash source files, including bml-package.json, workshop.toml, and checksums.json."
     },
     "installedPathShape": "<package-store>/jml.stash/0.1.0"
   },
@@ -41,8 +41,38 @@
       "placement_shop",
       "multiplayer_version_metadata"
     ],
-    "status": "installed_binary_hook_production_loaded_pending_player_scenarios",
-    "notes": "The v1 runtime path is the BML-owned installed-binary hook/bootstrap contract. For validated jml.stash manifests, the production Stash bundle now loads by default; live evidence covers the lobby access point/prompt, fake-provider evidence covers generated-shop placement and shared inventory binding, and player-facing generated-shop, persistence, spell, save/resume, disabled, and multiplayer scenarios remain unverified."
+    "status": "installed_binary_hook_production_loaded_linux_only_windows_scaffold_pending",
+    "notes": "The v1 runtime path is the BML-owned installed-binary hook/bootstrap contract. For validated jml.stash manifests, the production Stash bundle now loads by default only on the verified Steam/Linux target. Windows is modeled as a fail-closed launch-adapter contract pending a real barony_bml.dll, canonical bml-win-launcher.exe launcher path, build manifest, and live Windows runtime evidence. Live Linux evidence covers the lobby access point/prompt; fake-provider evidence covers generated-shop placement and shared inventory binding; player-facing generated-shop, persistence, spell, save/resume, disabled, multiplayer, and all Windows gameplay scenarios remain unverified.",
+    "platforms": [
+      {
+        "platform": "linux-x86_64",
+        "hostOs": "linux",
+        "cpuArch": "x86_64",
+        "gameExecutableName": "barony.x86_64",
+        "launchAdapter": "linux-ld-preload",
+        "hookArtifact": "native/barony-modloader-hook/build/libbarony_bml.so",
+        "artifactExtension": ".so",
+        "hookLibraryName": "libbarony_bml.so",
+        "launcherExecutable": null,
+        "launcherPath": null,
+        "status": "verified_steam_linux_production_lobby_evidence",
+        "notes": "Only verified production path today. Requires the installed Steam/Linux build 22630456 executable, the checked libbarony_bml.so hook, and the pinned Linux hook manifest."
+      },
+      {
+        "platform": "windows-x86_64",
+        "hostOs": "windows",
+        "cpuArch": "x86_64",
+        "gameExecutableName": "barony.exe",
+        "launchAdapter": "windows-createprocess-loadlibrary",
+        "hookArtifact": null,
+        "artifactExtension": ".dll",
+        "hookLibraryName": "barony_bml.dll",
+        "launcherExecutable": "bml-win-launcher.exe",
+        "launcherPath": null,
+        "status": "scaffold_pending_native_artifact_launcher_and_live_windows_verification",
+        "notes": "Contract only. Must fail closed unless running on Windows with a registered canonical bml-win-launcher.exe launcher path and hook DLL whose checksum/build manifest match the runtime registry; no Windows gameplay support is verified."
+      }
+    ]
   },
   "runtimeProvenance": {
     "runtimeStrategy": "installed-binary-hook",
@@ -84,14 +114,14 @@
       "path": "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "c4afb6f89db1278b98d6028273aa5a21637302b36f5c8fff5609ddba5d30f4e3",
-        "size": 2766
+        "sha256": "c1a8d1bcecf8a8fa52e090d60525b6ec216069d85ab459beb7a34d45d4eb441b",
+        "size": 4719
       },
       "status": "present",
-      "notes": "Fixture declares installed-binary-hook policy and rejects partial Stash loads."
+      "notes": "Fixture declares installed-binary-hook policy, Linux LD_PRELOAD support, Windows create-process/load-library scaffold metadata using canonical bml-win-launcher.exe naming, and rejects partial/platform-mismatched Stash loads."
     },
-    "status": "provenance_recorded_production_stash_loaded",
-    "notes": "Release provenance is the installed Steam/Linux executable plus BML hook artifacts. Historical fail-closed reports are retained only as diagnostic evidence from earlier opt-in probes; they are not the current top-level runtime status."
+    "status": "provenance_recorded_linux_only_windows_scaffold_pending",
+    "notes": "Release provenance is the installed Steam/Linux executable plus BML hook artifacts. Windows provenance is intentionally not claimed: no barony_bml.dll, launcher, Windows build manifest, or live Windows evidence is recorded yet. Historical fail-closed reports are retained only as diagnostic evidence from earlier opt-in probes; they are not the current top-level runtime status."
   },
   "barony": {
     "upstreamRepository": "https://github.com/TurningWheel/Barony",
@@ -103,8 +133,8 @@
         "5.x",
         "v5.0.2"
       ],
-      "status": "installed_steam_linux_target_recorded_production_lobby_verified",
-      "notes": "The current release target is Steam/Linux app 371970 build 22630456. Live quickstart evidence verifies the production lobby Stash access point and prompt; real generated-shop placement, persistence, spell-created Void Chest behavior, save/resume, disabled behavior, and multiplayer mismatch rejection remain unverified."
+      "status": "installed_steam_linux_target_recorded_windows_scaffold_pending",
+      "notes": "The current verified release target is Steam/Linux app 371970 build 22630456. Live quickstart evidence verifies the production lobby Stash access point and prompt. Windows support is metadata-only until a Windows runtime artifact and live Windows evidence exist; real generated-shop placement, persistence, spell-created Void Chest behavior, save/resume, disabled behavior, and multiplayer mismatch rejection remain unverified on every platform."
     }
   },
   "patchSeries": {
@@ -155,10 +185,10 @@
   "buildArtifacts": {
     "status": "not_applicable_installed_binary_hook",
     "artifacts": [],
-    "notes": "No patched/source-built Barony executable is claimed for this v1 release manifest. The installed Steam executable identity is recorded under runtimeProvenance.installedExecutable."
+    "notes": "No patched/source-built Barony executable is claimed for this v1 release manifest. The installed Steam/Linux executable identity is recorded under runtimeProvenance.installedExecutable. Windows native artifacts are pending and therefore absent from build artifacts."
   },
   "verification": {
-    "status": "production_loaded_live_lobby_pending_player_scenarios",
+    "status": "production_loaded_linux_only_windows_scaffold_pending_player_scenarios",
     "artifactVerification": {
       "status": "complete",
       "evidence": [
@@ -172,10 +202,10 @@
         "framework/BaronyModLoader/schema/stash-hook-report.schema.json",
         "native/barony-modloader-hook/tests/smoke_ld_preload.sh"
       ],
-      "notes": "Release artifact provenance is present for the installed Steam/Linux hook path."
+      "notes": "Release artifact provenance is present for the installed Steam/Linux hook path. Windows artifacts are not present and are intentionally represented as pending scaffold metadata only."
     },
     "installedHookVerification": {
-      "status": "production_loaded_with_historical_fail_closed_diagnostics",
+      "status": "linux_production_loaded_windows_scaffold_pending",
       "failClosed": false,
       "reports": [
         {
@@ -245,10 +275,10 @@
           "notes": "Required Stash targets currently report with a conservative static/readiness split (42 ready, 0 blocked, 0 missing across the five Stash hook groups for Steam/Linux build 22630456) and the live symbol probe resolves all 30 required symbols. Production Stash activation is installed for validated jml.stash manifests; BML_STASH_DISABLE_PLAYABLE remains available for diagnostic probes."
         }
       ],
-      "notes": "Current status is production loaded for validated jml.stash manifests on the pinned Steam/Linux executable. Fake-provider evidence covers lobby and generated-shop placement hooks, shared stash inventory binding, metadata guard, and scoped Open stash prompt; live quickstart/in-game evidence covers the lobby access point and prompt. Real generated-shop placement, persistence across run boundaries, spell-created Void Chest interaction, save/resume, disabled behavior, and multiplayer mismatch rejection remain unverified."
+      "notes": "Current status is production loaded for validated jml.stash manifests on the pinned Steam/Linux executable. Fake-provider evidence covers lobby and generated-shop placement hooks, shared stash inventory binding, metadata guard, and scoped Open stash prompt; live quickstart/in-game evidence covers the lobby access point and prompt. Windows launch/runtime verification is absent by design, so any Windows path must fail closed until real artifacts and live evidence are registered."
     },
     "builtGameBehavior": {
-      "status": "production_lobby_verified_remaining_player_scenarios_pending",
+      "status": "linux_lobby_verified_windows_unverified_remaining_player_scenarios_pending",
       "requiredScenarios": [
         "runtime manifest acceptance",
         "persistent Void Chest inventory across death, new run, and process relaunch",
@@ -259,17 +289,17 @@
         "multiplayer package/runtime mismatch rejection",
         "disabled package leaves vanilla Void Chest behavior unmodified"
       ],
-      "notes": "Live quickstart=barbarian against the stock Steam/Linux executable plus LD_PRELOAD hook verified runtime-load status=loaded, all 30 required symbols resolved, and state/stash-diagnostics.jsonl recorded a lobby stash access point on Start Map at x=232.000/y=456.000. Jeremy then confirmed in-game that the placement/lid/prompt work all works great. Fake-provider self-test verifies generated-shop placement logic and shared inventory/spell binding, but real generated-shop placement, persistence across death/new-run/relaunch, save/resume, disabled behavior, and actual multiplayer mismatch rejection remain unverified."
+      "notes": "Live quickstart=barbarian against the stock Steam/Linux executable plus LD_PRELOAD hook verified runtime-load status=loaded, all 30 required symbols resolved, and state/stash-diagnostics.jsonl recorded a lobby stash access point on Start Map at x=232.000/y=456.000. Jeremy then confirmed in-game that the placement/lid/prompt work all works great. No Windows runtime has been run or verified. Fake-provider self-test verifies generated-shop placement logic and shared inventory/spell binding, but real generated-shop placement, persistence across run boundaries, spell-created Void Chest interaction, save/resume, disabled behavior, and multiplayer rejection remain pending."
     }
   },
   "rollback": {
     "notes": "Rollback means disabling the jml.stash package and launching the installed Barony executable without the BML hook/bootstrap environment.",
     "steps": [
       "Disable jml.stash in the profile package state before launch.",
-      "Launch the installed Steam Barony executable without LD_PRELOAD or BML hook environment variables.",
+      "Launch the installed Steam/Linux Barony executable without LD_PRELOAD or BML hook environment variables; for future Windows scaffolds, launch barony.exe without the BML launcher/load-library adapter.",
       "Preserve BaronyModLoader profile state, hook reports, and stash inventory files for inspection; do not delete user data unless explicitly requested.",
       "Regenerate launch/runtime manifests after the package is disabled so stale capability metadata and hook provenance are not reused."
     ],
-    "risk": "Existing experimental stash state may be unreadable by vanilla Barony or later hook revisions; preserve it separately rather than silently converting or deleting it."
+    "risk": "Existing experimental stash state may be unreadable by vanilla Barony or later hook revisions; preserve it separately rather than silently converting or deleting it. Windows state migration is not defined until Windows runtime artifacts are real and verified."
   }
 }

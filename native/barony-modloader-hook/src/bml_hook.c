@@ -18,6 +18,13 @@
 #include <time.h>
 #include <unistd.h>
 
+/*
+ * Linux adapter boundary:
+ * This translation unit is the verified linux-x86_64 LD_PRELOAD hook payload
+ * for barony.x86_64. Windows launch/injection responsibilities are recorded in
+ * src/bml_windows_adapter_stub.c and are intentionally not compiled here.
+ */
+
 #define BML_CONTRACT_ID "bml-runtime-contract"
 #define BML_CONTRACT_VERSION "0.1.0"
 #define BML_NATIVE_RUNTIME_ID "barony-bml-native-hook"

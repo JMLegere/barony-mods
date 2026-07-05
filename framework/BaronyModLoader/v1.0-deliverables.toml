@@ -5,7 +5,7 @@
 name = "BaronyModLoader v1.0 deliverables"
 status = "active"
 created = "2026-07-02"
-objective = "A usable v1.0 BaronyModLoader path for the Stash reference mod, with a standalone app, clean package contract, installed-executable hook/bootstrap runtime provenance, production-loaded Stash evidence, and explicit remaining player-scenario gaps."
+objective = "A usable v1.0 BaronyModLoader path for the Stash reference mod, with a standalone app, clean package contract, platform-aware installed-executable hook/bootstrap runtime provenance, Linux production-loaded Stash evidence, Windows scaffold gates, and explicit remaining player-scenario gaps."
 
 [[deliverables]]
 id = "p1_loader_app"
@@ -29,7 +29,7 @@ evidence = [
 [[deliverables]]
 id = "p2_installed_hook_contract"
 status = "implemented_installed_hook_contract"
-summary = "Contracts, docs, runtime metadata, and release provenance describe BML v1 as an installed PC executable hook/bootstrap runtime, not a source-built Barony runtime."
+summary = "Contracts, docs, runtime metadata, and release provenance describe BML v1 as a platform-aware installed PC executable hook/bootstrap runtime, not a source-built Barony runtime; Linux is verified, while Windows is scaffolded behind artifact/launcher/live-evidence gates."
 required_artifacts = [
   "framework/BaronyModLoader/installed-steam-hook-strategy.md",
   "framework/BaronyModLoader/current-situation-discovery.md",
@@ -43,7 +43,7 @@ evidence = [
   "source-build is not listed as a supported v1 runtime strategy",
   "PC storefront/platform matrix is documented as Steam Windows/macOS/Linux, Epic Windows/macOS, GOG Windows/macOS/Linux, and Humble Windows/macOS/Linux",
   "Nintendo Switch is explicitly out of scope",
-  "runtime-info, runtime-load-report, registry, and release-manifest fixtures model installed-binary-hook provenance, current production-loaded Stash status, and historical fail-closed diagnostics",
+  "runtime-info, runtime-load-report, registry, and release-manifest fixtures model installed-binary-hook provenance, current Steam/Linux production-loaded Stash status, Windows scaffold launch-adapter metadata, and historical fail-closed diagnostics",
 ]
 
 [[deliverables]]
@@ -104,7 +104,7 @@ evidence = [
 [[deliverables]]
 id = "p5_packaging_release"
 status = "implemented_release_manifest_records_installed_hook_provenance_loaded"
-summary = "BaronyModLoader can create/install/enable/disable a clean Stash package archive and records installed-executable hook provenance, production-loaded Stash runtime status, and explicit remaining gameplay verification gaps."
+summary = "BaronyModLoader can create/install/enable/disable a clean Stash package archive and records platform-aware installed-executable hook provenance, Linux production-loaded Stash runtime status, Windows scaffold gates, and explicit remaining gameplay verification gaps."
 required_artifacts = [
   "framework/BaronyModLoader/app/barony_mod_loader.py",
   "framework/BaronyModLoader/schema/release-manifest.schema.json",
@@ -120,7 +120,7 @@ evidence = [
   "python framework/BaronyModLoader/app/barony_mod_loader.py package install framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg --store .tmp/bml-package-store",
   "profile create --steam produces an installed PC game profile with executable provenance",
   "launch dry-run for a Steam-backed profile emits installed-executable hook command and provenance",
-  "release manifest records app/runtime/package identity, deterministic Stash archive checksum, Steam app 371970 build 22630456, Barony v5.0.2, installed executable SHA-256/build id, hook library checksum/status, hook manifest checksum, runtime-info checksum, rollback notes, production-loaded Stash status, historical fail-closed diagnostic evidence, and remaining unverified player-facing scenarios",
+  "release manifest records app/runtime/package identity, deterministic Stash archive checksum, Steam app 371970 build 22630456, Barony v5.0.2, installed Linux executable SHA-256/build id, Linux hook library checksum/status, hook manifest checksum, runtime-info checksum, Windows scaffold status pending barony_bml.dll/canonical bml-win-launcher.exe launcher/live evidence, rollback notes, Linux production-loaded Stash status, historical fail-closed diagnostic evidence, and remaining unverified player-facing scenarios",
 ]
 
 [[deliverables]]

@@ -5,27 +5,27 @@
     "version": "0.1.0"
   },
   "createdAt": "2026-06-20T12:00:00Z",
-  "updatedAt": "2026-06-20T12:00:00Z",
+  "updatedAt": "2026-07-05T00:00:00Z",
   "runtimes": [
     {
-      "id": "bml-hook-stash-linux-x86_64-steam-371970-testbuild",
+      "id": "bml-hook-stash-linux-x86_64-steam-371970-22630456",
       "runtimeStrategy": "installed-binary-hook",
       "storefront": "steam",
       "steamAppId": "371970",
-      "steamBuildId": "testbuild-1234",
+      "steamBuildId": "22630456",
       "platform": "linux-x86_64",
       "runtimeVersion": "0.1.0",
       "runtimeContract": "bml-runtime-contract@0.1.0",
       "executable": null,
       "steamExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
-      "steamExecutableSha256": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-      "steamExecutableBuildId": "testbuild-1234",
-      "gameVersionString": "v5.0.0",
-      "hookLibrary": "/home/jerry/.local/share/BaronyModLoader/hooks/libbarony_bml.so",
-      "hookLibrarySha256": "feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface",
-      "hookManifest": "/home/jerry/.local/share/BaronyModLoader/hooks/manifests/stash-v1.json",
-      "hookManifestSha256": "beefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead",
-      "runtimeInfo": "/home/jerry/.local/share/BaronyModLoader/runtimes/stash-v1/runtime-info.json",
+      "steamExecutableSha256": "da858ad9636bb14dea18fbca28512c276b0c4e7359914b88acd365ed904bbade",
+      "steamExecutableBuildId": "58089d84bce3afb48d5b19df032f7aa89d81b69a",
+      "gameVersionString": "v5.0.2",
+      "hookLibrary": "/home/jerry/Workspace/barony-mods/native/barony-modloader-hook/build/libbarony_bml.so",
+      "hookLibrarySha256": "b55e92227c3e8d869c8e4fffdc606f2c985e9d7e70dbb0d9b3107d240dc065db",
+      "hookManifest": "/home/jerry/Workspace/barony-mods/native/barony-modloader-hook/manifests/steam-371970-22630456-linux.json",
+      "hookManifestSha256": "c46bd7d0266780b7af170925ed83d79694d042638a2cb834da8455860fde8ab1",
+      "runtimeInfo": "/home/jerry/Workspace/barony-mods/framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
       "sha256": null,
       "capabilities": [
         {
@@ -53,7 +53,16 @@
           "version": "0.1.0"
         }
       ],
-      "registeredAt": "2026-06-20T12:00:00Z"
+      "registeredAt": "2026-07-05T00:00:00Z",
+      "hostOs": "linux",
+      "cpuArch": "x86_64",
+      "gameExecutableName": "barony.x86_64",
+      "launchAdapter": "linux-ld-preload",
+      "hookArtifactExtension": ".so",
+      "launcherExecutable": null,
+      "launcherPath": null,
+      "verificationStatus": "verified_steam_linux_production_lobby_evidence",
+      "notes": "Registered runtime is Linux-only for Steam app 371970 build 22630456 and matches runtime-info/release provenance. Windows is intentionally not registered here; a future Windows runtime must fail closed until barony.exe, barony_bml.dll, canonical bml-win-launcher.exe launcher path, build manifest, artifact checksums, and live Windows evidence are present."
     }
   ]
 }

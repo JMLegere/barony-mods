@@ -13,8 +13,8 @@
     },
     {
       "path": "bml-package.json",
-      "sha256": "6ad84954039df01363971f211872eaa3696a4d20401b7ba85e179ba8a0902c89",
-      "size": 12135
+      "sha256": "e1c48d4ec1eee173002155992f0c5c533c9f636bc911263e2dbc8b6c9dfe003e",
+      "size": 14153
     },
     {
       "path": "content/books/.gitkeep",
@@ -78,8 +78,8 @@
     },
     {
       "path": "workshop.toml",
-      "sha256": "68bca8bea39a432ef5937602bbfa5b158d428e70141ce3402f49cc6b4e8e7ae6",
-      "size": 1317
+      "sha256": "0af8aa3385f20f34e758bf8e56091df9713b9437e1e4ad8b259eb0a0f7c90da3",
+      "size": 1970
     }
   ],
   "omitted": [

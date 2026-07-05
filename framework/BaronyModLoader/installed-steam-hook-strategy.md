@@ -26,7 +26,7 @@ The product target is the PC storefront/platform matrix Jeremy identified from B
 
 Nintendo Switch is intentionally out of scope for this native PC mod-loader plan.
 
-Steam/Linux is the first concrete verification target because that is the installed executable currently available on this workstation. The app/runtime contracts should be written so additional PC storefronts and operating systems can be added without reintroducing a source-build runtime path.
+Steam/Linux is the first concrete verification target because that is the installed executable currently available on this workstation. Windows is the first non-Linux scaffold target: contracts may describe `barony.exe`, a future `windows-createprocess-loadlibrary` launch adapter, and a `barony_bml.dll` hook artifact, but they must fail closed until a real Windows artifact, launcher/build manifest, and live Windows evidence exist. The app/runtime contracts should be written so additional PC storefronts and operating systems can be added without reintroducing a source-build runtime path.
 
 The deleted prototype source checkout was:
 
@@ -96,6 +96,30 @@ Current Steam/Linux status for build `22630456` uses the installed executable at
 
 The verified player-facing live boundary is the Start Map lobby access point: the live quickstart evidence records the placed chest/lid and Jeremy confirmed the in-game `Open stash` prompt. Fake-provider evidence covers generated-shop placement logic, shared inventory/spell binding, multiplayer metadata/client guard reporting, scoped prompt replacement, and production hook install reports. Live gameplay still needs separate verification for real generated-shop placement, cross-run persistence, player-cast spell-created Void Chests, save/resume, disabled behavior, and multiplayer mismatch rejection.
 
+## Windows scaffold contract
+
+Windows support is a contract scaffold, not a gameplay claim. A Windows runtime entry may be modeled only as:
+
+```text
+platform: windows-x86_64
+game executable: barony.exe
+launch adapter: windows-createprocess-loadlibrary
+hook artifact: barony_bml.dll
+optional launcher executable/path: `bml-win-launcher.exe` name reserved; registered path pending
+status: scaffold pending native artifact, launcher, build manifest, and live Windows verification
+```
+
+The Windows adapter must fail closed unless all of the following are true:
+
+- the host platform is Windows;
+- the registered game executable is `barony.exe` for a supported storefront/build;
+- a real `barony_bml.dll` exists and its checksum matches runtime metadata;
+- a registered launcher executable/path exists for the create-process/load-library adapter, using the canonical launcher executable name `bml-win-launcher.exe`;
+- a Windows hook/build manifest pins executable identity, hook artifact identity, capabilities, and report paths;
+- live Windows evidence records successful runtime load before any player-facing support is advertised.
+
+Until those gates pass, package/release metadata may say BML is becoming multi-platform starting with Windows scaffolding, but Stash production behavior remains verified only on Steam/Linux.
+
 ## Hook-loader architecture
 
 ```text
@@ -119,19 +143,22 @@ native/barony-modloader-hook/
 
 ## Guardrails
 
-The app must refuse to describe a runtime as Steam-compatible unless it records:
+The app must refuse to describe a runtime as Steam-compatible unless it records the active platform adapter and matching artifacts. The current verified Linux entry records:
 
 ```json
 {
   "runtimeStrategy": "installed-binary-hook",
   "steamAppId": "371970",
   "steamBuildId": "22630456",
+  "platform": "linux-x86_64",
+  "gameExecutableName": "barony.x86_64",
+  "launchAdapter": "linux-ld-preload",
   "steamExecutable": "/home/jerry/.local/share/Steam/steamapps/common/Barony/barony.x86_64",
   "steamExecutableSha256": "...",
   "gameVersionString": "v5.0.2",
   "hookLibrary": "native/barony-modloader-hook/build/libbarony_bml.so",
   "hookLibrarySha256": "...",
-  "hookManifest": "/path/to/steam-371970-22630456.json",
+  "hookManifest": "/path/to/steam-371970-22630456-linux.json",
   "capabilities": [
     "persistent_storage",
     "persistent_inventory",
@@ -154,7 +181,7 @@ Source-built runtimes are not a v1 runtime strategy. If the old source patches a
 }
 ```
 
-The launcher must not treat source-derived artifacts as supported runtime entries.
+The launcher must not treat source-derived artifacts as supported runtime entries. It must also reject a registered runtime when the host platform, game executable name, launch adapter, hook library extension, launcher path, or artifact checksum does not match the selected platform target.
 
 ## MVP spike sequence
 

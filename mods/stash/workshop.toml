@@ -1,21 +1,22 @@
 slug = "stash"
 title = "Stash"
 description = """
-Stash is a BaronyModLoader reference mod for a shared Void Chest-style stash on the verified Steam/Linux installed-binary hook path.
+Stash is a BaronyModLoader reference mod for a shared Void Chest-style stash. BML is becoming multi-platform, starting with Windows scaffolding, but Stash production behavior is currently verified only on the Steam/Linux installed-binary hook path.
 
 Current requirement:
-- requires BML to launch the installed Steam/Linux Barony executable with the validated libbarony_bml.so hook runtime and jml.stash runtime manifest
+- requires BML to launch the installed Steam/Linux Barony executable with the validated libbarony_bml.so hook runtime and jml.stash runtime manifest for the currently verified production path
 - is not a Workshop-only data mod; current behavior comes from the BML installed-binary hook runtime, with old source-fork artifacts retained only as design references
+- includes metadata for a future Windows barony.exe + windows-createprocess-loadlibrary + barony_bml.dll contract with canonical bml-win-launcher.exe launcher naming, but no Windows gameplay is verified until real native artifacts, launcher metadata, and live Windows evidence exist
 - live Steam/Linux evidence currently verifies the Start Map lobby access point, lid, and Open stash prompt
 - fake-provider evidence covers production hook installation, generated-shop placement logic, shared inventory/spell binding, metadata guard reporting, and prompt scoping
 - live gameplay still needs verification for real generated-shop placement, cross-run persistence, player-cast spell-created Void Chests, save/resume, disabled behavior, and multiplayer mismatch rejection
 
-Keep hidden until the BML installed-hook runtime and remaining live player-facing scenarios are ready for public release.
+Keep hidden until the BML installed-hook runtime and remaining live player-facing scenarios are ready for public release; do not advertise Windows gameplay until the Windows runtime gates pass with a real barony_bml.dll, the canonical bml-win-launcher.exe launcher, and live Windows evidence.
 """
 preview = "preview.png"
 visibility = 2
 publishedfileid = "0"
-changenote = "Hidden BML installed-hook verification update for Stash Steam/Linux boundaries"
+changenote = "Hidden BML platform metadata update: Steam/Linux remains verified; Windows scaffold is pending native/runtime evidence"
 
 [content]
 folder = "content"

@@ -4,46 +4,101 @@
   "title": "BaronyModLoader v0 runtime registry",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "app", "createdAt", "updatedAt", "runtimes"],
+  "required": [
+    "schemaVersion",
+    "app",
+    "createdAt",
+    "updatedAt",
+    "runtimes"
+  ],
   "properties": {
-    "schemaVersion": { "const": "0.1.0" },
+    "schemaVersion": {
+      "const": "0.1.0"
+    },
     "app": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "version"],
+      "required": [
+        "id",
+        "version"
+      ],
       "properties": {
-        "id": { "const": "BaronyModLoader" },
-        "version": { "$ref": "#/$defs/version" }
+        "id": {
+          "const": "BaronyModLoader"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
       }
     },
-    "createdAt": { "$ref": "#/$defs/dateTime" },
-    "updatedAt": { "$ref": "#/$defs/dateTime" },
+    "createdAt": {
+      "$ref": "#/$defs/dateTime"
+    },
+    "updatedAt": {
+      "$ref": "#/$defs/dateTime"
+    },
     "runtimes": {
       "type": "array",
-      "items": { "$ref": "#/$defs/runtime" }
+      "items": {
+        "$ref": "#/$defs/runtime"
+      }
     }
   },
   "$defs": {
-    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
-    "dateTime": { "type": "string", "format": "date-time" },
-    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-    "absolutePath": { "type": "string", "pattern": "^(?:/|[A-Za-z]:[\\\\/]).+" },
-    "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/]).+"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
     "runtimeStrategy": {
       "type": "string",
-      "enum": ["installed-binary-hook"]
+      "enum": [
+        "installed-binary-hook"
+      ]
     },
     "capabilityId": {
       "type": "string",
-      "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata"]
+      "enum": [
+        "persistent_storage",
+        "persistent_inventory",
+        "void_chest_binding",
+        "placement_lobby",
+        "placement_shop",
+        "multiplayer_version_metadata"
+      ]
     },
     "capability": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/capabilityId" },
-        "version": { "type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" }
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+        }
       }
     },
     "runtime": {
@@ -69,33 +124,166 @@
         "registeredAt"
       ],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "runtimeStrategy": { "$ref": "#/$defs/runtimeStrategy" },
-        "storefront": { "type": ["string", "null"], "enum": ["steam", null] },
-        "steamAppId": { "type": ["string", "null"] },
-        "steamBuildId": { "type": ["string", "null"] },
-        "platform": { "type": "string", "minLength": 1 },
-        "runtimeVersion": { "$ref": "#/$defs/version" },
-        "runtimeContract": { "const": "bml-runtime-contract@0.1.0" },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "runtimeStrategy": {
+          "$ref": "#/$defs/runtimeStrategy"
+        },
+        "storefront": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "steam",
+            null
+          ]
+        },
+        "steamAppId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "steamBuildId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "runtimeContract": {
+          "const": "bml-runtime-contract@0.1.0"
+        },
         "executable": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Deprecated. Use steamExecutable instead."
         },
-        "steamExecutable": { "$ref": "#/$defs/absolutePath" },
-        "steamExecutableSha256": { "$ref": "#/$defs/sha256" },
-        "steamExecutableBuildId": { "type": ["string", "null"] },
-        "gameVersionString": { "type": ["string", "null"] },
-        "hookLibrary": { "$ref": "#/$defs/absolutePath" },
-        "hookLibrarySha256": { "$ref": "#/$defs/sha256" },
-        "hookManifest": { "$ref": "#/$defs/absolutePath" },
-        "hookManifestSha256": { "$ref": "#/$defs/sha256" },
-        "runtimeInfo": { "$ref": "#/$defs/absolutePath" },
+        "steamExecutable": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "steamExecutableSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "steamExecutableBuildId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gameVersionString": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hookLibrary": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "hookLibrarySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "hookManifest": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "hookManifestSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtimeInfo": {
+          "$ref": "#/$defs/absolutePath"
+        },
         "sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Deprecated. Use steamExecutableSha256 instead."
         },
-        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/capability" }, "minItems": 1 },
-        "registeredAt": { "$ref": "#/$defs/dateTime" }
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          },
+          "minItems": 1
+        },
+        "registeredAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "hostOs": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "linux",
+            "windows",
+            "macos",
+            null
+          ]
+        },
+        "cpuArch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gameExecutableName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launchAdapter": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "linux-ld-preload",
+            "windows-createprocess-loadlibrary",
+            null
+          ]
+        },
+        "hookArtifactExtension": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launcherExecutable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launcherPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verificationStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     }
   }

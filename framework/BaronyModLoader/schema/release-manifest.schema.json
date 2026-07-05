@@ -142,11 +142,20 @@
             "installed_binary_hook_contract_recorded_fail_closed",
             "runtime_binary_verified",
             "source_patch_artifacts_present_runtime_binary_pending",
-            "pending"
+            "pending",
+            "installed_binary_hook_production_loaded_pending_player_scenarios",
+            "installed_binary_hook_production_loaded_linux_only_windows_scaffold_pending"
           ]
         },
         "notes": {
           "type": "string"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/platformRuntimeSupport"
+          },
+          "minItems": 1
         }
       }
     },
@@ -207,7 +216,9 @@
                 "installed_steam_linux_target_recorded_gameplay_pending",
                 "source_patch_artifacts_present_built_game_pending",
                 "verified_playable",
-                "unknown"
+                "unknown",
+                "installed_steam_linux_target_recorded_production_lobby_verified",
+                "installed_steam_linux_target_recorded_windows_scaffold_pending"
               ]
             },
             "notes": {
@@ -291,7 +302,9 @@
             "artifact_verified_built_game_pending",
             "verified_playable",
             "failed",
-            "pending"
+            "pending",
+            "production_loaded_live_lobby_pending_player_scenarios",
+            "production_loaded_linux_only_windows_scaffold_pending_player_scenarios"
           ]
         },
         "artifactVerification": {
@@ -336,7 +349,9 @@
                 "fail_closed_pending_detours",
                 "verified_playable",
                 "failed",
-                "pending"
+                "pending",
+                "production_loaded_with_historical_fail_closed_diagnostics",
+                "linux_production_loaded_windows_scaffold_pending"
               ]
             },
             "failClosed": {
@@ -367,7 +382,9 @@
                 "pending_installed_hook_detours",
                 "pending_patched_build",
                 "complete",
-                "failed"
+                "failed",
+                "production_lobby_verified_remaining_player_scenarios_pending",
+                "linux_lobby_verified_windows_unverified_remaining_player_scenarios_pending"
               ]
             },
             "requiredScenarios": {
@@ -688,7 +705,8 @@
                 "built_available_fail_closed",
                 "available",
                 "missing",
-                "pending"
+                "pending",
+                "built_available_production_stash"
               ]
             },
             "notes": {
@@ -758,7 +776,9 @@
             "provenance_recorded_fail_closed",
             "verified_playable",
             "pending",
-            "failed"
+            "failed",
+            "provenance_recorded_production_stash_loaded",
+            "provenance_recorded_linux_only_windows_scaffold_pending"
           ]
         },
         "notes": {
@@ -783,7 +803,13 @@
             "detour-self-test",
             "stash-detour-self-test",
             "stash-hook",
-            "release-provenance"
+            "release-provenance",
+            "stash-detour-install",
+            "stash-core-detour-install",
+            "stash-access-placement-detour-install",
+            "stash-access-placement-self-test",
+            "stash-placement-discovery",
+            "stash-core-behavior"
           ]
         },
         "path": {
@@ -796,7 +822,9 @@
             "current_fail_closed",
             "pending_capture",
             "passed",
-            "failed"
+            "failed",
+            "historical_passed_fail_closed_diagnostic",
+            "current_loaded_for_validated_stash_manifest"
           ]
         },
         "notes": {
@@ -893,6 +921,86 @@
             "verified",
             "missing"
           ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "platformRuntimeSupport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "hostOs",
+        "gameExecutableName",
+        "launchAdapter",
+        "artifactExtension",
+        "status"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hostOs": {
+          "type": "string",
+          "enum": [
+            "linux",
+            "windows",
+            "macos"
+          ]
+        },
+        "cpuArch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gameExecutableName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "launchAdapter": {
+          "type": "string",
+          "enum": [
+            "linux-ld-preload",
+            "windows-createprocess-loadlibrary"
+          ]
+        },
+        "hookArtifact": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "artifactExtension": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hookLibraryName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "launcherExecutable": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "launcherPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
         },
         "notes": {
           "type": "string"

@@ -21,27 +21,49 @@
     "policy"
   ],
   "properties": {
-    "runtimeId": { "$ref": "#/$defs/id" },
-    "runtimeVersion": { "$ref": "#/$defs/version" },
-    "runtimeName": { "type": "string", "minLength": 1 },
-    "gameRevision": { "type": "string", "minLength": 1 },
+    "runtimeId": {
+      "$ref": "#/$defs/id"
+    },
+    "runtimeVersion": {
+      "$ref": "#/$defs/version"
+    },
+    "runtimeName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gameRevision": {
+      "type": "string",
+      "minLength": 1
+    },
     "contractVersions": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/version" }
+      "items": {
+        "$ref": "#/$defs/version"
+      }
     },
-    "executable": { "$ref": "#/$defs/absolutePath" },
-    "game": { "$ref": "#/$defs/game" },
-    "contract": { "$ref": "#/$defs/contract" },
+    "executable": {
+      "$ref": "#/$defs/absolutePath"
+    },
+    "game": {
+      "$ref": "#/$defs/game"
+    },
+    "contract": {
+      "$ref": "#/$defs/contract"
+    },
     "platforms": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/platform" }
+      "items": {
+        "$ref": "#/$defs/platform"
+      }
     },
     "capabilities": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/runtimeCapability" }
+      "items": {
+        "$ref": "#/$defs/runtimeCapability"
+      }
     },
     "moduleSupport": {
       "type": "array",
@@ -67,13 +89,23 @@
         "stateRoot"
       ],
       "properties": {
-        "runtimeManifest": { "$ref": "#/$defs/profilePath" },
-        "runtimeLoadReport": { "$ref": "#/$defs/profilePath" },
-        "runtimeLog": { "$ref": "#/$defs/profilePath" },
-        "stateRoot": { "$ref": "#/$defs/profilePath" }
+        "runtimeManifest": {
+          "$ref": "#/$defs/profilePath"
+        },
+        "runtimeLoadReport": {
+          "$ref": "#/$defs/profilePath"
+        },
+        "runtimeLog": {
+          "$ref": "#/$defs/profilePath"
+        },
+        "stateRoot": {
+          "$ref": "#/$defs/profilePath"
+        }
       }
     },
-    "policy": { "$ref": "#/$defs/policy" }
+    "policy": {
+      "$ref": "#/$defs/policy"
+    }
   },
   "$defs": {
     "version": {
@@ -106,62 +138,204 @@
     "capabilityRequest": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "version", "required"],
+      "required": [
+        "id",
+        "version",
+        "required"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/capabilityId" },
-        "version": { "$ref": "#/$defs/version" },
-        "required": { "type": "boolean" },
-        "reason": { "type": "string" }
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
       }
     },
     "runtimeCapability": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "version", "requiredForStash"],
+      "required": [
+        "id",
+        "version",
+        "requiredForStash"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/capabilityId" },
-        "version": { "$ref": "#/$defs/version" },
-        "requiredForStash": { "type": "boolean" },
-        "description": { "type": "string" }
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "requiredForStash": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        }
       }
     },
     "game": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["id", "name", "supportedVersions", "revision"],
+      "required": [
+        "id",
+        "name",
+        "supportedVersions",
+        "revision"
+      ],
       "properties": {
-        "id": { "const": "barony" },
-        "name": { "const": "Barony" },
+        "id": {
+          "const": "barony"
+        },
+        "name": {
+          "const": "Barony"
+        },
         "supportedVersions": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "revision": { "type": "string", "minLength": 1 }
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "contract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "versions"],
+      "required": [
+        "id",
+        "versions"
+      ],
       "properties": {
-        "id": { "const": "bml-runtime-contract" },
+        "id": {
+          "const": "bml-runtime-contract"
+        },
         "versions": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/version" }
+          "items": {
+            "$ref": "#/$defs/version"
+          }
         }
       }
     },
     "platform": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["platform", "executable", "artifact", "sha256"],
+      "required": [
+        "platform"
+      ],
       "properties": {
-        "platform": { "type": "string", "minLength": 1 },
-        "executable": { "$ref": "#/$defs/absolutePath" },
-        "artifact": { "type": "string", "minLength": 1 },
-        "sha256": { "$ref": "#/$defs/sha256" }
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hostOs": {
+          "type": "string",
+          "enum": [
+            "linux",
+            "windows",
+            "macos"
+          ]
+        },
+        "cpuArch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gameExecutableName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gameExecutable": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolutePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "artifact": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "artifactKind": {
+          "type": "string",
+          "enum": [
+            "native-hook-library",
+            "launcher-executable",
+            "manifest"
+          ]
+        },
+        "artifactExtension": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hookLibraryName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "launchAdapter": {
+          "type": "string",
+          "enum": [
+            "linux-ld-preload",
+            "windows-createprocess-loadlibrary"
+          ]
+        },
+        "launcherExecutable": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "launcherPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "sha256": {
@@ -177,10 +351,25 @@
         "partialStashLoadAllowed"
       ],
       "properties": {
-        "runtimeStrategy": { "type": "string", "minLength": 1 },
-        "requiresValidatedManifest": { "type": "boolean" },
-        "rejectsUnknownRequiredCapabilities": { "type": "boolean" },
-        "partialStashLoadAllowed": { "type": "boolean" }
+        "runtimeStrategy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiresValidatedManifest": {
+          "type": "boolean"
+        },
+        "rejectsUnknownRequiredCapabilities": {
+          "type": "boolean"
+        },
+        "partialStashLoadAllowed": {
+          "type": "boolean"
+        },
+        "platformMismatchPolicy": {
+          "type": "string"
+        },
+        "windowsSupportStatus": {
+          "type": "string"
+        }
       }
     }
   }
