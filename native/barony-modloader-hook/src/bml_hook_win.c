@@ -140,10 +140,12 @@ static int mkdir_p_wide(const wchar_t* path)
 #define BML_STASH_LOBBY_PLACEMENT_YAW BML_STASH_YAW_NORTH
 #define BML_STASH_PLACEMENT_LID_HINGE_OFFSET 3.0
 #define BML_STASH_PLACEMENT_LID_OFFSET_Z (-2.75)
-#define BML_STASH_SPRITE_LOBBY_CHEST 1791
+#define BML_STASH_SPRITE_CHEST_SPAWN 21
+#define BML_STASH_SPRITE_CHEST_VOID_VISUAL 1791
 #define BML_STASH_ACT_CHEST_WRAPPER_RVA ((uintptr_t)0x002E23C0ULL)
 #define BML_STASH_ACT_CHEST_LID_BEHAVIOR_RVA ((uintptr_t)0x002E3560ULL)
-#define BML_STASH_SPRITE_LOBBY_LID 1790
+#define BML_STASH_SPRITE_LID_SPAWN 216
+#define BML_STASH_SPRITE_LID_VOID_VISUAL 1790
 #define BML_STASH_MULTIPLAYER_CLIENT 2
 #define BML_STASH_MULTIPLAYER_DIRECTCLIENT 4
 #define BML_STASH_PLAYABLE_BEHAVIOR_REPORT_RELATIVE_PATH L"BaronyModLoader\\reports\\stash-playable-behavior-report.json"
@@ -1451,7 +1453,7 @@ static int windows_stash_playable_place_chest_and_lid_at(void* map_argument, dou
     else if (chest_yaw == BML_STASH_YAW_NORTH) lid_y = chest_y + BML_STASH_PLACEMENT_LID_HINGE_OFFSET;
     else lid_y = chest_y - BML_STASH_PLACEMENT_LID_HINGE_OFFSET;
 
-    chest = windows_stash_call_new_entity_with_diagnostics("before_chest_new_entity", BML_STASH_SPRITE_LOBBY_CHEST, 1U, entity_list, NULL);
+    chest = windows_stash_call_new_entity_with_diagnostics("before_chest_new_entity", BML_STASH_SPRITE_CHEST_SPAWN, 1U, entity_list, NULL);
     if (chest != NULL) {
         windows_append_stash_diagnostic_event("stash_access_point_step", "after_chest_new_entity", NULL, 1, chest_x, chest_y, -1);
         {
@@ -1466,7 +1468,7 @@ static int windows_stash_playable_place_chest_and_lid_at(void* map_argument, dou
             windows_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_YAW, chest_yaw);
             windows_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SIZEX, 3);
             windows_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SIZEY, 2);
-            windows_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LOBBY_CHEST);
+            windows_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_CHEST_VOID_VISUAL);
             memcpy((unsigned char*)chest + BML_STASH_ENTITY_OFFSET_BEHAVIOR, &behavior, sizeof(behavior));
             windows_entity_set_skill(chest, 0, 1);
             windows_entity_set_skill(chest, 3, 9999);
@@ -1481,7 +1483,7 @@ static int windows_stash_playable_place_chest_and_lid_at(void* map_argument, dou
         windows_append_stash_diagnostic_event("stash_access_point_step", "chest_initialized", NULL, 1, chest_x, chest_y, -1);
     }
 
-    lid = windows_stash_call_new_entity_with_diagnostics("before_lid_new_entity", BML_STASH_SPRITE_LOBBY_LID, 0U, entity_list, NULL);
+    lid = windows_stash_call_new_entity_with_diagnostics("before_lid_new_entity", BML_STASH_SPRITE_LID_SPAWN, 0U, entity_list, NULL);
     if (lid != NULL) {
         windows_append_stash_diagnostic_event("stash_access_point_step", "after_lid_new_entity", NULL, 1, lid_x, lid_y, -1);
         {
@@ -1498,7 +1500,7 @@ static int windows_stash_playable_place_chest_and_lid_at(void* map_argument, dou
             windows_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_FOCALZ, -0.75);
             windows_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SIZEX, 2);
             windows_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SIZEY, 2);
-            windows_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LOBBY_LID);
+            windows_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LID_VOID_VISUAL);
             memcpy((unsigned char*)lid + BML_STASH_ENTITY_OFFSET_BEHAVIOR, &behavior, sizeof(behavior));
             windows_entity_set_flag(lid, 12, 1);
             windows_entity_set_skill(lid, 58, BML_STASH_INTERNAL_MARKER_SKILL58);
