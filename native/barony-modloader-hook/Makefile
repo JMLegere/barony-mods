@@ -4,6 +4,7 @@ LDFLAGS ?=
 LDLIBS ?= -ldl
 WINEGCC ?= winegcc
 WINE ?= wine
+PYTHON ?= python
 BML_WINDOWS_CFLAGS ?= -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -O2
 
 BUILD_DIR := build
@@ -75,6 +76,7 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 test: all $(TEST_SYMBOL_PROVIDER)
+	$(PYTHON) $(TEST_DIR)/test_stash_backend_parity.py
 	sh $(TEST_DIR)/smoke_ld_preload.sh $(abspath $(LINUX_TARGET)) $(abspath $(TEST_SYMBOL_PROVIDER))
 
 windows-smoke: BML_PLATFORM=windows-x86_64
@@ -84,4 +86,4 @@ windows-smoke: $(WINDOWS_TARGET) $(WINDOWS_LAUNCHER) | check-wine
 	test -s $(WINDOWS_SELF_TEST_REPORT)
 
 static-readiness:
-	python $(TOOLS_DIR)/analyze_stash_targets.py --manifest $(STATIC_READINESS_MANIFEST) --executable $(STATIC_READINESS_EXECUTABLE)
+	$(PYTHON) $(TOOLS_DIR)/analyze_stash_targets.py --manifest $(STATIC_READINESS_MANIFEST) --executable $(STATIC_READINESS_EXECUTABLE)
