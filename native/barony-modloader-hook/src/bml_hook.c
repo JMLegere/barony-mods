@@ -81,7 +81,7 @@
 #define BML_STASH_INTERNAL_MARKER_SKILL58 ((int32_t)0x424D4C00)
 #define BML_STASH_MAP_OFFSET_ENTITIES ((uintptr_t)208U)
 #define BML_STASH_LOBBY_PLACEMENT_X 232.0
-#define BML_STASH_LOBBY_PLACEMENT_Y 456.0
+#define BML_STASH_LOBBY_PLACEMENT_Y 280.0
 #define BML_STASH_PI 3.14159265358979323846
 // Barony's assignActions chest setup labels yaw=0 as east-facing and yaw=3*PI/2 as north-facing.
 #define BML_STASH_YAW_EAST 0.0
@@ -93,8 +93,10 @@
 #define BML_STASH_PLACEMENT_LID_OFFSET_Z (-2.75)
 #define BML_STASH_MULTIPLAYER_CLIENT 2
 #define BML_STASH_MULTIPLAYER_DIRECTCLIENT 4
-#define BML_STASH_SPRITE_LOBBY_CHEST 1791
-#define BML_STASH_SPRITE_LOBBY_LID 1790
+#define BML_STASH_SPRITE_CHEST_SPAWN 21
+#define BML_STASH_SPRITE_CHEST_VOID_VISUAL 1791
+#define BML_STASH_SPRITE_LID_SPAWN 216
+#define BML_STASH_SPRITE_LID_VOID_VISUAL 1790
 #define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
 #define BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST 4005
 #define BML_STASH_PROMPT_OPEN_STASH "Open stash"
@@ -3020,6 +3022,62 @@ static bool bml_stash_playable_is_start_map_name(const char *name) {
     }
     return false;
 }
+static void bml_stash_world_tile_center(unsigned int tile_x, unsigned int tile_y, double *world_x_out, double *world_y_out) {
+    if (world_x_out != NULL) {
+        *world_x_out = (double)tile_x * 16.0 + 8.0;
+    }
+    if (world_y_out != NULL) {
+        *world_y_out = (double)tile_y * 16.0 + 8.0;
+    }
+}
+static double bml_stash_world_to_tile(double world_coordinate) {
+    return (world_coordinate - 8.0) / 16.0;
+}
+static bool bml_stash_find_nearest_walkable_tile(BmlStashPlacementMapPrefix *map_prefix, double anchor_world_x, double anchor_world_y, double *world_x_out, double *world_y_out) {
+    unsigned int x;
+    unsigned int y;
+    bool found = false;
+    double best_distance_sq = 0.0;
+    double best_world_x = 0.0;
+    double best_world_y = 0.0;
+    double anchor_tile_x = bml_stash_world_to_tile(anchor_world_x);
+    double anchor_tile_y = bml_stash_world_to_tile(anchor_world_y);
+    if (map_prefix == NULL || map_prefix->tiles == NULL || map_prefix->width == 0U || map_prefix->height == 0U) {
+        return false;
+    }
+    for (x = 1U; x + 1U < map_prefix->width; ++x) {
+        for (y = 1U; y + 1U < map_prefix->height; ++y) {
+            size_t base = (size_t)y * 3U + (size_t)x * 3U * (size_t)map_prefix->height;
+            int32_t floor_tile = map_prefix->tiles[base];
+            int32_t obstacle_tile = map_prefix->tiles[base + 1U];
+            double dx;
+            double dy;
+            double distance_sq;
+            if (floor_tile == 0 || obstacle_tile != 0) {
+                continue;
+            }
+            dx = (double)x - anchor_tile_x;
+            dy = (double)y - anchor_tile_y;
+            distance_sq = dx * dx + dy * dy;
+            if (found && distance_sq >= best_distance_sq) {
+                continue;
+            }
+            found = true;
+            best_distance_sq = distance_sq;
+            bml_stash_world_tile_center(x, y, &best_world_x, &best_world_y);
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    if (world_x_out != NULL) {
+        *world_x_out = best_world_x;
+    }
+    if (world_y_out != NULL) {
+        *world_y_out = best_world_y;
+    }
+    return true;
+}
 static bool bml_stash_playable_read_int_symbol(const char *name, int *value_out) {
     void *symbol = dlsym(RTLD_DEFAULT, name);
     if (symbol == NULL || value_out == NULL) {
@@ -3106,7 +3164,7 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
 
     if (g_bml_stash_new_entity_original != NULL) {
         ++g_bml_stash_playable_new_entity_calls;
-        chest = g_bml_stash_new_entity_original(BML_STASH_SPRITE_LOBBY_CHEST, 1U, entity_list, NULL);
+        chest = g_bml_stash_new_entity_original(BML_STASH_SPRITE_CHEST_SPAWN, 1U, entity_list, NULL);
         if (chest != NULL) {
             if (g_bml_stash_set_sprite_attributes_original != NULL) {
                 g_bml_stash_set_sprite_attributes_original(chest, NULL, NULL);
@@ -3117,7 +3175,7 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
             bml_entity_set_real(chest, BML_STASH_ENTITY_OFFSET_YAW, chest_yaw);
             bml_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SIZEX, 3);
             bml_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SIZEY, 2);
-            bml_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LOBBY_CHEST);
+            bml_entity_set_s32(chest, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_CHEST_VOID_VISUAL);
             memcpy((unsigned char *)chest + BML_STASH_ENTITY_OFFSET_BEHAVIOR, &act_chest_fn_storage, sizeof(act_chest_fn_storage));
             bml_entity_set_skill(chest, 0, 1);
             bml_entity_set_skill(chest, 3, 9999);
@@ -3131,7 +3189,7 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
         }
 
         ++g_bml_stash_playable_new_entity_calls;
-        lid = g_bml_stash_new_entity_original(BML_STASH_SPRITE_LOBBY_LID, 0U, entity_list, NULL);
+        lid = g_bml_stash_new_entity_original(BML_STASH_SPRITE_LID_SPAWN, 0U, entity_list, NULL);
         if (lid != NULL) {
             if (g_bml_stash_set_sprite_attributes_original != NULL) {
                 g_bml_stash_set_sprite_attributes_original(lid, NULL, NULL);
@@ -3144,7 +3202,7 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
             bml_entity_set_real(lid, BML_STASH_ENTITY_OFFSET_FOCALZ, -0.75);
             bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SIZEX, 2);
             bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SIZEY, 2);
-            bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LOBBY_LID);
+            bml_entity_set_s32(lid, BML_STASH_ENTITY_OFFSET_SPRITE, BML_STASH_SPRITE_LID_VOID_VISUAL);
             memcpy((unsigned char *)lid + BML_STASH_ENTITY_OFFSET_BEHAVIOR, &act_chest_lid_fn_storage, sizeof(act_chest_lid_fn_storage));
             bml_entity_set_flag(lid, 12, true);
             bml_entity_set_skill(lid, 58, BML_STASH_INTERNAL_MARKER_SKILL58);
@@ -3185,8 +3243,11 @@ static bool bml_stash_playable_place_chest_and_lid_at(void *map_argument, double
     return false;
 }
 static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument) {
+    BmlStashPlacementMapPrefix *map_prefix = (BmlStashPlacementMapPrefix *)map_argument;
     void *chest = NULL;
     void *lid = NULL;
+    double x_pos = BML_STASH_LOBBY_PLACEMENT_X;
+    double y_pos = BML_STASH_LOBBY_PLACEMENT_Y;
     if (!g_bml_stash_playable_active) {
         return false;
     }
@@ -3198,13 +3259,11 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     if (g_bml_stash_assign_actions_original != NULL) {
         g_bml_stash_assign_actions_original(map_argument);
     }
-    if (bml_stash_playable_place_chest_and_lid_at(map_argument, BML_STASH_LOBBY_PLACEMENT_X, BML_STASH_LOBBY_PLACEMENT_Y, BML_STASH_LOBBY_PLACEMENT_YAW, &chest, &lid)) {
+    (void)bml_stash_find_nearest_walkable_tile(map_prefix, x_pos, y_pos, &x_pos, &y_pos);
+    if (bml_stash_playable_place_chest_and_lid_at(map_argument, x_pos, y_pos, BML_STASH_LOBBY_PLACEMENT_YAW, &chest, &lid)) {
         g_bml_stash_playable_last_placed_chest = chest;
         g_bml_stash_playable_last_placed_lid = lid;
-        {
-            BmlStashPlacementMapPrefix *map_prefix = (BmlStashPlacementMapPrefix *)map_argument;
-            bml_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix != NULL ? map_prefix->name : NULL, true, BML_STASH_LOBBY_PLACEMENT_X, BML_STASH_LOBBY_PLACEMENT_Y, -1);
-        }
+        bml_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix != NULL ? map_prefix->name : NULL, true, x_pos, y_pos, -1);
         g_bml_stash_playable_lobby_placements_succeeded += 1;
         return true;
     }
