@@ -39,6 +39,26 @@
     {
       "id": "multiplayer_version_metadata",
       "version": "0.1.0"
+    },
+    {
+      "id": "item_instance_metadata",
+      "version": "0.1.0"
+    },
+    {
+      "id": "loot_affix_rolls",
+      "version": "0.1.0"
+    },
+    {
+      "id": "item_name_tooltip_rendering",
+      "version": "0.1.0"
+    },
+    {
+      "id": "save_item_metadata",
+      "version": "0.1.0"
+    },
+    {
+      "id": "weapon_attack_modifier",
+      "version": "0.1.0"
     }
   ],
   "symbols": [
@@ -371,6 +391,56 @@
     "The prompt-scoped target set includes uidToEntity, Language::get, and selectedEntity so selected-entity and hover-tooltip prompts can be scoped to framework Stash access points.",
     "Static readiness remains conservative: it proves 42 ready, 0 blocked, and 0 missing targets across 30 required symbols, not full player-facing scenario coverage."
   ],
+  "runeboundLootSymbolNotes": [
+    {
+      "capability": "item_instance_metadata",
+      "targetIntent": "Item instance metadata sidecar around item creation/postprocess and save/load boundaries.",
+      "analysisStatus": "scaffold",
+      "symbolStatus": "not_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    },
+    {
+      "capability": "loot_affix_rolls",
+      "targetIntent": "Deterministic affix roll attachment during loot/item postprocess.",
+      "analysisStatus": "scaffold",
+      "symbolStatus": "not_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    },
+    {
+      "capability": "item_name_tooltip_rendering",
+      "targetIntent": "Item name and tooltip rendering hook points for affix names.",
+      "analysisStatus": "scaffold",
+      "symbolStatus": "not_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    },
+    {
+      "capability": "save_item_metadata",
+      "targetIntent": "Save/load metadata persistence for Runebound Loot item instance records.",
+      "analysisStatus": "scaffold",
+      "symbolStatus": "not_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    },
+    {
+      "capability": "weapon_attack_modifier",
+      "targetIntent": "Weapon attack calculation modifier hook point for affix attack bonuses.",
+      "analysisStatus": "scaffold",
+      "symbolStatus": "not_identified",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    },
+    {
+      "capability": "multiplayer_version_metadata",
+      "targetIntent": "Runebound Loot package/version metadata for future multiplayer compatibility gates.",
+      "analysisStatus": "scaffold",
+      "symbolStatus": "uses_existing_metadata_surface",
+      "installStatus": "not_installed",
+      "requiredForStash": false
+    }
+  ],
   "hookTargets": [
     {
       "id": "stash_void_chest_binding",
@@ -463,6 +533,84 @@
       "installStrategy": "relocation-safe-detour-required",
       "installStatus": "not_installed",
       "failClosedCode": "BML_STASH_HOOK_DETOUR_UNAVAILABLE"
+    },
+    {
+      "id": "runebound_loot_item_postprocess_metadata",
+      "capability": "item_instance_metadata",
+      "required": false,
+      "targetSymbolIds": [],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-target-identification-only",
+      "notes": [
+        "Runebound Loot item metadata hooks are not installed by this manifest; BML owns any future runtime implementation after installed-executable symbols are verified."
+      ]
+    },
+    {
+      "id": "runebound_loot_affix_rolls",
+      "capability": "loot_affix_rolls",
+      "required": false,
+      "targetSymbolIds": [],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-target-identification-only",
+      "notes": [
+        "Affix roll hook points are scaffolded for analysis only and are not required for Stash."
+      ]
+    },
+    {
+      "id": "runebound_loot_name_tooltip_rendering",
+      "capability": "item_name_tooltip_rendering",
+      "required": false,
+      "targetSymbolIds": [],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-target-identification-only",
+      "notes": [
+        "Name and tooltip rendering hooks are intentionally not installed; the native self-test covers only deterministic fake-provider rendering."
+      ]
+    },
+    {
+      "id": "runebound_loot_save_item_metadata",
+      "capability": "save_item_metadata",
+      "required": false,
+      "targetSymbolIds": [],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-target-identification-only",
+      "notes": [
+        "Save metadata hooks are scaffolded for future symbol analysis only."
+      ]
+    },
+    {
+      "id": "runebound_loot_weapon_attack_modifier",
+      "capability": "weapon_attack_modifier",
+      "required": false,
+      "targetSymbolIds": [],
+      "installStrategy": "analyze-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-target-identification-only",
+      "notes": [
+        "Weapon attack modifier hooks are not installed; the native self-test covers only base-plus-affix arithmetic."
+      ]
+    },
+    {
+      "id": "runebound_loot_multiplayer_version_metadata",
+      "capability": "multiplayer_version_metadata",
+      "required": false,
+      "targetSymbolIds": [],
+      "installStrategy": "metadata-scaffold-only",
+      "installStatus": "not_installed",
+      "failClosedCode": "BML_RUNES_LOOT_HOOK_NOT_INSTALLED",
+      "claimBoundary": "future-runtime-metadata-only",
+      "notes": [
+        "Runtime report metadata can recognize jml.runebound-loot, but no live multiplayer compatibility behavior is claimed."
+      ]
     }
   ]
 }

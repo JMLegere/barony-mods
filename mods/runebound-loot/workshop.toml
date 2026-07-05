@@ -1,0 +1,20 @@
+slug = "runebound-loot"
+title = "Runebound Loot"
+description = """
+Runebound Loot is a BaronyModLoader reference mod for weapon-only loot affix augmentation.
+
+This package adds generated-weapon prefixes and suffixes to Barony item drops, with per-instance metadata that survives across save boundaries and host-authoritative multiplayer metadata sync.
+
+Current constraints:
+- live gameplay is NOT yet verified; the unsupported runtime must fail closed
+- this is scaffolding and self-test evidence only, not playable support
+- stock Barony cannot load the BML-owned data files (content/data/bml/*) as standalone behavior
+- keep hidden until a verified installed-executable BML hook runtime and live gameplay evidence exist
+"""
+preview = "preview.png"
+visibility = 2
+publishedfileid = "0"
+changenote = "Initial scaffold: manifest, modules.lootAffixes, weapon-only affix data, self-test-only — no installed-executable hook runtime or live gameplay verification"
+
+[content]
+folder = "content"

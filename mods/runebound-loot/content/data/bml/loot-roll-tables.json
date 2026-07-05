@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "0.1.0",
+  "tables": {
+    "weapon_affix_roll": {
+      "description": "Determines whether a generated weapon receives a prefix, a suffix, both, or neither.",
+      "rarityTable": {
+        "common": {
+          "rollChance": 0.25,
+          "prefixChance": 0.6,
+          "suffixChance": 0.4,
+          "bothChance": 0.0
+        },
+        "uncommon": {
+          "rollChance": 0.45,
+          "prefixChance": 0.55,
+          "suffixChance": 0.45,
+          "bothChance": 0.0
+        },
+        "rare": {
+          "rollChance": 0.65,
+          "prefixChance": 0.5,
+          "suffixChance": 0.5,
+          "bothChance": 0.0
+        },
+        "legendary": {
+          "rollChance": 0.85,
+          "prefixChance": 0.5,
+          "suffixChance": 0.5,
+          "bothChance": 0.0
+        }
+      },
+      "notes": [
+        "bothChance is 0.0 for all tiers in this MVP. Future versions may set legendary to 0.5.",
+        "Roll uses weighted random from loot-affix-pools.json within the item's rarity tier.",
+        "Multiplayer: roll executes on host; result syncs to clients via item_instance_metadata."
+      ]
+    }
+  },
+  "notes": [
+    "This file is BML-owned dynamic data. Stock Barony cannot load it as standalone behavior.",
+    "Live gameplay is not verified; this data is self-test scaffolding only."
+  ]
+}

@@ -42,6 +42,8 @@
 #define BML_STASH_ACCESS_PLACEMENT_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-access-placement-self-test-report.json"
 #define BML_STASH_PLACEMENT_DISCOVERY_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-placement-discovery-report.json"
 #define BML_STASH_CORE_BEHAVIOR_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-core-behavior-report.json"
+#define BML_RUNES_LOOT_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-loot-self-test-report.json"
+#define BML_RUNES_LOOT_PACKAGE_ID "jml.runebound-loot"
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
 #define BML_STASH_INVENTORY_FORMAT_HEADER "# bml-stash-inventory-v2"
@@ -52,6 +54,7 @@
 #define BML_MAX_TEXT 256
 #define BML_MAX_MANIFEST_BYTES (1024U * 1024U)
 #define BML_MAX_REQUIRED_SYMBOLS 32
+#define BML_RUNES_LOOT_SERIALIZED_METADATA_MAX 512U
 #define BML_DETOUR_PATCH_BYTES 14U
 #define BML_DETOUR_MAX_COPY_BYTES 32U
 #define BML_DETOUR_MAX_INSTRUCTIONS 32U
@@ -138,6 +141,8 @@ typedef struct BmlReportInfo {
     char profile_id[BML_MAX_TEXT];
     bool has_stash;
     char stash_version[BML_MAX_TEXT];
+    bool has_runebound_loot;
+    char runebound_loot_version[BML_MAX_TEXT];
 } BmlReportInfo;
 
 typedef struct BmlRequiredSymbol {
@@ -297,6 +302,15 @@ typedef struct BmlBaronyItem {
     uint8_t itemRequireTradingSkillInShop;
     bool itemSpecialShopConsumable;
 } BmlBaronyItem;
+typedef struct BmlRuneboundLootItemMetadata {
+    uint32_t instance_id;
+    const char *base_name;
+    const char *prefix;
+    const char *suffix;
+    int base_attack;
+    int affix_attack_bonus;
+} BmlRuneboundLootItemMetadata;
+
 
 typedef struct BmlPatchInstruction {
     size_t source_offset;
@@ -711,6 +725,8 @@ static void bml_report_info_init(BmlReportInfo *info, const char *hook_library) 
     bml_copy_string(info->profile_id, sizeof(info->profile_id), "unknown-profile");
     info->has_stash = false;
     bml_copy_string(info->stash_version, sizeof(info->stash_version), "0.1.0");
+    info->has_runebound_loot = false;
+    bml_copy_string(info->runebound_loot_version, sizeof(info->runebound_loot_version), "0.1.0");
 }
 
 static void bml_populate_report_from_runtime_manifest(BmlReportInfo *info, const char *manifest_json) {
@@ -741,7 +757,11 @@ static void bml_populate_report_from_runtime_manifest(BmlReportInfo *info, const
     if (bml_extract_mod_version(manifest_json, "jml.stash", value, sizeof(value))) {
         bml_copy_string(info->stash_version, sizeof(info->stash_version), value);
     }
+    if (bml_extract_mod_version(manifest_json, BML_RUNES_LOOT_PACKAGE_ID, value, sizeof(value))) {
+        bml_copy_string(info->runebound_loot_version, sizeof(info->runebound_loot_version), value);
+    }
     info->has_stash = bml_runtime_manifest_has_mod(manifest_json, "jml.stash");
+    info->has_runebound_loot = bml_runtime_manifest_has_mod(manifest_json, BML_RUNES_LOOT_PACKAGE_ID);
 }
 
 static void bml_json_write_escaped(FILE *file, const char *value) {
@@ -1866,10 +1886,26 @@ static int bml_write_report(const char *report_path, const BmlReportInfo *info, 
     fputs(",\n  \"status\": ", file);
     bml_json_write_escaped(file, error_count == 0U ? "loaded" : "failed");
     fputs(",\n  \"loadedMods\": [", file);
+    bool wrote_loaded_mod = false;
     if (info->has_stash && error_count == 0U) {
         fputs("\n    {\n      \"id\": \"jml.stash\",\n      \"version\": ", file);
         bml_json_write_escaped(file, info->stash_version);
-        fputs(",\n      \"status\": \"loaded\",\n      \"capabilities\": [\n        \"persistent_storage\",\n        \"persistent_inventory\",\n        \"void_chest_binding\",\n        \"placement_lobby\",\n        \"placement_shop\",\n        \"multiplayer_version_metadata\"\n      ],\n      \"modules\": [\n        \"persistentStorage\",\n        \"persistentInventories\",\n        \"voidChestBindings\",\n        \"placements\",\n        \"multiplayer\"\n      ]\n    }\n  ", file);
+        fputs(",\n      \"status\": \"loaded\",\n      \"capabilities\": [\n        \"persistent_storage\",\n        \"persistent_inventory\",\n        \"void_chest_binding\",\n        \"placement_lobby\",\n        \"placement_shop\",\n        \"multiplayer_version_metadata\"\n      ],\n      \"modules\": [\n        \"persistentStorage\",\n        \"persistentInventories\",\n        \"voidChestBindings\",\n        \"placements\",\n        \"multiplayer\"\n      ]\n    }", file);
+        wrote_loaded_mod = true;
+    }
+    if (info->has_runebound_loot && error_count == 0U) {
+        if (wrote_loaded_mod) {
+            fputs(",", file);
+        }
+        fputs("\n    {\n      \"id\": ", file);
+        bml_json_write_escaped(file, BML_RUNES_LOOT_PACKAGE_ID);
+        fputs(",\n      \"version\": ", file);
+        bml_json_write_escaped(file, info->runebound_loot_version);
+        fputs(",\n      \"status\": \"scaffolded\",\n      \"playableBehaviorClaimed\": false,\n      \"installStatus\": \"not_installed\",\n      \"claimBoundary\": \"native-fake-provider-self-test-only\",\n      \"capabilities\": [\n        \"item_instance_metadata\",\n        \"loot_affix_rolls\",\n        \"item_name_tooltip_rendering\",\n        \"save_item_metadata\",\n        \"weapon_attack_modifier\",\n        \"multiplayer_version_metadata\"\n      ],\n      \"modules\": [\n        \"itemInstanceMetadata\",\n        \"lootAffixRolls\",\n        \"itemNameTooltipRendering\",\n        \"saveItemMetadata\",\n        \"weaponAttackModifier\",\n        \"multiplayer\"\n      ]\n    }", file);
+        wrote_loaded_mod = true;
+    }
+    if (wrote_loaded_mod) {
+        fputs("\n  ", file);
     }
     fputs("],\n  \"warnings\": [],\n  \"errors\": [", file);
     for (size_t index = 0U; index < error_count; ++index) {
@@ -2029,6 +2065,163 @@ static int bml_run_detour_self_test(const char *report_path) {
     }
 
     return 0;
+}
+
+static void bml_runebound_loot_make_fixture_metadata(BmlRuneboundLootItemMetadata *metadata) {
+    metadata->instance_id = 0x52424c31U;
+    metadata->base_name = "bronze sword";
+    metadata->prefix = "keen";
+    metadata->suffix = "ruin";
+    metadata->base_attack = 4;
+    metadata->affix_attack_bonus = 3;
+}
+
+static int bml_runebound_loot_render_item_name(const BmlRuneboundLootItemMetadata *metadata, char *out, size_t out_size) {
+    int written;
+    if (metadata == NULL || out == NULL || out_size == 0U) {
+        return -1;
+    }
+    written = snprintf(out, out_size, "%s %s of %s", metadata->prefix, metadata->base_name, metadata->suffix);
+    if (written < 0 || (size_t)written >= out_size) {
+        if (out_size > 0U) {
+            out[0] = '\0';
+        }
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_runebound_loot_weapon_attack(const BmlRuneboundLootItemMetadata *metadata) {
+    if (metadata == NULL) {
+        return 0;
+    }
+    return metadata->base_attack + metadata->affix_attack_bonus;
+}
+
+static int bml_runebound_loot_serialize_metadata(const BmlRuneboundLootItemMetadata *metadata, char *out, size_t out_size) {
+    int written;
+    if (metadata == NULL || out == NULL || out_size == 0U) {
+        return -1;
+    }
+    written = snprintf(out,
+                       out_size,
+                       "runebound-loot-metadata-v1\tinstanceId=%" PRIu32 "\tbaseName=%s\tprefix=%s\tsuffix=%s\tbaseAttack=%d\taffixAttackBonus=%d",
+                       metadata->instance_id,
+                       metadata->base_name,
+                       metadata->prefix,
+                       metadata->suffix,
+                       metadata->base_attack,
+                       metadata->affix_attack_bonus);
+    if (written < 0 || (size_t)written >= out_size) {
+        out[0] = '\0';
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_write_runebound_loot_self_test_report(const char *report_path, const BmlReportInfo *info, const char *status, const char *error_code, const char *error_message, const BmlRuneboundLootItemMetadata *metadata, const char *rendered_name, int computed_attack, const char *serialized_metadata) {
+    FILE *file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"runebound-loot-fake-provider-self-test\",\n  \"status\": ", file);
+    bml_json_write_escaped(file, status);
+    fputs(",\n  \"mod\": {\n    \"id\": ", file);
+    bml_json_write_escaped(file, BML_RUNES_LOOT_PACKAGE_ID);
+    fputs(",\n    \"version\": ", file);
+    bml_json_write_escaped(file, info != NULL ? info->runebound_loot_version : "0.1.0");
+    fputs(",\n    \"manifestDetected\": ", file);
+    fputs(info != NULL && info->has_runebound_loot ? "true" : "false", file);
+    fputs("\n  },\n  \"claimBoundary\": \"fake-provider-data-path-only\",\n  \"playableBehaviorClaimed\": false,\n  \"installedHooks\": false,\n  \"hookInstallStatus\": \"not_installed\",\n  \"capabilitiesExercised\": [\n    \"item_instance_metadata\",\n    \"loot_affix_rolls\",\n    \"item_name_tooltip_rendering\",\n    \"save_item_metadata\",\n    \"weapon_attack_modifier\",\n    \"multiplayer_version_metadata\"\n  ],\n  \"fixture\": {\n    \"itemInstanceMetadata\": {\n      \"instanceId\": ", file);
+    fprintf(file, "%" PRIu32, metadata != NULL ? metadata->instance_id : 0U);
+    fputs(",\n      \"baseName\": ", file);
+    bml_json_write_escaped(file, metadata != NULL ? metadata->base_name : "");
+    fputs(",\n      \"baseAttack\": ", file);
+    fprintf(file, "%d", metadata != NULL ? metadata->base_attack : 0);
+    fputs("\n    },\n    \"affixRoll\": {\n      \"prefix\": ", file);
+    bml_json_write_escaped(file, metadata != NULL ? metadata->prefix : "");
+    fputs(",\n      \"suffix\": ", file);
+    bml_json_write_escaped(file, metadata != NULL ? metadata->suffix : "");
+    fputs(",\n      \"attackBonus\": ", file);
+    fprintf(file, "%d", metadata != NULL ? metadata->affix_attack_bonus : 0);
+    fputs(",\n      \"deterministicFixture\": true\n    },\n    \"nameTooltipRendering\": {\n      \"renderedName\": ", file);
+    bml_json_write_escaped(file, rendered_name);
+    fputs("\n    },\n    \"weaponAttackModifier\": {\n      \"baseAttack\": ", file);
+    fprintf(file, "%d", metadata != NULL ? metadata->base_attack : 0);
+    fputs(",\n      \"affixBonus\": ", file);
+    fprintf(file, "%d", metadata != NULL ? metadata->affix_attack_bonus : 0);
+    fputs(",\n      \"computedAttack\": ", file);
+    fprintf(file, "%d", computed_attack);
+    fputs("\n    },\n    \"saveItemMetadata\": {\n      \"format\": \"runebound-loot-metadata-v1\",\n      \"serialized\": ", file);
+    bml_json_write_escaped(file, serialized_metadata);
+    fputs("\n    },\n    \"multiplayerVersionMetadata\": {\n      \"packageId\": ", file);
+    bml_json_write_escaped(file, BML_RUNES_LOOT_PACKAGE_ID);
+    fputs(",\n      \"packageVersion\": ", file);
+    bml_json_write_escaped(file, info != NULL ? info->runebound_loot_version : "0.1.0");
+    fputs(",\n      \"playableBehaviorClaimed\": false\n    }\n  },\n  \"assertions\": {\n    \"expectedRenderedName\": \"keen bronze sword of ruin\",\n    \"renderedNameMatched\": ", file);
+    fputs(strcmp(rendered_name != NULL ? rendered_name : "", "keen bronze sword of ruin") == 0 ? "true" : "false", file);
+    fputs(",\n    \"expectedWeaponAttack\": 7,\n    \"weaponAttackMatched\": ", file);
+    fputs(computed_attack == 7 ? "true" : "false", file);
+    fputs("\n  },\n  \"error\": ", file);
+    if (bml_has_value(error_code) || bml_has_value(error_message)) {
+        fputs("{\"code\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_RUNES_LOOT_SELF_TEST_FAILED");
+        fputs(", \"message\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Runebound Loot fake-provider self-test failed.");
+        fputc('}', file);
+    } else {
+        fputs("null", file);
+    }
+    fputs(",\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_run_runebound_loot_self_test(const char *report_path, const BmlReportInfo *info) {
+    BmlRuneboundLootItemMetadata metadata;
+    char rendered_name[BML_MAX_TEXT];
+    char serialized_metadata[BML_RUNES_LOOT_SERIALIZED_METADATA_MAX];
+    char error_code[BML_MAX_TEXT];
+    char error_message[BML_MAX_TEXT];
+    int computed_attack;
+    bool passed;
+
+    memset(&metadata, 0, sizeof(metadata));
+    memset(rendered_name, 0, sizeof(rendered_name));
+    memset(serialized_metadata, 0, sizeof(serialized_metadata));
+    memset(error_code, 0, sizeof(error_code));
+    memset(error_message, 0, sizeof(error_message));
+
+    bml_runebound_loot_make_fixture_metadata(&metadata);
+    if (bml_runebound_loot_render_item_name(&metadata, rendered_name, sizeof(rendered_name)) != 0) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_LOOT_NAME_RENDER_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound Loot deterministic affix name rendering exceeded the native self-test buffer.");
+    }
+    computed_attack = bml_runebound_loot_weapon_attack(&metadata);
+    if (!bml_has_value(error_code) && bml_runebound_loot_serialize_metadata(&metadata, serialized_metadata, sizeof(serialized_metadata)) != 0) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_LOOT_METADATA_SERIALIZE_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound Loot item metadata serialization exceeded the native self-test buffer.");
+    }
+
+    passed = !bml_has_value(error_code) &&
+             strcmp(rendered_name, "keen bronze sword of ruin") == 0 &&
+             computed_attack == 7 &&
+             bml_has_value(serialized_metadata);
+    if (!passed && !bml_has_value(error_code)) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_LOOT_SELF_TEST_ASSERTION_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound Loot fake-provider self-test did not produce the expected deterministic name, saved metadata, and attack modifier.");
+    }
+
+    if (bml_write_runebound_loot_self_test_report(report_path, info, passed ? "passed" : "failed", error_code, error_message, &metadata, rendered_name, computed_attack, serialized_metadata) != 0) {
+        return -1;
+    }
+    return passed ? 0 : -1;
 }
 
 typedef void *(*BmlStashAddItemToVoidChestServerFunction)(void *, int, void *, bool, void *);
@@ -4960,6 +5153,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *hook_manifest;
     const char *hook_library;
     const char *detour_self_test;
+    const char *runes_loot_self_test;
     const char *stash_detour_self_test;
     const char *stash_install_add_item_passthrough;
     const char *stash_install_core_passthrough;
@@ -4977,6 +5171,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     BmlStashHookPlan stash_hook_plan;
     bool stash_hooks_installed;
     bool stash_detour_self_test_requested;
+    bool runes_loot_self_test_requested;
     bool stash_install_add_item_passthrough_requested;
     bool stash_install_core_passthrough_requested;
     bool stash_install_access_placement_passthrough_requested;
@@ -4992,6 +5187,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char symbol_report_path[PATH_MAX];
     char stash_hook_report_path[PATH_MAX];
     char detour_self_test_report_path[PATH_MAX];
+    char runes_loot_self_test_report_path[PATH_MAX];
     char stash_detour_self_test_report_path[PATH_MAX];
     char stash_detour_install_report_path[PATH_MAX];
     char stash_core_detour_install_report_path[PATH_MAX];
@@ -5019,6 +5215,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     hook_manifest = getenv("BML_HOOK_MANIFEST");
     hook_library = getenv("BML_HOOK_LIBRARY");
     detour_self_test = getenv("BML_DETOUR_SELF_TEST");
+    runes_loot_self_test = getenv("BML_RUNES_LOOT_SELF_TEST");
     stash_detour_self_test = getenv("BML_STASH_DETOUR_SELF_TEST");
     stash_install_add_item_passthrough = getenv("BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH");
     stash_install_core_passthrough = getenv("BML_STASH_INSTALL_CORE_PASSTHROUGH");
@@ -5027,6 +5224,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_placement_discovery = getenv("BML_STASH_PLACEMENT_DISCOVERY");
     stash_enable_core_behavior = getenv("BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR");
     stash_core_behavior_self_test = getenv("BML_STASH_CORE_BEHAVIOR_SELF_TEST");
+    runes_loot_self_test_requested = strcmp(runes_loot_self_test != NULL ? runes_loot_self_test : "", "1") == 0;
     stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
     stash_install_add_item_passthrough_requested = strcmp(stash_install_add_item_passthrough != NULL ? stash_install_add_item_passthrough : "", "1") == 0;
     stash_install_core_passthrough_requested = strcmp(stash_install_core_passthrough != NULL ? stash_install_core_passthrough : "", "1") == 0;
@@ -5066,6 +5264,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(symbol_report_path, sizeof(symbol_report_path), profile_dir, BML_SYMBOL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_hook_report_path, sizeof(stash_hook_report_path), profile_dir, BML_STASH_HOOK_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(detour_self_test_report_path, sizeof(detour_self_test_report_path), profile_dir, BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(runes_loot_self_test_report_path, sizeof(runes_loot_self_test_report_path), profile_dir, BML_RUNES_LOOT_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_self_test_report_path, sizeof(stash_detour_self_test_report_path), profile_dir, BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
@@ -5095,6 +5294,11 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     if (strcmp(detour_self_test != NULL ? detour_self_test : "", "1") == 0 &&
         bml_run_detour_self_test(detour_self_test_report_path) != 0) {
         bml_add_error(errors, &error_count, "BML_DETOUR_SELF_TEST_FAILED", "BML_DETOUR_SELF_TEST=1 was requested, but the native absolute-jump detour substrate self-test failed.", "BML_DETOUR_SELF_TEST", detour_self_test_report_path);
+    }
+
+    if (runes_loot_self_test_requested &&
+        bml_run_runebound_loot_self_test(runes_loot_self_test_report_path, &info) != 0) {
+        bml_add_error(errors, &error_count, "BML_RUNES_LOOT_SELF_TEST_FAILED", "BML_RUNES_LOOT_SELF_TEST=1 was requested, but the Runebound Loot fake-provider data-path self-test failed.", "BML_RUNES_LOOT_SELF_TEST", runes_loot_self_test_report_path);
     }
 
     if (stash_placement_discovery_requested && !stash_install_access_placement_passthrough_requested) {

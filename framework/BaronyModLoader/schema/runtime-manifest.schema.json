@@ -94,7 +94,8 @@
               "persistentInventories": { "type": "array", "items": { "$ref": "#/$defs/persistentInventoryModule" } },
               "voidChestBindings": { "type": "array", "items": { "$ref": "#/$defs/voidChestBindingModule" } },
               "placements": { "type": "array", "items": { "$ref": "#/$defs/placementModule" } },
-              "multiplayer": { "$ref": "#/$defs/multiplayerModule" }
+              "multiplayer": { "$ref": "#/$defs/multiplayerModule" },
+              "lootAffixes": { "$ref": "#/$defs/lootAffixesModule" }
             }
           },
           "stateNamespace": { "$ref": "#/$defs/id" },
@@ -111,7 +112,7 @@
     "profilePath": { "type": "string", "pattern": "^BaronyModLoader/.+" },
     "capabilityId": {
       "type": "string",
-      "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata"]
+      "enum": ["persistent_storage", "persistent_inventory", "void_chest_binding", "placement_lobby", "placement_shop", "multiplayer_version_metadata", "item_instance_metadata", "loot_affix_rolls", "item_name_tooltip_rendering", "save_item_metadata", "weapon_attack_modifier"]
     },
     "capabilityRequest": {
       "type": "object",
@@ -192,6 +193,20 @@
         "versionPolicy": { "type": "string", "minLength": 1 },
         "syncInventories": { "type": "array", "items": { "$ref": "#/$defs/id" } },
         "clientCompatibility": { "type": "object", "additionalProperties": true },
+        "failurePolicy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "lootAffixesModule": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "namespace": { "$ref": "#/$defs/id" },
+        "schemaVersion": { "$ref": "#/$defs/version" },
+        "rolls": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "nameRendering": { "type": "object", "additionalProperties": true },
+        "itemMetadata": { "type": "object", "additionalProperties": true },
+        "attackModifiers": { "type": "object", "additionalProperties": true },
+        "multiplayer": { "type": "object", "additionalProperties": true },
         "failurePolicy": { "type": "string", "minLength": 1 }
       }
     }

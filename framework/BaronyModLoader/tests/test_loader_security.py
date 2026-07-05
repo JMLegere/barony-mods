@@ -83,6 +83,45 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         (package_dir / "content" / "marker.txt").write_text("installed\n", encoding="utf-8")
         return package_dir
 
+    def make_runebound_loot_package(self, workspace: Path) -> Path:
+        package_dir = workspace / "runebound-loot"
+        package_dir.mkdir(parents=True)
+        capabilities = [
+            "item_instance_metadata",
+            "loot_affix_rolls",
+            "item_name_tooltip_rendering",
+            "save_item_metadata",
+            "weapon_attack_modifier",
+            "multiplayer_version_metadata",
+        ]
+        write_json(
+            package_dir / loader.PACKAGE_MANIFEST_NAME,
+            {
+                "formatVersion": loader.SCHEMA_VERSION,
+                "id": "jml.runebound-loot",
+                "name": "Runebound Loot",
+                "version": "0.1.0",
+                "kind": "gameplay-mod",
+                "engine": {
+                    "runtimeContract": loader.RUNTIME_CONTRACT,
+                    "minimumRuntimeVersion": "0.1.0",
+                    "capabilities": [
+                        {"id": capability, "version": "0.1.0", "required": True, "reason": "Runebound Loot MVP validation"}
+                        for capability in capabilities
+                    ],
+                },
+                "modules": {
+                    "lootAffixes": {
+                        "namespace": "runebound_loot",
+                        "schemaVersion": "0.1.0",
+                        "failurePolicy": "fail-closed",
+                    }
+                },
+            },
+        )
+        return package_dir
+
+
     def make_profile_and_registry(self, workspace: Path, package_dir: Path) -> tuple[Path, Path, Path]:
         profile_dir = workspace / "profile"
         bml_root = profile_dir / loader.APP_ID
@@ -197,6 +236,40 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             archive_install = self.run_cli("package", "install", str(archive_path), "--store", str(archive_store))
             self.assertEqual(archive_install.returncode, 0, archive_install.stdout)
             self.assertEqual((archive_store / "jml.stash" / "0.1.0" / "content" / "marker.txt").read_text(encoding="utf-8"), "installed\n")
+
+    def test_runebound_loot_capabilities_do_not_require_stash_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_loot_package(workspace)
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertEqual(validate.returncode, 0, validate.stdout)
+            self.assertNotIn("BML_PACKAGE_CAPABILITY_REQUIRED_MISSING", validate.stdout)
+            self.assertNotIn("BML_PACKAGE_STASH_MODULE_MISSING", validate.stdout)
+
+    def test_stash_package_still_requires_canonical_stash_capabilities(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            package_dir = self.make_runebound_loot_package(workspace)
+            manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["id"] = "jml.stash"
+            manifest["name"] = "Stash"
+            manifest["engine"]["capabilities"] = [
+                {
+                    "id": "persistent_storage",
+                    "version": "0.1.0",
+                    "required": True,
+                    "reason": "Stash must keep canonical capability enforcement",
+                }
+            ]
+            manifest["modules"] = {"lootAffixes": manifest["modules"]["lootAffixes"]}
+            write_json(manifest_path, manifest)
+
+            validate = self.run_cli("package", "validate", str(package_dir))
+            self.assertNotEqual(validate.returncode, 0, validate.stdout)
+            self.assertIn("BML_PACKAGE_CAPABILITY_REQUIRED_MISSING", validate.stdout)
+            self.assertIn("BML_PACKAGE_STASH_MODULE_MISSING", validate.stdout)
 
     def test_directory_install_rejects_package_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

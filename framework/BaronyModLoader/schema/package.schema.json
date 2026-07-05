@@ -114,7 +114,6 @@
     },
     "modules": {
       "type": "object",
-      "required": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"],
       "additionalProperties": false,
       "properties": {
         "persistentStorage": {
@@ -199,6 +198,20 @@
             "clientCompatibility": { "type": "object", "additionalProperties": true },
             "failurePolicy": { "type": "string", "minLength": 1 }
           }
+        },
+        "lootAffixes": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "namespace": { "$ref": "#/$defs/idFragment" },
+            "schemaVersion": { "$ref": "#/$defs/version" },
+            "rolls": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+            "nameRendering": { "type": "object", "additionalProperties": true },
+            "itemMetadata": { "type": "object", "additionalProperties": true },
+            "attackModifiers": { "type": "object", "additionalProperties": true },
+            "multiplayer": { "type": "object", "additionalProperties": true },
+            "failurePolicy": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },
@@ -208,11 +221,10 @@
       "additionalProperties": true,
       "properties": {
         "required": { "type": "boolean" },
-        "mode": { "const": "paired-engine-runtime" },
+        "mode": { "type": "string", "enum": ["paired-engine-runtime", "none"] },
         "plugins": { "type": "array", "maxItems": 0 },
         "patches": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
             "required": ["id", "appliesTo", "baseRevision", "path", "required", "providesCapabilities"],
@@ -298,13 +310,40 @@
         "expectedLoadedModules": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"] },
+          "items": { "type": "string", "enum": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer", "lootAffixes"] },
           "uniqueItems": true
         },
-        "blockOnErrors": { "type": "boolean" }
+        "blockOnErrors": { "type": "boolean" },
+        "notes": { "type": "string" }
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "id": { "const": "jml.stash" } },
+        "required": ["id"]
+      },
+      "then": {
+        "properties": {
+          "engine": {
+            "properties": {
+              "capabilities": { "$ref": "#/$defs/stashRequiredCapabilitySet" }
+            }
+          },
+          "modules": {
+            "required": ["persistentStorage", "persistentInventories", "voidChestBindings", "placements", "multiplayer"]
+          },
+          "native": {
+            "properties": {
+              "mode": { "const": "paired-engine-runtime" },
+              "patches": { "minItems": 1 }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
     "packageId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
@@ -321,7 +360,12 @@
         "void_chest_binding",
         "placement_lobby",
         "placement_shop",
-        "multiplayer_version_metadata"
+        "multiplayer_version_metadata",
+        "item_instance_metadata",
+        "loot_affix_rolls",
+        "item_name_tooltip_rendering",
+        "save_item_metadata",
+        "weapon_attack_modifier"
       ]
     },
     "capabilityRequest": {
@@ -336,6 +380,11 @@
       }
     },
     "requiredCapabilitySet": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/capabilityRequest" }
+    },
+    "stashRequiredCapabilitySet": {
       "type": "array",
       "minItems": 6,
       "items": { "$ref": "#/$defs/capabilityRequest" },
@@ -356,17 +405,9 @@
     },
     "capabilityIdSet": {
       "type": "array",
-      "minItems": 6,
+      "minItems": 1,
       "items": { "$ref": "#/$defs/capabilityId" },
-      "uniqueItems": true,
-      "allOf": [
-        { "contains": { "const": "persistent_storage" } },
-        { "contains": { "const": "persistent_inventory" } },
-        { "contains": { "const": "void_chest_binding" } },
-        { "contains": { "const": "placement_lobby" } },
-        { "contains": { "const": "placement_shop" } },
-        { "contains": { "const": "multiplayer_version_metadata" } }
-      ]
+      "uniqueItems": true
     },
     "dependency": {
       "type": "object",

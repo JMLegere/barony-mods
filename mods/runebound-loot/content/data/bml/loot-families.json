@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "0.1.0",
+  "families": {
+    "weapon": {
+      "description": "All weapon item families eligible for Runebound Loot affixes.",
+      "eligibleFamilies": [
+        "sword",
+        "axe",
+        "mace",
+        "spear",
+        "dagger",
+        "shortbow",
+        "crossbow",
+        "staff",
+        "wand"
+      ],
+      "excludedFamilies": [],
+      "notes": [
+        "Only Barony weapon families listed above receive affixes. Armor, rings, amulets, scrolls, potions, and other non-weapon items are excluded.",
+        "Family names must match Barony's internal item family identifiers.",
+        "This file is BML-owned dynamic data. Stock Barony cannot load it as standalone behavior.",
+        "Live gameplay is not verified; this data is self-test scaffolding only."
+      ]
+    }
+  }
+}

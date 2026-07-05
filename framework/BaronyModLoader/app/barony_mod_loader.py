@@ -124,6 +124,20 @@ CANONICAL_STASH_CAPABILITIES = (
     "multiplayer_version_metadata",
 )
 
+CANONICAL_RUNEBOUND_LOOT_CAPABILITIES = (
+    "item_instance_metadata",
+    "loot_affix_rolls",
+    "item_name_tooltip_rendering",
+    "save_item_metadata",
+    "weapon_attack_modifier",
+    "multiplayer_version_metadata",
+)
+
+RECOGNIZED_CAPABILITIES = frozenset(
+    (*CANONICAL_STASH_CAPABILITIES, *CANONICAL_RUNEBOUND_LOOT_CAPABILITIES)
+)
+
+
 OUTDATED_CAPABILITY_ALIASES = {
     "persistent_named_inventories": ("persistent_inventory",),
     "void_chest_inventory_binding": ("void_chest_binding",),
@@ -578,9 +592,22 @@ def validate_capability_name_list(result: ValidationResult, values: Any, source:
             continue
         seen.add(cap_id)
         validate_outdated_capability_id(result, cap_id, item_source)
+        if cap_id not in RECOGNIZED_CAPABILITIES and cap_id not in OUTDATED_CAPABILITY_ALIASES:
+            result.add(
+                "BML_PACKAGE_CAPABILITY_UNKNOWN",
+                "error",
+                f"Unknown capability id {cap_id!r} for v0 BaronyModLoader.",
+                capability=cap_id,
+                allowed=sorted(RECOGNIZED_CAPABILITIES),
+                source=item_source,
+            )
         if isinstance(raw, dict) and "version" in raw and not is_semverish(version):
             result.add("BML_PACKAGE_CAPABILITY_VERSION_INVALID", "error", f"Capability version must be semver-ish: {item_source}", source=item_source, capability=cap_id, version=version)
     return seen
+
+
+def is_stash_package(manifest: dict[str, Any]) -> bool:
+    return manifest.get("id") == "jml.stash" or manifest.get("name") == "Stash"
 
 
 def validate_stash_modules(manifest: dict[str, Any], result: ValidationResult) -> None:
@@ -796,26 +823,18 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
 
     required_capabilities = package_required_capabilities(manifest)
     required_ids = {entry["id"] for entry in required_capabilities if isinstance(entry.get("id"), str)}
-    for required_id in required_ids:
-        if required_id not in CANONICAL_STASH_CAPABILITIES and required_id not in OUTDATED_CAPABILITY_ALIASES:
-            result.add(
-                "BML_PACKAGE_CAPABILITY_UNKNOWN",
-                "error",
-                f"Unknown required capability id {required_id!r} for v0 BaronyModLoader.",
-                capability=required_id,
-                allowed=list(CANONICAL_STASH_CAPABILITIES),
-            )
 
-    missing = [capability for capability in CANONICAL_STASH_CAPABILITIES if capability not in required_ids]
-    if missing:
-        result.add(
-            "BML_PACKAGE_CAPABILITY_REQUIRED_MISSING",
-            "error",
-            "Package is missing required canonical v0 Stash capability ids.",
-            missing=missing,
-            required=list(CANONICAL_STASH_CAPABILITIES),
-            present=sorted(engine_cap_ids),
-        )
+    if is_stash_package(manifest):
+        missing = [capability for capability in CANONICAL_STASH_CAPABILITIES if capability not in required_ids]
+        if missing:
+            result.add(
+                "BML_PACKAGE_CAPABILITY_REQUIRED_MISSING",
+                "error",
+                "Stash package is missing required canonical v0 Stash capability ids.",
+                missing=missing,
+                required=list(CANONICAL_STASH_CAPABILITIES),
+                present=sorted(engine_cap_ids),
+            )
 
     native = manifest.get("native")
     if isinstance(native, dict):
@@ -839,7 +858,7 @@ def validate_package(loaded: LoadedPackage) -> ValidationResult:
 
     validate_package_asset_references(loaded, result)
 
-    if manifest.get("id") == "jml.stash" or manifest.get("name") == "Stash":
+    if is_stash_package(manifest):
         validate_stash_modules(manifest, result)
 
     return result
