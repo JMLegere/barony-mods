@@ -55,8 +55,19 @@
       "launchAdapter": "windows-createprocess-loadlibrary",
       "launcherExecutable": "bml-win-launcher.exe",
       "launcherPath": null,
-      "status": "scaffold_pending_native_artifact_launcher_and_live_windows_verification",
-      "notes": "Contract only. A Windows runtime must provide a real barony_bml.dll plus canonical bml-win-launcher.exe launcher path for the windows-createprocess-loadlibrary adapter and must be validated on a Windows host against a live Barony runtime before any playable Windows support is claimed."
+      "status": "scaffold_buildable_fail_closed_self_test_only_windows_runtime_unverified",
+      "notes": "Contract only. Fail-closed scaffold builds may produce barony_bml.dll plus the canonical bml-win-launcher.exe launcher for self-test, but that is scaffold-build evidence only. A Windows runtime must provide a production hook/build manifest, matching registered checksums, and live Barony runtime evidence on Windows before any playable Windows support is claimed.",
+      "windowsRuntimeStatus": {
+        "status": "scaffold-build-self-test",
+        "evidence": {
+          "evidenceKind": "scaffold-build-self-test",
+          "platform": "windows-x86_64",
+          "hostOs": "windows",
+          "gameExecutableName": "barony.exe",
+          "hookLibraryName": "barony_bml.dll",
+          "launcherExecutableName": "bml-win-launcher.exe"
+        }
+      }
     }
   ],
   "capabilities": [

@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "kind": "gameplay-mod",
   "summary": "Profile-persistent shared Void Chest inventory for Barony.",
-  "description": "Stash augments Barony's existing Void Chest system through BaronyModLoader's engine-owned capabilities. This package manifest lives at mods/stash/bml-package.json so packaging commands can operate on the Stash package directory. It requests only persistent storage, persistent inventory, Void Chest binding, lobby/shop placement, and multiplayer metadata modules. Production gameplay behavior is currently verified only through the paired installed-binary hook runtime on Steam/Linux; Windows support is modeled as a fail-closed BML contract pending a native barony_bml.dll, the canonical bml-win-launcher.exe launcher adapter, and live Windows evidence. Retained source patch artifacts are semantic references only.",
+  "description": "Stash augments Barony's existing Void Chest system through BaronyModLoader's engine-owned capabilities. This package manifest lives at mods/stash/bml-package.json so packaging commands can operate on the Stash package directory. It requests only persistent storage, persistent inventory, Void Chest binding, lobby/shop placement, and multiplayer metadata modules. Production gameplay behavior is currently verified only through the paired installed-binary hook runtime on Steam/Linux; Windows support is modeled as a fail-closed BML contract. Buildable Windows scaffold artifacts and self-test reports are scaffold-build evidence only, not playable support. Retained source patch artifacts are semantic references only.",
   "license": "MIT",
   "authors": [
     {
@@ -230,7 +230,7 @@
     "builds": [],
     "runtimeStrategy": "installed-binary-hook",
     "runtimeAuthority": "native/barony-modloader-hook/",
-    "notes": "Stash requires the BML native runtime. Linux Steam uses the verified libbarony_bml.so LD_PRELOAD adapter. Windows is contract-only for now: barony.exe plus the future bml-win-launcher.exe windows-createprocess-loadlibrary adapter and barony_bml.dll must be present and live-verified before use. Retained source patches are semantic references only; no source-built Barony binary is an active release artifact.",
+    "notes": "Stash requires the BML native runtime. Linux Steam uses the verified libbarony_bml.so LD_PRELOAD adapter. Windows remains contract-only for gameplay: barony.exe plus the canonical bml-win-launcher.exe windows-createprocess-loadlibrary adapter and barony_bml.dll may build as fail-closed scaffold artifacts, but playable use still requires a production Windows hook/build manifest and live Windows runtime evidence. Retained source patches are semantic references only; no source-built Barony binary is an active release artifact.",
     "platforms": [
       {
         "platform": "linux-x86_64",
@@ -251,8 +251,8 @@
         "artifactExtension": ".dll",
         "launchAdapter": "windows-createprocess-loadlibrary",
         "launcherExecutable": "bml-win-launcher.exe",
-        "verificationStatus": "scaffold_contract_only_pending_native_artifact_launcher_and_live_windows_verification",
-        "notes": "Fail-closed scaffold. Do not advertise playable Windows support until a real DLL, canonical bml-win-launcher.exe launcher path/build manifest, and live Windows verification pass."
+        "verificationStatus": "scaffold_buildable_fail_closed_self_test_only_windows_runtime_unverified",
+        "notes": "Fail-closed scaffold. Local builds may produce barony_bml.dll and bml-win-launcher.exe self-test artifacts, but those checks prove only scaffold buildability. Do not advertise playable Windows support until a production DLL/launcher path, Windows hook/build manifest, and live Windows verification pass."
       }
     ]
   },
@@ -324,7 +324,7 @@
     "instructions": "native/barony-modloader-hook/README.md",
     "status": "not_applicable_installed_binary_hook",
     "outputs": [],
-    "notes": "No source-built Barony executable is claimed by this package; release provenance records the installed Steam/Linux executable and BML hook library. Windows packaging is scaffolded as metadata only until a real barony_bml.dll/launcher pair and live Windows runtime evidence exist."
+    "notes": "No source-built Barony executable is claimed by this package; release provenance records the installed Steam/Linux executable and BML hook library. Windows packaging may build fail-closed barony_bml.dll/bml-win-launcher.exe scaffold artifacts for self-test only; they are not package release artifacts or playable Windows evidence until live Windows runtime verification exists."
   },
   "runtimeReports": {
     "paths": {

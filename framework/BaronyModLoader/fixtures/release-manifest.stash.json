@@ -12,15 +12,15 @@
     "manifestPath": "mods/stash/bml-package.json",
     "checksum": {
       "algorithm": "sha256",
-      "sha256": "e1c48d4ec1eee173002155992f0c5c533c9f636bc911263e2dbc8b6c9dfe003e",
-      "size": 14153
+      "sha256": "b758026ed49683aa03bb0b5ab08ad5b2e493827f9b3a4b849894513b9f2dcdce",
+      "size": 14487
     },
     "archive": {
       "path": "framework/BaronyModLoader/fixtures/Stash-0.1.0.bmlpkg",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "5c2249df482ace6aff4c1ae7481389f600658944f611551ac8d634d9958e1347",
-        "size": 20053
+        "sha256": "bf352c00ca22d3de1b757cc9b17dd30853b29684be58033c672ff1f871de2a75",
+        "size": 20206
       },
       "status": "packed_fixture",
       "notes": "Deterministic archive fixture regenerated from current mods/stash source files, including bml-package.json, workshop.toml, and checksums.json."
@@ -42,7 +42,7 @@
       "multiplayer_version_metadata"
     ],
     "status": "installed_binary_hook_production_loaded_linux_only_windows_scaffold_pending",
-    "notes": "The v1 runtime path is the BML-owned installed-binary hook/bootstrap contract. For validated jml.stash manifests, the production Stash bundle now loads by default only on the verified Steam/Linux target. Windows is modeled as a fail-closed launch-adapter contract pending a real barony_bml.dll, canonical bml-win-launcher.exe launcher path, build manifest, and live Windows runtime evidence. Live Linux evidence covers the lobby access point/prompt; fake-provider evidence covers generated-shop placement and shared inventory binding; player-facing generated-shop, persistence, spell, save/resume, disabled, multiplayer, and all Windows gameplay scenarios remain unverified.",
+    "notes": "The v1 runtime path is the BML-owned installed-binary hook/bootstrap contract. For validated jml.stash manifests, the production Stash bundle now loads by default only on the verified Steam/Linux target. Windows is modeled as a fail-closed launch-adapter contract; buildable scaffold DLL/launcher self-tests are scaffold-build evidence only, and playable support still requires a production Windows hook/build manifest plus live Windows runtime evidence. Live Linux evidence covers the lobby access point/prompt; fake-provider evidence covers generated-shop placement and shared inventory binding; player-facing generated-shop, persistence, spell, save/resume, disabled, multiplayer, and all Windows gameplay scenarios remain unverified.",
     "platforms": [
       {
         "platform": "linux-x86_64",
@@ -69,8 +69,8 @@
         "hookLibraryName": "barony_bml.dll",
         "launcherExecutable": "bml-win-launcher.exe",
         "launcherPath": null,
-        "status": "scaffold_pending_native_artifact_launcher_and_live_windows_verification",
-        "notes": "Contract only. Must fail closed unless running on Windows with a registered canonical bml-win-launcher.exe launcher path and hook DLL whose checksum/build manifest match the runtime registry; no Windows gameplay support is verified."
+        "status": "scaffold_buildable_fail_closed_self_test_only_windows_runtime_unverified",
+        "notes": "Contract only. Local scaffold builds may produce barony_bml.dll and bml-win-launcher.exe for fail-closed self-tests, but those artifacts must not be registered as playable support. Windows remains blocked unless running on Windows with a registered canonical launcher path, hook DLL, matching production build manifest/checksums, and live runtime evidence."
       }
     ]
   },
@@ -114,14 +114,14 @@
       "path": "framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json",
       "checksum": {
         "algorithm": "sha256",
-        "sha256": "c1a8d1bcecf8a8fa52e090d60525b6ec216069d85ab459beb7a34d45d4eb441b",
-        "size": 4719
+        "sha256": "d723590f001d955bd97c5e37dd8b87432d1d4edaf7b6873ba1128ccd7f581f4c",
+        "size": 5194
       },
       "status": "present",
       "notes": "Fixture declares installed-binary-hook policy, Linux LD_PRELOAD support, Windows create-process/load-library scaffold metadata using canonical bml-win-launcher.exe naming, and rejects partial/platform-mismatched Stash loads."
     },
     "status": "provenance_recorded_linux_only_windows_scaffold_pending",
-    "notes": "Release provenance is the installed Steam/Linux executable plus BML hook artifacts. Windows provenance is intentionally not claimed: no barony_bml.dll, launcher, Windows build manifest, or live Windows evidence is recorded yet. Historical fail-closed reports are retained only as diagnostic evidence from earlier opt-in probes; they are not the current top-level runtime status."
+    "notes": "Release provenance is the installed Steam/Linux executable plus BML hook artifacts. Windows provenance is intentionally not claimed as playable: fail-closed scaffold DLL/launcher builds and self-tests, when present, are scaffold-build evidence only and no production Windows hook/build manifest or live Windows evidence is recorded yet. Historical fail-closed reports are retained only as diagnostic evidence from earlier opt-in probes; they are not the current top-level runtime status."
   },
   "barony": {
     "upstreamRepository": "https://github.com/TurningWheel/Barony",
@@ -185,7 +185,7 @@
   "buildArtifacts": {
     "status": "not_applicable_installed_binary_hook",
     "artifacts": [],
-    "notes": "No patched/source-built Barony executable is claimed for this v1 release manifest. The installed Steam/Linux executable identity is recorded under runtimeProvenance.installedExecutable. Windows native artifacts are pending and therefore absent from build artifacts."
+    "notes": "No patched/source-built Barony executable is claimed for this v1 release manifest. The installed Steam/Linux executable identity is recorded under runtimeProvenance.installedExecutable. Windows native scaffold builds are fail-closed/self-test-only and are therefore not release/playable build artifacts."
   },
   "verification": {
     "status": "production_loaded_linux_only_windows_scaffold_pending_player_scenarios",
@@ -202,7 +202,7 @@
         "framework/BaronyModLoader/schema/stash-hook-report.schema.json",
         "native/barony-modloader-hook/tests/smoke_ld_preload.sh"
       ],
-      "notes": "Release artifact provenance is present for the installed Steam/Linux hook path. Windows artifacts are not present and are intentionally represented as pending scaffold metadata only."
+      "notes": "Release artifact provenance is present for the installed Steam/Linux hook path. Windows scaffold artifacts, if built locally, are intentionally self-test-only and are not represented as playable release artifacts."
     },
     "installedHookVerification": {
       "status": "linux_production_loaded_windows_scaffold_pending",
@@ -275,7 +275,7 @@
           "notes": "Required Stash targets currently report with a conservative static/readiness split (42 ready, 0 blocked, 0 missing across the five Stash hook groups for Steam/Linux build 22630456) and the live symbol probe resolves all 30 required symbols. Production Stash activation is installed for validated jml.stash manifests; BML_STASH_DISABLE_PLAYABLE remains available for diagnostic probes."
         }
       ],
-      "notes": "Current status is production loaded for validated jml.stash manifests on the pinned Steam/Linux executable. Fake-provider evidence covers lobby and generated-shop placement hooks, shared stash inventory binding, metadata guard, and scoped Open stash prompt; live quickstart/in-game evidence covers the lobby access point and prompt. Windows launch/runtime verification is absent by design, so any Windows path must fail closed until real artifacts and live evidence are registered."
+      "notes": "Current status is production loaded for validated jml.stash manifests on the pinned Steam/Linux executable. Fake-provider evidence covers lobby and generated-shop placement hooks, shared stash inventory binding, metadata guard, and scoped Open stash prompt; live quickstart/in-game evidence covers the lobby access point and prompt. Windows launch/runtime verification is absent by design, so any Windows path must fail closed until production Windows artifacts and live evidence are registered."
     },
     "builtGameBehavior": {
       "status": "linux_lobby_verified_windows_unverified_remaining_player_scenarios_pending",

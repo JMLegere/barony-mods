@@ -441,7 +441,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             runtime_dir = workspace / "runtime"
             runtime_dir.mkdir()
             steam_executable = runtime_dir / "barony.exe"
-            hook_library = runtime_dir / "barony_bml.dll"
+            hook_library = runtime_dir / loader.WINDOWS_HOOK_LIBRARY_NAME
             hook_manifest = runtime_dir / "hook-manifest.json"
             launcher_executable = runtime_dir / loader.WINDOWS_LAUNCHER_EXECUTABLE
             runtime_info_path = runtime_dir / "runtime-info.json"
@@ -451,6 +451,10 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             launcher_executable.write_bytes(b"fake launcher\n")
             wrong_steam_executable = runtime_dir / "not-barony.exe"
             wrong_steam_executable.write_bytes(b"fake wrong windows executable v5.0.0\n")
+            wrong_hook_library = runtime_dir / "not_barony_bml.dll"
+            wrong_hook_library.write_bytes(b"fake wrong dll\n")
+            wrong_launcher_executable = runtime_dir / "not-bml-win-launcher.exe"
+            wrong_launcher_executable.write_bytes(b"fake wrong launcher\n")
 
             package_manifest = json.loads((package_dir / loader.PACKAGE_MANIFEST_NAME).read_text(encoding="utf-8"))
             runtime_info = {
@@ -515,6 +519,32 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                 bare_codes = {problem.code for problem in bare_result.problems}
                 self.assertFalse(bare_result.ok)
                 self.assertIn("BML_REGISTERED_RUNTIME_WINDOWS_VERIFICATION_MISSING", bare_codes)
+                scaffold_self_test_runtime = {
+                    **fake_runtime,
+                    "windowsRuntimeStatus": {
+                        "status": "verified",
+                        "evidence": {
+                            "evidenceKind": "scaffold-build-self-test",
+                            "platform": "windows-x86_64",
+                            "hostOs": "windows",
+                            "gameExecutableName": "barony.exe",
+                            "hookLibraryName": loader.WINDOWS_HOOK_LIBRARY_NAME,
+                            "launcherExecutableName": loader.WINDOWS_LAUNCHER_EXECUTABLE,
+                            "runtimeLoadReportSha256": "b" * 64,
+                            "selfTestReportSha256": "c" * 64,
+                            "verifiedAt": "2026-07-05T00:00:00Z",
+                        },
+                    },
+                }
+                _self_test_info, _self_test_info_path, _self_test_launch_executable, self_test_result = loader.validate_registered_runtime(
+                    scaffold_self_test_runtime,
+                    profile,
+                    package,
+                )
+                self_test_codes = {problem.code for problem in self_test_result.problems}
+                self.assertFalse(self_test_result.ok)
+                self.assertIn("BML_REGISTERED_RUNTIME_WINDOWS_VERIFICATION_MISSING", self_test_codes)
+
 
                 self.assertFalse(fake_result.ok)
                 self.assertIn("BML_REGISTERED_RUNTIME_WINDOWS_VERIFICATION_MISSING", fake_codes)
@@ -532,16 +562,50 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                 wrong_target_codes = {problem.code for problem in wrong_target_result.problems}
                 self.assertFalse(wrong_target_result.ok)
                 self.assertIn("BML_REGISTERED_RUNTIME_STEAM_EXECUTABLE_NAME_MISMATCH", wrong_target_codes)
+                wrong_hook_runtime = {
+                    **fake_runtime,
+                    "hookLibrary": str(wrong_hook_library),
+                    "hookLibrarySha256": sha256(wrong_hook_library),
+                }
+                _wrong_hook_info, _wrong_hook_info_path, _wrong_hook_launch_executable, wrong_hook_result = loader.validate_registered_runtime(
+                    wrong_hook_runtime,
+                    profile,
+                    package,
+                )
+                wrong_hook_codes = {problem.code for problem in wrong_hook_result.problems}
+                self.assertFalse(wrong_hook_result.ok)
+                self.assertIn("BML_REGISTERED_RUNTIME_HOOK_LIBRARY_NAME_MISMATCH", wrong_hook_codes)
+                wrong_launcher_runtime = {
+                    **fake_runtime,
+                    "launcherExecutable": str(wrong_launcher_executable),
+                    "launcherExecutableSha256": sha256(wrong_launcher_executable),
+                }
+                (
+                    _wrong_launcher_info,
+                    _wrong_launcher_info_path,
+                    _wrong_launcher_launch_executable,
+                    wrong_launcher_result,
+                ) = loader.validate_registered_runtime(
+                    wrong_launcher_runtime,
+                    profile,
+                    package,
+                )
+                wrong_launcher_codes = {problem.code for problem in wrong_launcher_result.problems}
+                self.assertFalse(wrong_launcher_result.ok)
+                self.assertIn("BML_REGISTERED_RUNTIME_LAUNCHER_EXECUTABLE_NAME_MISMATCH", wrong_launcher_codes)
+
+
 
                 verified_runtime = {
                     **fake_runtime,
                     "windowsRuntimeStatus": {
                         "status": "verified",
                         "evidence": {
+                            "evidenceKind": loader.WINDOWS_LIVE_RUNTIME_EVIDENCE_KIND,
                             "platform": "windows-x86_64",
                             "hostOs": "windows",
                             "gameExecutableName": "barony.exe",
-                            "hookLibraryName": "barony_bml.dll",
+                            "hookLibraryName": loader.WINDOWS_HOOK_LIBRARY_NAME,
                             "launcherExecutableName": loader.WINDOWS_LAUNCHER_EXECUTABLE,
                             "runtimeLoadReportSha256": "a" * 64,
                             "verifiedAt": "2026-07-05T00:00:00Z",

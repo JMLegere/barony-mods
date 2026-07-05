@@ -43,6 +43,8 @@ RUNTIME_STRATEGY_INSTALLED_HOOK = "installed-binary-hook"
 LAUNCH_ADAPTER_LINUX_LD_PRELOAD = "linux-ld-preload"
 LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY = "windows-createprocess-loadlibrary"
 WINDOWS_LAUNCHER_EXECUTABLE = "bml-win-launcher.exe"
+WINDOWS_HOOK_LIBRARY_NAME = "barony_bml.dll"
+WINDOWS_LIVE_RUNTIME_EVIDENCE_KIND = "live-windows-runtime"
 
 
 def normalize_platform_machine(machine: str | None = None) -> str:
@@ -1417,6 +1419,8 @@ def validate_runtime_info_metadata(runtime_info: dict[str, Any]) -> ValidationRe
 def windows_runtime_verification_evidence_ok(evidence: Any, platform_id: Any) -> bool:
     if not isinstance(evidence, dict):
         return False
+    if evidence.get("evidenceKind") != WINDOWS_LIVE_RUNTIME_EVIDENCE_KIND:
+        return False
     if evidence.get("platform") != platform_id:
         return False
     if str(evidence.get("hostOs") or "").casefold() != "windows":
@@ -1425,7 +1429,7 @@ def windows_runtime_verification_evidence_ok(evidence: Any, platform_id: Any) ->
         return False
     if evidence.get("launcherExecutableName") != WINDOWS_LAUNCHER_EXECUTABLE:
         return False
-    if evidence.get("hookLibraryName") != "barony_bml.dll":
+    if evidence.get("hookLibraryName") != WINDOWS_HOOK_LIBRARY_NAME:
         return False
     runtime_report_sha = evidence.get("runtimeLoadReportSha256")
     if not isinstance(runtime_report_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", runtime_report_sha):
@@ -1467,7 +1471,7 @@ def validate_windows_runtime_verification(
         result.add(
             "BML_REGISTERED_RUNTIME_WINDOWS_VERIFICATION_MISSING",
             "fatal",
-            "Windows runtime registrations are scaffold-only until explicit verified Windows runtime status is present in runtime metadata or registration.",
+            "Windows runtime registrations are scaffold-only until explicit verified live Windows runtime status is present in runtime metadata or registration.",
             field="windowsRuntimeStatus",
             registeredPlatform=platform_id,
         )
@@ -1566,6 +1570,14 @@ def command_runtime_register(args: argparse.Namespace) -> int:
             "Hook library extension does not match the current platform target.",
             hookLibrary=str(hook_library),
             expectedExtension=target.hook_artifact_extension,
+        )
+    elif target.os_name == "windows" and hook_library.name != WINDOWS_HOOK_LIBRARY_NAME:
+        combined.add(
+            "BML_RUNTIME_HOOK_LIBRARY_NAME_MISMATCH",
+            "fatal",
+            "Windows hook library name does not match the native scaffold.",
+            hookLibrary=str(hook_library),
+            expectedName=WINDOWS_HOOK_LIBRARY_NAME,
         )
 
     if hook_manifest is None:
@@ -2673,6 +2685,14 @@ def validate_registered_runtime(
         "BML_REGISTERED_RUNTIME_HOOK_LIBRARY_NOT_FILE",
         "hook library",
     )
+    if target.os_name == "windows" and hook_library is not None and hook_library.name != WINDOWS_HOOK_LIBRARY_NAME:
+        result.add(
+            "BML_REGISTERED_RUNTIME_HOOK_LIBRARY_NAME_MISMATCH",
+            "fatal",
+            "Registered Windows hook library name does not match the native scaffold.",
+            hookLibrary=str(hook_library),
+            expectedName=WINDOWS_HOOK_LIBRARY_NAME,
+        )
     hook_manifest = registered_file(
         "hookManifest",
         "BML_REGISTERED_RUNTIME_HOOK_MANIFEST_MISSING",

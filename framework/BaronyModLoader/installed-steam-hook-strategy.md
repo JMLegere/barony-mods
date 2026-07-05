@@ -26,7 +26,7 @@ The product target is the PC storefront/platform matrix Jeremy identified from B
 
 Nintendo Switch is intentionally out of scope for this native PC mod-loader plan.
 
-Steam/Linux is the first concrete verification target because that is the installed executable currently available on this workstation. Windows is the first non-Linux scaffold target: contracts may describe `barony.exe`, a future `windows-createprocess-loadlibrary` launch adapter, and a `barony_bml.dll` hook artifact, but they must fail closed until a real Windows artifact, launcher/build manifest, and live Windows evidence exist. The app/runtime contracts should be written so additional PC storefronts and operating systems can be added without reintroducing a source-build runtime path.
+Steam/Linux is the first concrete verification target because that is the installed executable currently available on this workstation. Windows is the first non-Linux scaffold target: contracts describe `barony.exe`, the `windows-createprocess-loadlibrary` launch adapter, the canonical `bml-win-launcher.exe` launcher, and a `barony_bml.dll` hook artifact. Buildable Windows scaffold artifacts must still fail closed until a production Windows hook/build manifest and live Windows evidence exist. The app/runtime contracts should be written so additional PC storefronts and operating systems can be added without reintroducing a source-build runtime path.
 
 The deleted prototype source checkout was:
 
@@ -105,8 +105,8 @@ platform: windows-x86_64
 game executable: barony.exe
 launch adapter: windows-createprocess-loadlibrary
 hook artifact: barony_bml.dll
-optional launcher executable/path: `bml-win-launcher.exe` name reserved; registered path pending
-status: scaffold pending native artifact, launcher, build manifest, and live Windows verification
+launcher executable/path: `bml-win-launcher.exe` name reserved; registered production path pending
+status: scaffold buildable/self-test-only until production Windows artifact metadata, build manifest, and live Windows verification exist
 ```
 
 The Windows adapter must fail closed unless all of the following are true:
@@ -117,6 +117,8 @@ The Windows adapter must fail closed unless all of the following are true:
 - a registered launcher executable/path exists for the create-process/load-library adapter, using the canonical launcher executable name `bml-win-launcher.exe`;
 - a Windows hook/build manifest pins executable identity, hook artifact identity, capabilities, and report paths;
 - live Windows evidence records successful runtime load before any player-facing support is advertised.
+
+Buildable Windows scaffolds may publish `scaffold-build` or `scaffold-build-self-test` evidence and checksums for the native `barony_bml.dll`/`bml-win-launcher.exe` pair. Those records prove only that the adapter artifacts build or self-test; they are not playable Stash support and must not satisfy loader verification. Loader verification requires `windowsRuntimeStatus.status: "verified"` plus live runtime evidence marked `evidenceKind: "live-windows-runtime"` for `windows-x86_64`, `barony.exe`, `barony_bml.dll`, and `bml-win-launcher.exe`.
 
 Until those gates pass, package/release metadata may say BML is becoming multi-platform starting with Windows scaffolding, but Stash production behavior remains verified only on Steam/Linux.
 

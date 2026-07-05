@@ -105,6 +105,12 @@
     },
     "policy": {
       "$ref": "#/$defs/policy"
+    },
+    "windowsRuntimeStatus": {
+      "$ref": "#/$defs/windowsRuntimeStatus"
+    },
+    "windowsVerification": {
+      "$ref": "#/$defs/windowsRuntimeStatus"
     }
   },
   "$defs": {
@@ -335,12 +341,74 @@
         },
         "notes": {
           "type": "string"
+        },
+        "windowsRuntimeStatus": {
+          "$ref": "#/$defs/windowsRuntimeStatus"
+        },
+        "windowsVerification": {
+          "$ref": "#/$defs/windowsRuntimeStatus"
         }
       }
     },
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "windowsRuntimeStatus": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "unverified",
+            "scaffold-build",
+            "scaffold-build-self-test",
+            "verified"
+          ]
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "evidenceKind": {
+              "type": "string",
+              "enum": [
+                "scaffold-build-self-test",
+                "live-windows-runtime"
+              ]
+            },
+            "platform": {
+              "const": "windows-x86_64"
+            },
+            "hostOs": {
+              "const": "windows"
+            },
+            "gameExecutableName": {
+              "const": "barony.exe"
+            },
+            "hookLibraryName": {
+              "const": "barony_bml.dll"
+            },
+            "launcherExecutableName": {
+              "const": "bml-win-launcher.exe"
+            },
+            "runtimeLoadReportSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "selfTestReportSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "verifiedAt": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
     },
     "policy": {
       "type": "object",
