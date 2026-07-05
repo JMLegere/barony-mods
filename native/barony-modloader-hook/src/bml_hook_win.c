@@ -131,7 +131,7 @@ static int mkdir_p_wide(const wchar_t* path)
 #define BML_STASH_ENTITY_OFFSET_BEHAVIOR ((uintptr_t)4936U)
 #define BML_STASH_MAP_OFFSET_ENTITIES ((uintptr_t)208U)
 #define BML_STASH_LOBBY_PLACEMENT_X 232.0
-#define BML_STASH_LOBBY_PLACEMENT_Y 456.0
+#define BML_STASH_LOBBY_PLACEMENT_Y 280.0
 #define BML_STASH_PI 3.14159265358979323846
 #define BML_STASH_YAW_EAST 0.0
 #define BML_STASH_YAW_SOUTH (BML_STASH_PI / 2.0)
@@ -1129,6 +1129,17 @@ static int windows_stash_playable_is_start_map_name(const char* name)
     }
     return lstrcmpA(name, "fake-lobby") == 0 || lstrcmpA(name, "Start Map") == 0;
 }
+static int windows_stash_playable_allows_walkable_shop_fallback(const char* name)
+{
+    if (!name || !*name) {
+        return 0;
+    }
+    return lstrcmpA(name, "Minetown") == 0 ||
+        lstrcmpA(name, "Mages Guild") == 0 ||
+        strstr(name, "Shop") != NULL ||
+        strstr(name, "shop") != NULL ||
+        strstr(name, "Guild") != NULL;
+}
 
 static int windows_stash_playable_read_int_symbol(void* symbol, int* value_out)
 {
@@ -1333,6 +1344,52 @@ static int windows_stash_find_nearest_shoparea_tile(BmlWindowsPlacementMapPrefix
     }
     return 1;
 }
+static int windows_stash_find_nearest_walkable_tile(BmlWindowsPlacementMapPrefix* map_prefix, double anchor_world_x, double anchor_world_y, double* world_x_out, double* world_y_out)
+{
+    unsigned int x;
+    unsigned int y;
+    int found = 0;
+    double best_distance_sq = 0.0;
+    double best_world_x = 0.0;
+    double best_world_y = 0.0;
+    double anchor_tile_x = windows_stash_shop_world_to_tile(anchor_world_x);
+    double anchor_tile_y = windows_stash_shop_world_to_tile(anchor_world_y);
+    if (map_prefix == NULL || map_prefix->tiles == NULL || map_prefix->width == 0U || map_prefix->height == 0U) {
+        return 0;
+    }
+    for (x = 1U; x + 1U < map_prefix->width; ++x) {
+        for (y = 1U; y + 1U < map_prefix->height; ++y) {
+            size_t base = (size_t)y * 3U + (size_t)x * 3U * (size_t)map_prefix->height;
+            int32_t floor_tile = map_prefix->tiles[base];
+            int32_t obstacle_tile = map_prefix->tiles[base + 1U];
+            double dx;
+            double dy;
+            double distance_sq;
+            if (floor_tile == 0 || obstacle_tile != 0) {
+                continue;
+            }
+            dx = (double)x - anchor_tile_x;
+            dy = (double)y - anchor_tile_y;
+            distance_sq = dx * dx + dy * dy;
+            if (found && distance_sq >= best_distance_sq) {
+                continue;
+            }
+            found = 1;
+            best_distance_sq = distance_sq;
+            windows_stash_shop_tile_center(x, y, &best_world_x, &best_world_y);
+        }
+    }
+    if (!found) {
+        return 0;
+    }
+    if (world_x_out != NULL) {
+        *world_x_out = best_world_x;
+    }
+    if (world_y_out != NULL) {
+        *world_y_out = best_world_y;
+    }
+    return 1;
+}
 static int windows_stash_ensure_shoparea_for_map(BmlWindowsPlacementMapPrefix* map_prefix)
 {
     bool* shoparea = windows_stash_shoparea_pointer();
@@ -1480,9 +1537,14 @@ static int windows_stash_playable_try_place_lobby_chest_and_lid(void* map_argume
         g_windows_stash_assign_actions_original(map_argument);
     }
     windows_append_stash_diagnostic_event("stash_assign_actions_after_original", "lobby", map_prefix ? map_prefix->name : NULL, 0, 0.0, 0.0, -1);
-    placed = windows_stash_playable_place_chest_and_lid_at(map_argument, BML_STASH_LOBBY_PLACEMENT_X, BML_STASH_LOBBY_PLACEMENT_Y, BML_STASH_LOBBY_PLACEMENT_YAW, NULL, NULL);
-    if (placed) {
-        windows_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix ? map_prefix->name : NULL, 1, BML_STASH_LOBBY_PLACEMENT_X, BML_STASH_LOBBY_PLACEMENT_Y, -1);
+    {
+        double x_pos = BML_STASH_LOBBY_PLACEMENT_X;
+        double y_pos = BML_STASH_LOBBY_PLACEMENT_Y;
+        (void)windows_stash_find_nearest_walkable_tile(map_prefix, x_pos, y_pos, &x_pos, &y_pos);
+        placed = windows_stash_playable_place_chest_and_lid_at(map_argument, x_pos, y_pos, BML_STASH_LOBBY_PLACEMENT_YAW, NULL, NULL);
+        if (placed) {
+            windows_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix ? map_prefix->name : NULL, 1, x_pos, y_pos, -1);
+        }
     }
     return placed;
 }
@@ -1660,6 +1722,29 @@ static int windows_stash_playable_try_place_shop_chest_and_lid(void* map_argumen
                 }
             }
         }
+    }
+    if (!windows_stash_playable_allows_walkable_shop_fallback(map_prefix->name)) {
+        windows_append_stash_diagnostic_event("stash_access_point_step", "shop_walkable_fallback_skipped", map_prefix->name, 0, 0.0, 0.0, -1);
+    } else {
+        double x_pos = 0.0;
+        double y_pos = 0.0;
+        double anchor_x = ((double)map_prefix->width * 16.0) / 2.0;
+        double anchor_y = ((double)map_prefix->height * 16.0) / 2.0;
+        if (windows_stash_find_nearest_walkable_tile(map_prefix, anchor_x, anchor_y, &x_pos, &y_pos)) {
+            int placed;
+            windows_append_stash_diagnostic_event("stash_access_point_step", "shop_walkable_fallback_used", map_prefix->name, 1, x_pos, y_pos, -1);
+            placed = windows_stash_playable_place_chest_and_lid_at(map_argument, x_pos, y_pos, 0.0, &chest, &lid);
+            if (placed) {
+                g_windows_stash_playable_last_shop_map = map_argument;
+                g_windows_stash_playable_last_placed_shop_chest = chest;
+                g_windows_stash_playable_last_placed_shop_lid = lid;
+                windows_append_stash_diagnostic_event("stash_access_point_created", "shop", map_prefix->name, 1, x_pos, y_pos, -1);
+            } else {
+                windows_append_stash_diagnostic_event("stash_access_point_step", "shop_walkable_fallback_failed", map_prefix->name, 1, x_pos, y_pos, -1);
+            }
+            return placed;
+        }
+        windows_append_stash_diagnostic_event("stash_access_point_step", "shop_walkable_fallback_missing", map_prefix->name, 0, 0.0, 0.0, -1);
     }
     return 0;
 }

@@ -18,7 +18,7 @@
     {
       "platform": "windows-x86_64",
       "artifact": "native/barony-modloader-hook/build/bml_hook_win.dll",
-      "sha256": "ce9c2a01add3783db3503e93842930fef10edaa5492ba90d9077ce60f3f3a6b3"
+      "sha256": "257af81f1b2af34b48e3261db6b692328e85ddceb3970e3646fa5fbca5420edb"
     }
   ],
   "capabilities": [
