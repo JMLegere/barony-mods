@@ -108,7 +108,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                         "id": "iron_skin_bargain",
                         "displayName": "Elixir of Iron Skin",
                         "shortName": "Iron Skin",
-                        "carrierItemType": "POTION_EMPTY",
+                        "carrierItemType": "POTION_STRENGTH",
                         "classBindings": ["CLASS_BARBARIAN"],
                         "partySizeEligibility": {"minPartySize": 1, "maxPartySize": 4},
                         "lifecycle": "run_permanent",
@@ -174,7 +174,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                         "namespace": "runebound_elixirs",
                         "schemaVersion": "0.1.0",
                         "authority": "host",
-                        "carrierItemType": "POTION_EMPTY",
+                        "carrierItemType": "POTION_STRENGTH",
                         "dataFiles": [
                             "content/data/bml/elixir-catalog.json",
                             "content/data/bml/elixir-drop-tables.json",

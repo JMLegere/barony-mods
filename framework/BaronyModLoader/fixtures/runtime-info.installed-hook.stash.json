@@ -120,7 +120,7 @@
       "version": "0.1.0",
       "requiredForStash": false,
       "requiredForRuneboundElixirs": true,
-      "description": "Runtime sidecar metadata associating inert POTION_EMPTY carrier items with authored Runebound elixir ids."
+      "description": "Runtime sidecar metadata associating inert POTION_STRENGTH carrier items with authored Runebound elixir ids."
     },
     {
       "id": "elixir_drop_generation",

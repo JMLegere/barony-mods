@@ -305,10 +305,31 @@
       ]
     },
     {
+      "id": "act_hud_weapon",
+      "kind": "function",
+      "mangledSymbol": "_Z12actHudWeaponP6Entity",
+      "demangledLabel": "actHudWeapon(Entity*)",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "elixir_consumption",
+        "active_elixir_effect_state"
+      ]
+    },
+    {
       "id": "item_get_name",
       "kind": "function",
       "mangledSymbol": "_ZNK4Item7getNameEv",
       "demangledLabel": "Item::getName() const",
+      "required": false,
+      "runeboundElixirCapabilities": [
+        "item_name_tooltip_rendering"
+      ]
+    },
+    {
+      "id": "item_description",
+      "kind": "function",
+      "mangledSymbol": "_ZNK4Item11descriptionEv",
+      "demangledLabel": "Item::description() const",
       "required": false,
       "runeboundElixirCapabilities": [
         "item_name_tooltip_rendering"
@@ -533,7 +554,7 @@
   "runeboundElixirTargetNotes": [
     {
       "capability": "elixir_item_metadata",
-      "targetIntent": "Attach BML elixir carrier metadata to POTION_EMPTY item instances created by future verified item postprocess/drop-generation hooks.",
+      "targetIntent": "Attach BML elixir carrier metadata to POTION_STRENGTH item instances created by future verified item postprocess/drop-generation hooks.",
       "targetSymbolIds": [
         "new_item",
         "item_level_curve_post_process"
@@ -577,26 +598,28 @@
     },
     {
       "capability": "elixir_consumption",
-      "targetIntent": "Intercept useItem for BML-marked POTION_EMPTY elixir carriers, then delegate item decrement/free/paper-doll updates through consumeItem-equivalent semantics.",
+      "targetIntent": "Intercept both ordinary useItem and equipped/held actHudWeapon POTION_STRENGTH branches for BML-marked elixir carriers, then delegate item decrement/free/paper-doll updates through consumeItem semantics.",
       "targetSymbolIds": [
         "use_item",
+        "act_hud_weapon",
         "consume_item"
       ],
-      "analysisStatus": "scaffold",
-      "symbolStatus": "candidate_exports_identified",
-      "installStatus": "not_installed",
+      "analysisStatus": "live-hook-installed",
+      "symbolStatus": "exports_identified_and_hooked",
+      "installStatus": "installed",
       "requiredForStash": false
     },
     {
       "capability": "item_name_tooltip_rendering",
-      "targetIntent": "Render marked elixir carriers with catalog display names and short tradeoff text while leaving unmarked POTION_EMPTY items vanilla.",
+      "targetIntent": "Render marked elixir carriers with catalog display names through Item::getName and body-only bargain text through Item::description chest/inventory message paths while leaving unmarked POTION_STRENGTH items vanilla.",
       "targetSymbolIds": [
         "item_get_name",
+        "item_description",
         "language_get"
       ],
-      "analysisStatus": "scaffold",
-      "symbolStatus": "candidate_exports_identified",
-      "installStatus": "not_installed",
+      "analysisStatus": "live-hook-installed",
+      "symbolStatus": "exports_identified_and_hooked",
+      "installStatus": "installed",
       "requiredForStash": false
     },
     {
@@ -610,15 +633,14 @@
     },
     {
       "capability": "active_elixir_effect_application",
-      "targetIntent": "First active-effect stat hook candidates for authored STR/DEX/CHR modifiers applied only to verified active elixir state.",
+      "targetIntent": "First active-effect stat hooks for authored STR/DEX modifiers applied only to verified active Iron Vow elixir state.",
       "targetSymbolIds": [
         "stat_get_str",
-        "stat_get_dex",
-        "stat_get_chr"
+        "stat_get_dex"
       ],
-      "analysisStatus": "scaffold",
-      "symbolStatus": "candidate_exports_identified",
-      "installStatus": "not_installed",
+      "analysisStatus": "live-hook-installed",
+      "symbolStatus": "exports_identified_and_hooked",
+      "installStatus": "installed",
       "requiredForStash": false
     },
     {
@@ -804,14 +826,16 @@
       "capability": "elixir_consumption",
       "required": false,
       "targetSymbolIds": [
-        "use_item"
+        "use_item",
+        "act_hud_weapon",
+        "consume_item"
       ],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
+      "installStrategy": "live-installed-detours",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "live-useItem-and-held-HUD-weapon-elixir-activation",
       "notes": [
-        "useItem is the candidate intercept point for marked POTION_EMPTY elixir carriers before vanilla empty-bottle handling; no live consumption behavior is installed."
+        "useItem covers ordinary inventory use for marked POTION_STRENGTH elixir carriers. actHudWeapon covers equipped/held activation directly for marked elixir carriers before the vanilla potion branch can apply POTION_STRENGTH behavior, applying Iron Vow side effects and consuming the held carrier through consumeItem."
       ]
     },
     {
@@ -821,12 +845,12 @@
       "targetSymbolIds": [
         "consume_item"
       ],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-consumption-semantics-only",
+      "installStrategy": "live-resolved-helper",
+      "installStatus": "required_for_live_elixir_consumption",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_CONSUME_ITEM_SYMBOL_MISSING",
+      "claimBoundary": "live-held-carrier-removal-helper",
       "notes": [
-        "consumeItem is recorded as the decrement/free/paper-doll update surface to preserve Barony-equivalent item consumption if useItem is later installed."
+        "consumeItem is resolved during live Runebound elixir install and is required fail-closed because held-HUD activation must remove the equipped elixir carrier after applying Iron Vow side effects."
       ]
     },
     {
@@ -835,14 +859,15 @@
       "required": false,
       "targetSymbolIds": [
         "item_get_name",
+        "item_description",
         "language_get"
       ],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-target-identification-only",
+      "installStrategy": "live-installed-detours",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "production-live-hook-display-and-description-probe",
       "notes": [
-        "Display/name hooks are scaffolded for catalog-backed elixir carrier names and tradeoff text; unmarked POTION_EMPTY items remain vanilla until hooks are truly installed."
+        "Display/name hooks are live-installed for catalog-backed elixir carrier names and chest/inventory description body text; unmarked POTION_STRENGTH items remain vanilla."
       ]
     },
     {
@@ -864,15 +889,14 @@
       "required": false,
       "targetSymbolIds": [
         "stat_get_str",
-        "stat_get_dex",
-        "stat_get_chr"
+        "stat_get_dex"
       ],
-      "installStrategy": "analyze-scaffold-only",
-      "installStatus": "not_installed",
-      "failClosedCode": "BML_RUNEBOUND_ELIXIR_HOOK_NOT_INSTALLED",
-      "claimBoundary": "future-active-effect-application-only",
+      "installStrategy": "live-installed-detours",
+      "installStatus": "installed",
+      "failClosedCode": "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED",
+      "claimBoundary": "live-Iron-Vow-STR-DEX-application",
       "notes": [
-        "First stat effect hook candidates cover authored STR/DEX/CHR modifiers from verified active elixir state; no stat mutation is installed."
+        "First stat effect hooks live-install STR and DEX mutation for verified active Iron Vow elixir state. CHR remains a candidate future symbol and is not part of the current six-hook live proof."
       ]
     },
     {

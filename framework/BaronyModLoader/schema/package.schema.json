@@ -464,7 +464,7 @@
               "const": "host"
             },
             "carrierItemType": {
-              "const": "POTION_EMPTY"
+              "const": "POTION_STRENGTH"
             },
             "dataFiles": {
               "type": "array",

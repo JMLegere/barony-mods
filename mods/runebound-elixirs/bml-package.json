@@ -57,7 +57,7 @@
         "id": "elixir_item_metadata",
         "version": "0.1.0",
         "required": true,
-        "reason": "Runtime must associate inert POTION_EMPTY carrier items with authored elixir IDs and sidecar metadata without mutating base Barony item state."
+        "reason": "Runtime must associate marked POTION_STRENGTH carrier items with authored elixir IDs and sidecar metadata without mutating base Barony item state."
       },
       {
         "id": "elixir_drop_generation",
@@ -102,7 +102,7 @@
       "namespace": "runebound_elixirs",
       "schemaVersion": "0.1.0",
       "authority": "host",
-      "carrierItemType": "POTION_EMPTY",
+      "carrierItemType": "POTION_STRENGTH",
       "dataFiles": [
         "content/data/bml/elixir-catalog.json",
         "content/data/bml/elixir-drop-tables.json"
@@ -133,7 +133,7 @@
         "failurePolicy": "fail-closed"
       },
       "failurePolicy": "fail-closed",
-      "description": "Host-authoritative class-bound bargain elixirs carried by inert POTION_EMPTY items. Data files define authored elixir metadata, generation weights, party-size filters, duplicate policy, and supported effect opcodes. A paired installed-binary hook runtime must install the live Runebound hooks and report runeboundElixirs plus the elixir capabilities before the package is considered loaded. Fake-provider live installs may prove hook wiring; Steam gameplay remains unverified until separate in-game evidence exists."
+      "description": "Host-authoritative class-bound bargain elixirs carried by marked POTION_STRENGTH items. Data files define authored elixir metadata, generation weights, party-size filters, duplicate policy, and supported effect opcodes. A paired installed-binary hook runtime must install the live Runebound hooks and report runeboundElixirs plus the elixir capabilities before the package is considered loaded. Fake-provider live installs may prove hook wiring; Steam gameplay remains unverified until separate in-game evidence exists."
     }
   },
   "native": {

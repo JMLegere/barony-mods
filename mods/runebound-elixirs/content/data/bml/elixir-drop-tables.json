@@ -1,7 +1,7 @@
 {
   "schemaVersion": "0.1.0",
   "namespace": "runebound_elixirs",
-  "carrierItemType": "POTION_EMPTY",
+  "carrierItemType": "POTION_STRENGTH",
   "generationAuthority": "host",
   "liveGameplayVerified": false,
   "failurePolicy": "fail-closed",

@@ -1,7 +1,7 @@
 {
   "schemaVersion": "0.1.0",
   "namespace": "runebound_elixirs",
-  "carrierItemType": "POTION_EMPTY",
+  "carrierItemType": "POTION_STRENGTH",
   "liveGameplayVerified": false,
   "failurePolicy": "fail-closed",
   "classIds": {
@@ -95,7 +95,7 @@
       "id": "runebound_elixirs:iron_vow",
       "displayName": "Elixir of the Iron Vow",
       "shortName": "Iron Vow",
-      "carrierItemType": "POTION_EMPTY",
+      "carrierItemType": "POTION_STRENGTH",
       "classBindings": [
         "CLASS_BARBARIAN",
         "CLASS_WARRIOR"
@@ -157,7 +157,7 @@
       "id": "runebound_elixirs:glass_focus",
       "displayName": "Elixir of Glass Focus",
       "shortName": "Glass Focus",
-      "carrierItemType": "POTION_EMPTY",
+      "carrierItemType": "POTION_STRENGTH",
       "classBindings": [
         "CLASS_WIZARD",
         "CLASS_CONJURER",
@@ -220,7 +220,7 @@
       "id": "runebound_elixirs:tempered_guard",
       "displayName": "Elixir of the Tempered Guard",
       "shortName": "Tempered Guard",
-      "carrierItemType": "POTION_EMPTY",
+      "carrierItemType": "POTION_STRENGTH",
       "classBindings": [
         "CLASS_HEALER",
         "CLASS_MONK",
@@ -283,7 +283,7 @@
       "id": "runebound_elixirs:quickening_pulse",
       "displayName": "Elixir of the Quickening Pulse",
       "shortName": "Quickening Pulse",
-      "carrierItemType": "POTION_EMPTY",
+      "carrierItemType": "POTION_STRENGTH",
       "classBindings": [
         "CLASS_ROGUE",
         "CLASS_MONK"

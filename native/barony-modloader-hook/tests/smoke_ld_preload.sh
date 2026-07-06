@@ -76,6 +76,10 @@ ELIXIR_RUNTIME_MANIFEST="$ELIXIR_PROFILE_DIR/BaronyModLoader/runtime-manifest.js
 
 
 cleanup() {
+  if [ -n "${BML_SMOKE_ARCHIVE_DIR:-}" ]; then
+    mkdir -p "$BML_SMOKE_ARCHIVE_DIR"
+    cp -R "$PROFILE_DIR" "$BML_SMOKE_ARCHIVE_DIR/"
+  fi
   rm -rf "$PROFILE_DIR"
 }
 trap cleanup EXIT INT TERM
@@ -193,7 +197,7 @@ cat > "$ELIXIR_RUNTIME_MANIFEST" <<JSON
           "namespace": "runebound_elixirs",
           "schemaVersion": "0.1.0",
           "authority": "host",
-          "carrierItemType": "POTION_EMPTY",
+          "carrierItemType": "POTION_STRENGTH",
           "dataFiles": [
             "content/data/bml/elixir-catalog.json",
             "content/data/bml/elixir-drop-tables.json"
@@ -904,7 +908,7 @@ assert playable_install_report["error"] is None, playable_install_report
 diagnostics_path = playable_install_report_path.parents[1] / "state" / "stash-diagnostics.jsonl"
 assert diagnostics_path.is_file(), diagnostics_path
 diagnostics = [json.loads(line) for line in diagnostics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby" and event["map"] == "fake-lobby" and event["x"] == 232.0 and event["y"] == 280.0 for event in diagnostics), diagnostics
+assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby_assist_shrine_adjacent" and event["map"] == "fake-lobby" and event["x"] == 248.0 and event["y"] == 280.0 for event in diagnostics), diagnostics
 shop_events = [event for event in diagnostics if event["event"] == "stash_access_point_created" and event["kind"] == "shop" and event["map"] == "fake-shop"]
 assert len(shop_events) == 2, diagnostics
 assert (shop_events[0]["x"], shop_events[0]["y"]) == (152.0, 136.0), shop_events
@@ -1101,20 +1105,23 @@ assert live_install_report["liveHookBehaviorClaimed"] is True, live_install_repo
 assert live_install_report.get("errors", []) == [], live_install_report
 assert live_install_report["playableBehaviorClaimed"] is False, live_install_report
 summary = live_install_report["summary"]
-assert summary["installedHooks"] == 4, live_install_report
-assert summary["installedHookCount"] == 4, live_install_report
+assert summary["installedHooks"] == 6, live_install_report
+assert summary["installedHookCount"] == 6, live_install_report
 assert summary["failedHookCount"] == 0, live_install_report
-assert summary["targetSymbolCount"] == 4, live_install_report
+assert summary["targetSymbolCount"] == 6, live_install_report
 assert summary["allHooksInstalled"] is True, live_install_report
 assert summary["useHookInstalled"] is True, live_install_report
 assert summary["displayHookInstalled"] is True, live_install_report
+assert summary["descriptionHookInstalled"] is True, live_install_report
 assert summary["statHooksInstalled"] is True, live_install_report
 assert summary["fakeProviderSelfProbe"] is True, live_install_report
 expected_hook_symbols = {
     "useItem": "_Z7useItemP4ItemiP6Entitybb",
     "Item::getName": "_ZNK4Item7getNameEv",
+    "Item::description": "_ZNK4Item11descriptionEv",
     "statGetSTR": "_Z10statGetSTRP4StatP6Entity",
     "statGetDEX": "_Z10statGetDEXP4StatP6Entity",
+    "actHudWeapon": "_Z12actHudWeaponP6Entity",
 }
 assert set(live_install_report["targetSymbols"]) == set(expected_hook_symbols.values()), live_install_report
 installed_hooks = {hook["name"]: hook for hook in live_install_report["installedHooks"]}
@@ -1131,22 +1138,30 @@ for counter_name in (
     "useItemReplacementCalls",
     "useItem",
     "getName",
+    "description",
     "statGetSTR",
     "statGetDEX",
     "useItemRecognizedCarrierCalls",
     "activeEffectsCreated",
+    "actHudWeaponReplacementCalls",
+    "heldElixirConsumptions",
+    "heldWeaponSlotCleared",
     "itemGetNameReplacementCalls",
     "itemGetNameIronVowReturns",
+    "itemDescriptionReplacementCalls",
+    "itemDescriptionIronVowReturns",
     "statGetSTRReplacementCalls",
     "statGetSTRBonusApplications",
     "statGetDEXReplacementCalls",
     "statGetDEXPenaltyApplications",
 ):
     assert counters[counter_name] > 0, live_install_report
+assert counters["consumeItemResolved"] is True, live_install_report
 recognized_carrier = live_install_report["recognizedCarrier"]
 assert recognized_carrier["catalogId"] == "runebound_elixirs:iron_vow", live_install_report
-assert recognized_carrier["carrierItemType"] == "POTION_EMPTY", live_install_report
-assert recognized_carrier["display"] == "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)", live_install_report
+assert recognized_carrier["carrierItemType"] == "POTION_STRENGTH", live_install_report
+assert recognized_carrier["display"] == "Elixir of the Iron Vow", live_install_report
+assert recognized_carrier["description"] == "Bargain: +2 STR, -1 DEX for the rest of the run.", live_install_report
 active_effect = live_install_report["activeEffect"]
 assert active_effect["active"] is True, live_install_report
 assert active_effect["catalogId"] == "runebound_elixirs:iron_vow", live_install_report
@@ -1156,7 +1171,7 @@ assert active_effect["strDelta"] == 2, live_install_report
 assert active_effect["dexDelta"] == -1, live_install_report
 assert active_effect["lastStrResult"] == 12, live_install_report
 assert active_effect["lastDexResult"] == 9, live_install_report
-assert active_effect["lastDisplay"] == "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)", live_install_report
+assert active_effect["lastDisplay"] == "Bargain: +2 STR, -1 DEX for the rest of the run.", live_install_report
 
 # ── Elixir fake-provider self-test assertions ──────────────────────────────────
 # The same run still emits the data-path self-test report; live hook evidence is
@@ -1203,7 +1218,7 @@ drop_generation = results["dropGeneration"]
 assert drop_generation["authority"] == "host", results
 assert drop_generation["stateAuthority"] == "host", results
 assert drop_generation["source"] == "chest_loot_postprocess", results
-assert drop_generation["carrierItem"] == "POTION_EMPTY", results
+assert drop_generation["carrierItem"] == "POTION_STRENGTH", results
 assert drop_generation["carrierMetadataReused"] is True, results
 assert drop_generation["selectedElixirId"] == "runebound_elixirs:iron_vow", results
 assert drop_generation["eligible"] is True, results
@@ -1231,8 +1246,9 @@ assert no_matching_class_control["reason"] == "no_present_party_class_match", re
 assert no_matching_class_control["selectedElixirId"] == "", results
 assert no_matching_class_control["noGlobalAllClassPool"] is True, results
 assert "carrierMetadata" in results, results
-assert results["carrierMetadata"]["carrierItem"] == "POTION_EMPTY", results
-assert results["carrierMetadata"]["renderedDisplay"] == "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)", results
+assert results["carrierMetadata"]["carrierItem"] == "POTION_STRENGTH", results
+assert results["carrierMetadata"]["renderedDisplay"] == "Elixir of the Iron Vow", results
+assert results["carrierMetadata"]["renderedDescription"] == "Bargain: +2 STR, -1 DEX for the rest of the run.", results
 assert drop_generation["carrierInstanceId"] == results["carrierMetadata"]["instanceId"], results
 assert "consumption" in results, results
 assert results["consumption"]["activeEffectCreated"] is True, results

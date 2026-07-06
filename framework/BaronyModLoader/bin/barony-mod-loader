@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+APP_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+exec "${PYTHON:-python3}" "$APP_ROOT/app/barony_mod_loader.py" "$@"

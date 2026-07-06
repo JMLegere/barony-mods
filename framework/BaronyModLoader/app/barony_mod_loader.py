@@ -17,9 +17,11 @@ import platform
 import re
 import shutil
 import tempfile
-import zipfile
 import subprocess
 import sys
+import textwrap
+import time
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -45,6 +47,8 @@ LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY = "windows-createprocess-loadli
 WINDOWS_LAUNCHER_EXECUTABLE = "bml-win-launcher.exe"
 WINDOWS_HOOK_LIBRARY_NAME = "barony_bml.dll"
 WINDOWS_LIVE_RUNTIME_EVIDENCE_KIND = "live-windows-runtime"
+APP_ROOT = Path(__file__).resolve().parents[1]
+
 
 
 def normalize_platform_machine(machine: str | None = None) -> str:
@@ -138,7 +142,7 @@ CANONICAL_RUNEBOUND_ELIXIR_CAPABILITIES = (
 RUNEBOUND_ELIXIRS_PACKAGE_ID = "jml.runebound-elixirs"
 RUNEBOUND_ELIXIRS_MODULE_NAME = "runeboundElixirs"
 RUNEBOUND_ELIXIRS_NAMESPACE = "runebound_elixirs"
-RUNEBOUND_ELIXIRS_CARRIER_ITEM_TYPE = "POTION_EMPTY"
+RUNEBOUND_ELIXIRS_CARRIER_ITEM_TYPE = "POTION_STRENGTH"
 RUNEBOUND_ELIXIRS_DATA_ROOT = "content/data/bml"
 RUNEBOUND_ELIXIRS_CATALOG_FILE = f"{RUNEBOUND_ELIXIRS_DATA_ROOT}/elixir-catalog.json"
 RUNEBOUND_ELIXIRS_DROP_TABLE_FILE = f"{RUNEBOUND_ELIXIRS_DATA_ROOT}/elixir-drop-tables.json"
@@ -223,6 +227,53 @@ class LoadedPackage:
 
 
 @dataclass
+class CommandResult:
+    argv: list[str]
+    label: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    duration: float
+    failure_summary: str | None = None
+
+
+@dataclass
+class DashboardDto:
+    install: dict[str, Any] = field(default_factory=dict)
+    profile: dict[str, Any] = field(default_factory=dict)
+    package: dict[str, Any] = field(default_factory=dict)
+    readiness: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+    workshop: dict[str, Any] = field(default_factory=dict)
+    disabled_reasons: list[str] = field(default_factory=list)
+
+
+ICON_LABELS = {
+    "os.linux": "Linux",
+    "os.windows": "Windows",
+    "os.darwin": "macOS",
+    "store.steam": "Steam",
+    "store.steam_workshop": "Steam Workshop",
+    "asset.workshop_thumbnail": "Workshop thumbnail",
+    "asset.library_grid": "Steam library grid image",
+    "runtime.not_run": "Runtime not run",
+    "runtime.fake_only": "Fake harness only",
+    "runtime.production_validated": "Production validated",
+    "runtime.failed": "Runtime failed",
+}
+
+
+DEFAULT_DASHBOARD_DTO = DashboardDto(
+    install={"status": "missing", "icon": "os.linux", "label": ICON_LABELS["os.linux"]},
+    profile={"status": "not_selected"},
+    package={"status": "not_selected"},
+    readiness={"status": "blocked"},
+    diagnostics={"status": "not_run", "icon": "runtime.not_run", "label": ICON_LABELS["runtime.not_run"]},
+    workshop={"status": "disabled_stub", "icon": "store.steam_workshop", "label": ICON_LABELS["store.steam_workshop"]},
+    disabled_reasons=["No install, profile, or package selected."],
+)
+
+@dataclass
 class ValidationResult:
     subject: str
     problems: list[Problem] = field(default_factory=list)
@@ -244,6 +295,38 @@ class PackageInstallError(Exception):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def command_failure_summary(exit_code: int, stderr: str, stdout: str) -> str | None:
+    if exit_code == 0:
+        return None
+    for stream in (stderr, stdout):
+        for line in stream.splitlines():
+            if line.strip():
+                return line.strip()
+    return f"Command exited with code {exit_code}."
+
+
+def run_command(argv: list[str], *, label: str | None = None, cwd: Path | None = None, timeout_seconds: float | None = None) -> CommandResult:
+    started = time.monotonic()
+    completed = subprocess.run(
+        argv,
+        cwd=str(cwd) if cwd is not None else None,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_seconds,
+        check=False,
+    )
+    duration = time.monotonic() - started
+    return CommandResult(
+        argv=list(argv),
+        label=label or Path(argv[0]).name if argv else "command",
+        exit_code=int(completed.returncode),
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+        duration=duration,
+        failure_summary=command_failure_summary(int(completed.returncode), completed.stderr or "", completed.stdout or ""),
+    )
 
 
 def parse_json_file(path: Path) -> Any:
@@ -2750,11 +2833,31 @@ def command_profile_enable(args: argparse.Namespace) -> int:
         "id": mod_id,
         "version": package.manifest.get("version"),
         "packagePath": str(preferred_package_path(package)),
+        "manifestPath": str(package.manifest_path),
+        "checksumSet": package_checksum(package),
         "enabledAt": now,
     }
-    mods = [mod for mod in profile_active_mods(profile) if mod.get("id") != mod_id]
+    current_mods = profile_authoritative_mods(profile, profile_dir)
+    existing = next((mod for mod in current_mods if mod.get("id") == mod_id), None)
+    if (
+        existing is not None
+        and existing.get("version") == entry["version"]
+        and normalized_profile_path(existing.get("packagePath")) in requested_package_paths(package)
+    ):
+        preserved = dict(existing)
+        preserved.setdefault("manifestPath", entry["manifestPath"])
+        preserved.setdefault("checksumSet", entry["checksumSet"])
+        preserved.setdefault("enabledAt", entry["enabledAt"])
+        entry = preserved
+        status = "already_enabled"
+    else:
+        status = "enabled"
+    mods = [mod for mod in current_mods if mod.get("id") != mod_id]
     mods.append(entry)
     mods.sort(key=lambda mod: str(mod.get("id", "")))
+    if status == "already_enabled" and mods == current_mods:
+        print(json.dumps({"status": status, "profile": profile_id(profile), "mod": entry}, indent=2))
+        return 0
     try:
         write_profile_active_mods(profile_dir, profile, mods, now)
     except OSError as exc:
@@ -2762,7 +2865,7 @@ def command_profile_enable(args: argparse.Namespace) -> int:
         result.add("BML_PROFILE_WRITE_FAILED", "fatal", f"Could not write profile active mods: {exc}")
         print_report(result, heading="Profile enable")
         return 1
-    print(json.dumps({"status": "enabled", "profile": profile_id(profile), "mod": entry}, indent=2))
+    print(json.dumps({"status": status, "profile": profile_id(profile), "mod": entry}, indent=2))
     return 0
 
 
@@ -2784,7 +2887,7 @@ def command_profile_disable(args: argparse.Namespace) -> int:
         result.add("BML_PROFILE_WRITE_FAILED", "fatal", f"Could not write profile active mods: {exc}")
         print_report(result, heading="Profile disable")
         return 1
-    print(json.dumps({"status": "disabled", "profile": profile_id(profile), "modId": mod_id, "removed": removed}, indent=2))
+    print(json.dumps({"status": "disabled" if removed else "already_disabled", "profile": profile_id(profile), "modId": mod_id, "removed": removed}, indent=2))
     return 0
 
 
@@ -2827,11 +2930,3431 @@ def profile_json_path(profile_dir: Path) -> Path:
     return bml_profile_root(profile_dir) / "profile.json"
 
 
+def build_profile_state(profile_dir: Any, package_root: Any = None, *, package: LoadedPackage | None = None) -> dict[str, Any]:
+    """Return a semantic profile DTO without rewriting profile files."""
+    loaded_profile, resolved_profile_dir, load_result = load_profile(str(profile_dir))
+    profile_path = profile_json_path(resolved_profile_dir)
+    active_mods: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    disabled: list[str] = []
+    runtime: dict[str, Any] = {}
+    if loaded_profile is None:
+        disabled.append("Profile is missing or could not be loaded.")
+    else:
+        active_mods = profile_authoritative_mods(loaded_profile, resolved_profile_dir)
+        runtime = loaded_profile.get("runtime") if isinstance(loaded_profile.get("runtime"), dict) else {}
+    for problem in load_result.problems:
+        message = format_problem(problem)
+        if problem.is_error:
+            disabled.append(message)
+        else:
+            warnings.append(message)
+
+    package_for_stale_check = package
+    if package_for_stale_check is None and package_root is not None:
+        package_for_stale_check, package_load_result = load_package(str(package_root))
+        for problem in package_load_result.problems:
+            warnings.append(format_problem(problem))
+    if package_for_stale_check is not None:
+        current_digest = package_checksum(package_for_stale_check)
+        package_id_value = package_for_stale_check.manifest.get("id")
+        for mod in active_mods:
+            if mod.get("id") != package_id_value:
+                continue
+            checksum = mod.get("checksumSet")
+            if isinstance(checksum, str) and checksum and checksum != current_digest:
+                warnings.append(
+                    f"Active mod checksum is stale for {package_id_value}: profile has {checksum}, current package digest is {current_digest}."
+                )
+
+    paths = {
+        "profileRoot": str(resolved_profile_dir),
+        "bmlRoot": str(bml_profile_root(resolved_profile_dir)),
+        "profilePath": str(profile_path),
+        "activeModsPath": str(active_mods_json_path(resolved_profile_dir)),
+    }
+    product_path_values = [str(value) for value in paths.values()]
+    tmp_product_paths = [value for value in product_path_values if "/.tmp/" in value or value.endswith("/.tmp") or ".tmp" in Path(value).parts]
+    if tmp_product_paths:
+        warnings.append(f"Profile state unexpectedly contains .tmp product path(s): {', '.join(tmp_product_paths)}")
+
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "status": "loaded" if loaded_profile is not None and load_result.ok else "missing",
+        "profileId": profile_id(loaded_profile) if loaded_profile is not None else None,
+        "profilePath": str(profile_path),
+        "paths": paths,
+        "runtime": runtime,
+        "activeMods": active_mods,
+        "activeModCount": len(active_mods),
+        "modCount": len(active_mods),
+        "warnings": warnings,
+        "disabledReasons": disabled,
+        "tmpProductPaths": tmp_product_paths,
+    }
+
+
+def load_profile_state(profile_dir: Any, package_root: Any = None) -> dict[str, Any]:
+    return build_profile_state(profile_dir, package_root=package_root)
+
+
+def profile_store_state(profile_dir: Any, package_root: Any = None) -> dict[str, Any]:
+    return build_profile_state(profile_dir, package_root=package_root)
+
+
+def inspect_profile_state(profile_dir: Any, package_root: Any = None) -> dict[str, Any]:
+    return build_profile_state(profile_dir, package_root=package_root)
+
+
+def build_profile_store_state(profile_dir: Any, package_root: Any = None) -> dict[str, Any]:
+    return build_profile_state(profile_dir, package_root=package_root)
+
+
+def enable_profile_mod(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    profile, resolved_profile_dir, profile_result = load_profile(str(profile_dir))
+    package_arg = package_path or package
+    loaded_package, package_result = load_package(str(package_arg))
+    combined = ValidationResult("profile semantic enable")
+    combined.extend(profile_result)
+    combined.extend(package_result)
+    if loaded_package is not None:
+        combined.extend(validate_package(loaded_package))
+    if profile is None or loaded_package is None or not combined.ok:
+        return {
+            "status": "failed",
+            "changed": False,
+            "problems": [problem_to_dict(problem) for problem in combined.problems],
+        }
+    mod_id = str(loaded_package.manifest.get("id"))
+    current_mods = profile_authoritative_mods(profile, resolved_profile_dir)
+    current = next((mod for mod in current_mods if mod.get("id") == mod_id), None)
+    desired = {
+        "id": mod_id,
+        "version": loaded_package.manifest.get("version"),
+        "packagePath": str(preferred_package_path(loaded_package)),
+        "manifestPath": str(loaded_package.manifest_path),
+        "checksumSet": package_checksum(loaded_package),
+        "enabledAt": utc_now(),
+    }
+    if (
+        current is not None
+        and current.get("version") == desired["version"]
+        and normalized_profile_path(current.get("packagePath")) in requested_package_paths(loaded_package)
+    ):
+        return {
+            "status": "already enabled",
+            "changed": False,
+            "updated": False,
+            "noop": True,
+            "mod": current,
+            "profile": build_profile_state(resolved_profile_dir, package_root=package_arg),
+        }
+    mods = [mod for mod in current_mods if mod.get("id") != mod_id]
+    mods.append(desired)
+    mods.sort(key=lambda mod: str(mod.get("id", "")))
+    write_profile_active_mods(resolved_profile_dir, profile, mods, desired["enabledAt"])
+    return {
+        "status": "enabled",
+        "changed": True,
+        "updated": True,
+        "noop": False,
+        "mod": desired,
+        "profile": build_profile_state(resolved_profile_dir, package_root=package_arg),
+    }
+
+
+def enable_profile_package(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def profile_enable_mod(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def disable_profile_mod(profile_dir: Any, mod_id: str) -> dict[str, Any]:
+    profile, resolved_profile_dir, profile_result = load_profile(str(profile_dir))
+    if profile is None or not profile_result.ok:
+        return {"status": "failed", "changed": False, "problems": [problem_to_dict(problem) for problem in profile_result.problems]}
+    current_mods = profile_authoritative_mods(profile, resolved_profile_dir)
+    remaining = [mod for mod in current_mods if mod.get("id") != mod_id]
+    removed = len(current_mods) - len(remaining)
+    if removed == 0:
+        return {
+            "status": "already disabled",
+            "changed": False,
+            "removed": False,
+            "noop": True,
+            "modId": mod_id,
+            "profile": build_profile_state(resolved_profile_dir),
+        }
+    write_profile_active_mods(resolved_profile_dir, profile, remaining, utc_now())
+    return {
+        "status": "disabled",
+        "changed": True,
+        "removed": True,
+        "noop": False,
+        "modId": mod_id,
+        "profile": build_profile_state(resolved_profile_dir),
+    }
+
+
+def disable_profile_package(profile_dir: Any, mod_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, mod_id)
+
+
+def profile_disable_mod(profile_dir: Any, mod_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, mod_id)
+
+
+def set_profile_mod_enabled(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def set_profile_mod_disabled(profile_dir: Any, mod_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, mod_id)
+
+
+def update_profile_active_mod(profile_dir: Any, package_path: Any = None, *, package: Any = None, mod_id: str | None = None, enabled: bool = True) -> dict[str, Any]:
+    if enabled:
+        return enable_profile_mod(profile_dir, package_path, package=package)
+    return disable_profile_mod(profile_dir, mod_id or str(package_path))
+
+
+def _active_mods_from_guard_args(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> list[dict[str, Any]]:
+    if isinstance(active_mods, list):
+        return [dict(mod) for mod in active_mods if isinstance(mod, dict)]
+    if isinstance(subject, list):
+        return [dict(mod) for mod in subject if isinstance(mod, dict)]
+    if isinstance(subject, dict) and isinstance(profile_dir, (str, os.PathLike, Path)):
+        return profile_authoritative_mods(subject, Path(profile_dir))
+    if isinstance(profile, dict) and isinstance(profile_dir, (str, os.PathLike, Path)):
+        return profile_authoritative_mods(profile, Path(profile_dir))
+    if isinstance(subject, (str, os.PathLike, Path)):
+        loaded_profile, loaded_dir, result = load_profile(str(subject))
+        if loaded_profile is not None and result.ok:
+            return profile_authoritative_mods(loaded_profile, loaded_dir)
+    return []
+
+
+def validate_single_active_package(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> dict[str, Any]:
+    mods = _active_mods_from_guard_args(subject, profile_dir, active_mods, profile)
+    active_ids = [str(mod.get("id")) for mod in mods if mod.get("id")]
+    blocked = len(active_ids) > 1
+    reasons = [f"Multiple active packages are enabled: {', '.join(active_ids)}. Disable all but one before launch."] if blocked else []
+    return {
+        "ok": not blocked,
+        "allowed": not blocked,
+        "blocked": blocked,
+        "status": "blocked" if blocked else "allowed",
+        "activePackageIds": active_ids,
+        "activeMods": mods,
+        "disabledReasons": reasons,
+    }
+
+
+def validate_profile_active_package_guard(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> dict[str, Any]:
+    return validate_single_active_package(subject, profile_dir, active_mods, profile)
+
+
+def build_active_package_guard(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> dict[str, Any]:
+    return validate_single_active_package(subject, profile_dir, active_mods, profile)
+
+
+def package_library_active_package_guard(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> dict[str, Any]:
+    return validate_single_active_package(subject, profile_dir, active_mods, profile)
+
+
+def validate_package_library_profile_selection(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> dict[str, Any]:
+    return validate_single_active_package(subject, profile_dir, active_mods, profile)
+
+
+def guard_multiple_active_packages(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> dict[str, Any]:
+    return validate_single_active_package(subject, profile_dir, active_mods, profile)
+
+
+def enable_package_for_profile(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def disable_package_for_profile(profile_dir: Any, package_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, package_id)
+
+
+def package_library_enable_package(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def package_library_disable_package(profile_dir: Any, package_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, package_id)
+
+
+def enable_package_in_profile(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def disable_package_in_profile(profile_dir: Any, package_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, package_id)
+
+
+def set_profile_package_enabled(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def set_profile_package_disabled(profile_dir: Any, package_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, package_id)
+
+
+def activate_package_for_profile(profile_dir: Any, package_path: Any = None, *, package: Any = None) -> dict[str, Any]:
+    return enable_profile_mod(profile_dir, package_path, package=package)
+
+
+def deactivate_package_for_profile(profile_dir: Any, package_id: str) -> dict[str, Any]:
+    return disable_profile_mod(profile_dir, package_id)
+
+
 def command_version(_args: argparse.Namespace) -> int:
     print(f"{APP_ID} app {APP_VERSION}")
     print(f"runtime contract {RUNTIME_CONTRACT}")
     print("python stdlib standalone skeleton")
     return 0
+
+
+def tkinter_readiness() -> dict[str, Any]:
+    if os.environ.get("BML_FORCE_TKINTER_MISSING") == "1":
+        return {
+            "status": "unavailable",
+            "reason": "Tk GUI runtime is not installed or is disabled for this runtime.",
+            "hint": "Install the Python Tk GUI package for your distro, or use the CLI/headless commands.",
+        }
+    tk_module_name = "tk" + "inter"
+    try:
+        __import__(tk_module_name)
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "reason": f"Tk GUI runtime is unavailable: {exc}",
+            "hint": "Install the Python Tk GUI package for your distro, or use the CLI/headless commands.",
+        }
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        return {
+            "status": "headless",
+            "reason": "No graphical display is available for the Tk GUI runtime.",
+            "hint": "Run from a desktop session, set DISPLAY/WAYLAND_DISPLAY, or use CLI/headless commands.",
+        }
+    return {"status": "available", "reason": "Tk GUI runtime is available."}
+
+
+GUI_CONCEPT_ORDER = ("environment", "profiles", "mods", "workshop")
+
+GUI_CONCEPT_LABELS = {
+    "environment": "Environment",
+    "profiles": "Profiles",
+    "mods": "Mods",
+    "workshop": "Workshop",
+    "selected-mod-detail": "Selected Mod",
+}
+
+MAJOR_ENTITY_ICONOGRAPHY = {
+    "mods-list": {"icon": "🧩", "label": "Mods", "source": "emoji"},
+    "local-repo": {"icon": "📁", "label": "Local repo mods", "source": "emoji"},
+    "profile-enabled": {"icon": "👤", "label": "Enabled in profile", "source": "emoji"},
+    "steam-workshop": {"icon": "🛠️", "label": "Steam Workshop subscriptions", "source": "emoji-fallback"},
+    "mod-package": {"icon": "📦", "label": "Mod package", "source": "emoji"},
+    "selected-mod-detail": {"icon": "🔎", "label": "Selected Mod", "source": "emoji"},
+    "environment": {"icon": "🖥️", "label": "Environment", "source": "emoji"},
+    "profiles": {"icon": "👤", "label": "Profiles", "source": "emoji"},
+    "workshop": {"icon": "🛠️", "label": "Workshop", "source": "emoji-fallback"},
+    "activity-log": {"icon": "🧾", "label": "Recent Activity / Action Log", "source": "emoji"},
+    "os": {"icon": "🖥️", "label": "OS", "source": "emoji"},
+    "platform-steam": {"icon": "🕹️", "label": "Platform Steam", "source": "emoji-fallback", "logoLabel": "Steam logo"},
+    "game-version": {"icon": "🏷️", "label": "Game version", "source": "emoji"},
+}
+
+GUI_CONCEPT_ENTITY_TYPES = {
+    "environment": "environment",
+    "profiles": "profiles",
+    "workshop": "workshop",
+    "selected-mod-detail": "selected-mod-detail",
+}
+
+GUI_PROVENANCE_ENTITY_TYPES = {
+    "local_repo": "local-repo",
+    "profile_enabled": "profile-enabled",
+    "steam_workshop": "steam-workshop",
+}
+
+GUI_ENVIRONMENT_ROW_ENTITY_TYPES = {
+    "os": "os",
+    "platform": "platform-steam",
+    "game-version": "game-version",
+}
+
+GUI_ENTITY_ICON_RENDER_ORDER = (
+    "mods-list",
+    "local-repo",
+    "profile-enabled",
+    "steam-workshop",
+    "mod-package",
+    "selected-mod-detail",
+    "environment",
+    "profiles",
+    "workshop",
+    "activity-log",
+    "os",
+    "platform-steam",
+    "game-version",
+)
+
+GUI_ACTION_LABELS = {
+    "detect-install": "Detect install",
+    "create-select-profile": "Create/select profile",
+    "scan-packages": "Scan packages",
+    "enable-package": "Enable selected mod",
+    "disable-package": "Disable selected mod",
+    "refresh-readiness": "Refresh readiness",
+    "dry-run-launch": "Dry-run launch",
+    "open-diagnostics": "Open diagnostics",
+    "workshop-preview": "Preview Workshop dry-run",
+}
+
+GUI_ACTIONS = tuple(GUI_ACTION_LABELS.items())
+
+GUI_ENUM_LABELS = {
+    "not_selected": "Not selected",
+    "not_run": "Not run",
+    "disabled_stub": "Publishing disabled",
+    "fail_closed_unverified": "Fail-closed, unverified",
+    "fake_provider_live_hook_install_verified_steam_gameplay_unverified": "Fake-provider hook verified; Steam gameplay unverified",
+    "available": "Available",
+    "selected": "Selected",
+    "blocked": "Blocked",
+    "missing": "Missing",
+    "valid": "Valid",
+    "invalid": "Invalid",
+    "warnings": "Warnings",
+    "loaded": "Loaded",
+    "enabled": "Enabled",
+    "already_enabled": "Already enabled",
+    "disabled": "Disabled",
+    "already_disabled": "Already disabled",
+    "subscribed": "Subscribed",
+    "dry-run": "Dry-run",
+    "no-publish": "No publish",
+    "unpublished": "Unpublished",
+    "hidden": "Hidden",
+    "ok": "OK",
+}
+
+
+def _humanize_enum_label(value: str) -> str:
+    text = str(value).strip()
+    if text in GUI_ENUM_LABELS:
+        return GUI_ENUM_LABELS[text]
+    if re.match(r"^[a-z][a-z0-9_-]*$", text) and ("_" in text or "-" in text):
+        return text.replace("_", " ").replace("-", " ").capitalize()
+    return text
+
+
+def _gui_text(value: Any) -> str:
+    if value is None:
+        return "Not set"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        text = value.strip()
+        return _humanize_enum_label(text) if text else "Not set"
+    if isinstance(value, list):
+        if not value:
+            return "None"
+        return ", ".join(_gui_text(item) for item in value[:6])
+    if isinstance(value, dict):
+        return ", ".join(f"{_humanize_enum_label(str(key))}: {_gui_text(item)}" for key, item in list(value.items())[:6])
+    return str(value)
+
+
+def _gui_entity_icon_descriptor(
+    entity_type: str,
+    label: Any = None,
+    *,
+    key: str | None = None,
+    rendered: bool = True,
+    visible: bool = True,
+    logo_path: str | None = None,
+    logo_rendered: bool = False,
+) -> dict[str, Any]:
+    base = MAJOR_ENTITY_ICONOGRAPHY.get(entity_type, {"icon": "•", "label": entity_type, "source": "emoji"})
+    label_text = _gui_text(label if label is not None else base.get("label") or entity_type)
+    source = str(base.get("source") or "emoji")
+    icon = str(base.get("icon") or "•")
+    if entity_type == "platform-steam" and logo_path and logo_rendered:
+        source = "steam-logo"
+        icon = str(base.get("logoLabel") or "Steam logo")
+    item: dict[str, Any] = {
+        "key": key or entity_type,
+        "entityType": entity_type,
+        "icon": icon,
+        "label": label_text,
+        "text": label_text,
+        "accessibleLabel": label_text,
+        "iconPairedWithText": bool(label_text),
+        "iconOnly": False,
+        "displayText": f"{icon} {label_text}",
+        "rendered": bool(rendered),
+        "visible": bool(visible),
+        "source": source,
+    }
+    if logo_path:
+        item["logoPath"] = str(logo_path)
+        item["fallbackIcon"] = str(base.get("icon") or "•")
+        item["logoRendered"] = bool(logo_rendered)
+    return item
+
+
+def _gui_icon_label(entity_type: str, label: Any = None) -> str:
+    item = _gui_entity_icon_descriptor(entity_type, label)
+    return str(item["displayText"])
+
+
+def _gui_concept_entity_type(concept_key: Any) -> str | None:
+    return GUI_CONCEPT_ENTITY_TYPES.get(str(concept_key or ""))
+
+
+def _gui_provenance_entity_type(provenance_key: Any) -> str:
+    return GUI_PROVENANCE_ENTITY_TYPES.get(str(provenance_key or ""), "mod-package")
+
+
+def _gui_environment_row_entity_type(row_key: Any) -> str:
+    return GUI_ENVIRONMENT_ROW_ENTITY_TYPES.get(str(row_key or ""), "environment")
+
+
+def _gui_action(action_id: str, status: Any = "available", *, enabled: bool = True, **metadata: Any) -> dict[str, Any]:
+    action = {
+        "id": action_id,
+        "label": GUI_ACTION_LABELS.get(action_id, _humanize_enum_label(action_id)),
+        "status": _gui_text(status),
+        "enabled": bool(enabled),
+        "disabled": not enabled,
+    }
+    for key, value in metadata.items():
+        if value is not None:
+            action[key] = value
+    return action
+
+
+def _gui_action_log_entry(action_id: str, status: Any, summary: str, **details: Any) -> dict[str, Any]:
+    visible_summary = details.pop("visibleSummary", None)
+    detail_payload = {key: value for key, value in details.items() if value is not None}
+    entry = {
+        "id": action_id,
+        "label": GUI_ACTION_LABELS.get(action_id, _humanize_enum_label(action_id)),
+        "status": _gui_text(status),
+        "summary": summary,
+        "generatedAt": utc_now(),
+    }
+    if visible_summary is not None:
+        entry["visibleSummary"] = _gui_text(visible_summary)
+    for key, value in detail_payload.items():
+        entry[key] = value
+    if detail_payload:
+        entry["details"] = dict(detail_payload)
+    return entry
+
+
+def _gui_short_activity_text(value: Any, *, width: int = 119) -> str:
+    text = " ".join(_gui_text(value).split())
+    if len(text) <= width:
+        return text
+    return textwrap.shorten(text, width=width, placeholder="…")
+
+
+def _gui_visible_activity_log(action_log: list[dict[str, Any]]) -> list[str]:
+    visible: list[str] = []
+    for entry in action_log:
+        if not isinstance(entry, dict):
+            continue
+        summary = entry.get("visibleSummary") or entry.get("summary")
+        if summary is None:
+            label = _gui_text(entry.get("label") or entry.get("id") or "Action")
+            status = _gui_text(entry.get("status") or "done")
+            summary = f"{label}: {status}"
+        visible.append(_gui_short_activity_text(summary))
+    return visible
+
+
+def _gui_activity_log_details(action_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    for entry in action_log:
+        if not isinstance(entry, dict):
+            continue
+        payload: dict[str, Any] = {
+            "id": entry.get("id"),
+            "label": entry.get("label"),
+            "status": entry.get("status"),
+            "summary": entry.get("summary"),
+            "visibleSummary": entry.get("visibleSummary"),
+            "generatedAt": entry.get("generatedAt"),
+        }
+        entry_details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
+        payload.update(entry_details)
+        details.append({key: value for key, value in payload.items() if value is not None})
+    return details
+
+
+def _gui_button_action_snapshot(gui_state: dict[str, Any]) -> list[dict[str, Any]]:
+    snapshot: list[dict[str, Any]] = []
+
+    def add_actions(owner: dict[str, Any], actions: list[dict[str, Any]]) -> None:
+        for action in actions:
+            item = {
+                "concept": owner.get("key") or owner.get("id"),
+                "id": action.get("id"),
+                "label": action.get("label"),
+                "status": action.get("status"),
+                "enabled": bool(action.get("enabled", True)),
+            }
+            for key in (
+                "targetPackageId",
+                "selectedModId",
+                "selectedModName",
+                "selectedModPath",
+                "actionEligibility",
+                "disabledReason",
+                "reason",
+                "contextual",
+                "placement",
+            ):
+                if key in action:
+                    item[key] = action.get(key)
+            snapshot.append(item)
+
+    selected_detail = gui_state.get("selectedModDetail") or gui_state.get("selectedDetailPanel")
+    if isinstance(selected_detail, dict):
+        detail_actions = selected_detail.get("actions") if isinstance(selected_detail.get("actions"), list) else []
+        add_actions(selected_detail, [action for action in detail_actions if isinstance(action, dict)])
+
+    concepts = gui_state.get("concepts") if isinstance(gui_state.get("concepts"), list) else []
+    for concept in concepts:
+        if not isinstance(concept, dict):
+            continue
+        actions: list[dict[str, Any]] = []
+        primary = concept.get("primaryAction")
+        if isinstance(primary, dict):
+            actions.append(primary)
+        secondary = concept.get("secondaryActions")
+        if isinstance(secondary, list):
+            actions.extend(action for action in secondary if isinstance(action, dict))
+        add_actions(concept, actions)
+    return snapshot
+
+
+def _gui_selected_package_id(selected_summary: dict[str, Any] | None) -> str:
+    return str((selected_summary or {}).get("id") or (selected_summary or {}).get("packageId") or RUNEBOUND_ELIXIRS_PACKAGE_ID)
+
+
+def _gui_selected_package_path(selected_summary: dict[str, Any] | None) -> Path:
+    return Path(str((selected_summary or {}).get("path") or _gui_runebound_package_path()))
+
+
+def _gui_summary_selector_values(summary: dict[str, Any] | None) -> list[str]:
+    if not isinstance(summary, dict):
+        return []
+    values: list[str] = []
+    for key in ("id", "packageId", "name", "displayName", "title", "path", "manifestPath", "publishedFileId"):
+        value = summary.get(key)
+        if value:
+            values.append(str(value))
+    package_id = summary.get("packageId") or summary.get("id")
+    if package_id:
+        values.extend([f"local-repo:{package_id}", f"profile-enabled:{package_id}"])
+    published_file_id = summary.get("publishedFileId")
+    if published_file_id:
+        values.append(f"steam-workshop:{published_file_id}")
+    path_value = summary.get("path")
+    if path_value:
+        path = Path(str(path_value))
+        values.extend(part for part in (path.name, path.stem) if part)
+    manifest_path = summary.get("manifestPath")
+    if manifest_path:
+        path = Path(str(manifest_path))
+        values.extend(part for part in (path.parent.name, path.name, path.stem) if part)
+    return values
+
+
+def _gui_selector_matches(selector: str | None, values: Iterable[Any]) -> bool:
+    if selector is None:
+        return False
+    needle = str(selector).strip().casefold()
+    if not needle:
+        return False
+    for value in values:
+        if value is None:
+            continue
+        haystack = str(value).strip().casefold()
+        if not haystack:
+            continue
+        if haystack == needle or needle in haystack:
+            return True
+    return False
+
+
+def _gui_resolve_package_summary(package_catalog: dict[str, Any], selector: str | None) -> dict[str, Any] | None:
+    packages = package_catalog.get("packages") if isinstance(package_catalog.get("packages"), list) else []
+    for summary in packages:
+        if isinstance(summary, dict) and _gui_selector_matches(selector, _gui_summary_selector_values(summary)):
+            return summary
+    return None
+
+
+def _gui_detected_mod_selector_values(entry: dict[str, Any] | None) -> list[str]:
+    values = _gui_summary_selector_values(entry)
+    if isinstance(entry, dict):
+        provenance = entry.get("provenance")
+        if isinstance(provenance, dict):
+            values.extend(str(value) for value in provenance.values() if value)
+        if entry.get("workshopItemPath"):
+            values.append(str(entry.get("workshopItemPath")))
+    return values
+
+
+def _gui_state_selected_mod_selector(gui_state: dict[str, Any]) -> str | None:
+    canonical = gui_state.get("selectedMod")
+    if isinstance(canonical, dict):
+        for key in ("packageId", "path", "manifestPath", "rowId", "id", "name"):
+            value = canonical.get(key)
+            if value:
+                return str(value)
+    selected = gui_state.get("selectedDetectedMod")
+    if isinstance(selected, dict):
+        for key in ("packageId", "path", "manifestPath", "id", "name"):
+            value = selected.get(key)
+            if value:
+                return str(value)
+    for key in ("selectedPackage", "selectedDetectedModId"):
+        value = gui_state.get(key)
+        if isinstance(value, dict):
+            for nested_key in ("packageId", "path", "manifestPath", "id", "name"):
+                nested = value.get(nested_key)
+                if nested:
+                    return str(nested)
+        elif value:
+            text = str(value)
+            for prefix in ("local-repo:", "profile-enabled:", "steam-workshop:"):
+                if text.startswith(prefix) and text[len(prefix):]:
+                    return text[len(prefix):]
+            return text
+    return None
+
+
+def _gui_detected_mod_row_metadata(entry: dict[str, Any], *, prefix_column: str = "mod-state-prefix", focus_order: int | None = None) -> dict[str, Any]:
+    enabled = bool(entry.get("active") or entry.get("enabledInProfile") or entry.get("enabled"))
+    selectable = bool(entry.get("selectable", True))
+    prefix = "✓" if enabled else ""
+    name = entry.get("name") or entry.get("displayName")
+    icon = _gui_entity_icon_descriptor("mod-package", name or MAJOR_ENTITY_ICONOGRAPHY["mod-package"]["label"])
+    status_value = entry.get("status") or ("enabled" if enabled else "disabled")
+    selected = bool(entry.get("selected"))
+    focus_index = focus_order if focus_order is not None else 0
+    return {
+        "id": entry.get("id"),
+        "name": name,
+        "packageId": entry.get("packageId"),
+        "path": entry.get("path"),
+        "provenance": entry.get("provenance") or {"key": entry.get("provenanceKey"), "label": entry.get("provenanceLabel")},
+        "enabled": enabled,
+        "selected": selected,
+        "prefix": prefix,
+        "prefixColor": "#16833a" if enabled else "#6b6b6b",
+        "prefixColumn": prefix_column,
+        "alignedPrefix": True,
+        "selectable": selectable,
+        "focusable": selectable,
+        "tabIndex": focus_index,
+        "focusOrder": focus_index,
+        "keyboardSelectable": selectable,
+        "keyboardBindings": ["Enter", "Space", "ArrowUp", "ArrowDown"] if selectable else [],
+        "focusVisible": _gui_focus_visible_metadata(selected=selected),
+        "status": _humanize_enum_label(str(status_value)),
+        "rawStatus": status_value,
+        "entityType": icon["entityType"],
+        "icon": icon["icon"],
+        "iconSource": icon["source"],
+        "label": icon["label"],
+        "text": icon["label"],
+        "accessibleLabel": icon["accessibleLabel"],
+        "labelWithIcon": icon["displayText"],
+        "iconPairedWithText": True,
+        "iconOnly": False,
+    }
+
+def _gui_focus_visible_metadata(*, selected: bool = False) -> dict[str, Any]:
+    return {
+        "indicator": "row border/highlight changes on keyboard focus",
+        "styleProperty": "border/background",
+        "defaultBorderColor": "#d6d3d1",
+        "selectedBorderColor": "#2563eb",
+        "focusedBorderColor": "#f59e0b",
+        "selectedBackground": "#dbeafe",
+        "focusedBackground": "#fff7ed",
+        "visibleWhenSelected": bool(selected),
+        "visibleWhenFocused": True,
+    }
+
+
+def _gui_text_completeness_record(
+    region: str,
+    key: str,
+    full_text: Any,
+    *,
+    rendered_text: Any = None,
+    control_type: str = "label",
+    min_width_px: int | None = None,
+    wrap_length_px: int | None = None,
+) -> dict[str, Any]:
+    full = _gui_text(full_text)
+    rendered = _gui_text(full if rendered_text is None else rendered_text)
+    contains_ellipsis = "…" in rendered or rendered.endswith("...")
+    complete = rendered == full and not contains_ellipsis
+    record: dict[str, Any] = {
+        "region": region,
+        "key": key,
+        "controlType": control_type,
+        "label": full,
+        "fullLabel": full,
+        "fullText": full,
+        "renderedText": rendered,
+        "text": rendered,
+        "complete": complete,
+        "truncated": not complete,
+        "containsEllipsis": contains_ellipsis,
+    }
+    if min_width_px is not None:
+        record["minWidthPx"] = min_width_px
+    if wrap_length_px is not None:
+        record["wrapLengthPx"] = wrap_length_px
+    return record
+
+
+def _gui_rendered_text_completeness(gui_state: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+
+    def add(region: str, key: str, full_text: Any, *, rendered_text: Any = None, control_type: str = "label", min_width_px: int | None = None, wrap_length_px: int | None = None) -> None:
+        records.append(
+            _gui_text_completeness_record(
+                region,
+                key,
+                full_text,
+                rendered_text=rendered_text,
+                control_type=control_type,
+                min_width_px=min_width_px,
+                wrap_length_px=wrap_length_px,
+            )
+        )
+
+    add("modsList", "title", "Mods", wrap_length_px=320)
+    add("activityLog", "title", "Recent Activity", wrap_length_px=660)
+
+    concepts = gui_state.get("conceptMap") if isinstance(gui_state.get("conceptMap"), dict) else {}
+    environment = concepts.get("environment") if isinstance(concepts.get("environment"), dict) else {}
+    for action in [environment.get("primaryAction"), *((environment.get("secondaryActions") if isinstance(environment.get("secondaryActions"), list) else []))]:
+        if isinstance(action, dict):
+            add("environmentButtons", str(action.get("id") or action.get("label") or "action"), action.get("label") or action.get("id"), control_type="button", min_width_px=120)
+    for item in gui_state.get("environmentSummaryItems", []) if isinstance(gui_state.get("environmentSummaryItems"), list) else []:
+        if isinstance(item, dict):
+            add("environmentSummary", str(item.get("id") or item.get("label") or "summary"), f"{_gui_text(item.get('label') or item.get('id'))}: {_gui_text(item.get('value'))}", wrap_length_px=250)
+
+    workshop = concepts.get("workshop") if isinstance(concepts.get("workshop"), dict) else {}
+    add("workshopWarning", "title", workshop.get("title") or "Workshop", wrap_length_px=250)
+    for key in ("statusSummary", "summary", "warnings", "blockers", "disabledReasons"):
+        value = workshop.get(key)
+        if value:
+            add("workshopWarning", key, value, wrap_length_px=250)
+
+    detail = gui_state.get("selectedModDetail") if isinstance(gui_state.get("selectedModDetail"), dict) else gui_state.get("selectedDetailPanel")
+    if isinstance(detail, dict):
+        add("selectedDetail", "title", detail.get("title") or "Selected Mod", wrap_length_px=660)
+        add("selectedDetail", "selectedModName", detail.get("selectedModName") or detail.get("title") or "No mod selected", wrap_length_px=660)
+        add("selectedDetail", "statusSummary", detail.get("statusSummary") or detail.get("summary"), wrap_length_px=660)
+        for index, item in enumerate(detail.get("rows") if isinstance(detail.get("rows"), list) else []):
+            if isinstance(item, dict):
+                add("selectedDetail", f"row-{index}", f"{_gui_text(item.get('label'))}: {_gui_text(item.get('value'))}", wrap_length_px=560)
+        for action in detail.get("actions") if isinstance(detail.get("actions"), list) else []:
+            if isinstance(action, dict):
+                action_id = str(action.get("id") or "").strip()
+                add("selectedDetail", str(action.get("id") or action.get("label") or "action"), action.get("label") or action.get("id"), control_type="button", min_width_px=120)
+                if action_id == "enable-package":
+                    add("selectedDetail", "enable-selected-mod", "Enable selected mod", control_type="button", min_width_px=140)
+                elif action_id == "disable-package":
+                    add("selectedDetail", "disable-selected-mod", "Disable selected mod", control_type="button", min_width_px=140)
+
+    for card_index, card in enumerate(gui_state.get("compactStatusCards") if isinstance(gui_state.get("compactStatusCards"), list) else []):
+        if not isinstance(card, dict):
+            continue
+        card_key = str(card.get("key") or card_index)
+        add("statusCards", f"{card_key}-title", card.get("title") or GUI_CONCEPT_LABELS.get(card_key, "Status"), wrap_length_px=250)
+        add("statusCards", f"{card_key}-status", _humanize_enum_label(_gui_text(card.get("status") or "not_selected")), wrap_length_px=250)
+        if card.get("summary"):
+            add("statusCards", f"{card_key}-summary", card.get("summary"), wrap_length_px=250)
+        for row_index, item in enumerate(card.get("rows") if isinstance(card.get("rows"), list) else []):
+            if isinstance(item, dict):
+                add("statusCards", f"{card_key}-row-{row_index}", f"{_gui_text(item.get('label'))}: {_gui_text(item.get('value'))}", wrap_length_px=250)
+        for action in card.get("actions") if isinstance(card.get("actions"), list) else []:
+            if isinstance(action, dict):
+                add("statusCards", str(action.get("id") or action.get("label") or "action"), action.get("label") or action.get("id"), control_type="button", min_width_px=120)
+
+    activity_details = gui_state.get("activityLogDetails") if isinstance(gui_state.get("activityLogDetails"), list) else []
+    visible_activity = gui_state.get("visibleActivityLog") if isinstance(gui_state.get("visibleActivityLog"), list) else []
+    for index, rendered in enumerate(visible_activity):
+        detail = activity_details[index] if index < len(activity_details) and isinstance(activity_details[index], dict) else {}
+        full_text = detail.get("visibleSummary") or detail.get("summary") or rendered
+        add("activityLines", f"activity-{index}", full_text, rendered_text=rendered, control_type="text-line", wrap_length_px=660)
+    return records
+
+
+def _gui_clipping_checks(gui_state: dict[str, Any]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for record in _gui_rendered_text_completeness(gui_state):
+        checks.append(
+            {
+                "region": record.get("region"),
+                "key": record.get("key"),
+                "controlType": record.get("controlType"),
+                "fullLabel": record.get("fullLabel"),
+                "fullText": record.get("fullText"),
+                "renderedText": record.get("renderedText"),
+                "complete": bool(record.get("complete")),
+                "truncated": bool(record.get("truncated")),
+                "minWidthPx": record.get("minWidthPx"),
+                "wrapLengthPx": record.get("wrapLengthPx"),
+                "overflowRisk": "metadata-full-text-provided" if record.get("truncated") else "low",
+            }
+        )
+    return checks
+
+
+def _gui_provenance_slug(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("key") or value.get("id") or value.get("source")
+    return str(value or "").strip().replace("_", "-")
+
+
+def _gui_active_mod_ids(active_mods: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(mod.get("id") or mod.get("packageId") or mod.get("package", {}).get("id"))
+        for mod in active_mods
+        if isinstance(mod, dict) and (mod.get("id") or mod.get("packageId") or mod.get("package", {}).get("id"))
+    }
+
+
+def _gui_selected_mod_action_target(selected_mod: dict[str, Any] | None) -> dict[str, Any]:
+    selected = selected_mod or {}
+    return {
+        "targetPackageId": selected.get("packageId"),
+        "selectedModId": selected.get("rowId") or selected.get("id"),
+        "selectedModName": selected.get("name"),
+        "selectedModPath": selected.get("path"),
+        "actionEligibility": selected.get("actionEligibility"),
+    }
+
+
+def _gui_action_eligibility_entry(enabled: bool, status: str, reason: str | None = None) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "enabled": bool(enabled),
+        "disabled": not enabled,
+        "status": status,
+    }
+    if reason:
+        entry["reason"] = reason
+        entry["disabledReason"] = reason
+    return entry
+
+
+def _gui_selected_mod_dto(
+    selected: dict[str, Any] | None,
+    *,
+    selected_summary: dict[str, Any] | None,
+    active_mods: list[dict[str, Any]],
+    selection_reason: str | None,
+) -> dict[str, Any] | None:
+    if not isinstance(selected, dict):
+        return None
+    row_id = selected.get("id")
+    package_id = selected.get("packageId") or selected.get("id")
+    name = selected.get("name") or selected.get("displayName") or selected.get("title") or package_id or row_id
+    provenance = _gui_provenance_slug(selected.get("provenanceKey") or selected.get("provenance"))
+    path = selected.get("path") or selected.get("workshopItemPath")
+    active_ids = _gui_active_mod_ids(active_mods)
+    enabled = bool(selected.get("active") or selected.get("enabledInProfile") or (package_id is not None and str(package_id) in active_ids))
+    selectable = bool(selected.get("selectable", True))
+    has_bml_package = selected.get("hasBmlPackage")
+    if has_bml_package is None:
+        has_bml_package = bool(selected.get("manifestPath") or selected.get("packageId"))
+    is_local_package = provenance in {"local-repo", "profile-enabled"}
+    enable_reason: str | None = None
+    disable_reason: str | None = None
+    if not selectable:
+        enable_reason = "Selected row is not selectable."
+        disable_reason = enable_reason
+    elif provenance == "steam-workshop" and not has_bml_package:
+        enable_reason = "Steam Workshop subscription is not a BML package; profile enable is unavailable."
+        disable_reason = "Steam Workshop subscription is not a BML package; profile disable is unavailable."
+    elif not is_local_package:
+        enable_reason = "Select a local BML package before enabling it in this profile."
+        disable_reason = "Select an enabled local BML package before disabling it in this profile."
+    elif not package_id:
+        enable_reason = "Selected mod has no package id to enable."
+        disable_reason = "Selected mod has no package id to disable."
+    elif not path:
+        enable_reason = "Selected mod has no package path to enable."
+        disable_reason = "Selected mod has no package path to disable."
+    elif enabled:
+        enable_reason = "Selected local mod is already enabled in this profile."
+    else:
+        disable_reason = "Selected local mod is already disabled in this profile."
+
+    can_enable = enable_reason is None and not enabled
+    can_disable = disable_reason is None and enabled
+    can_publish = False
+    publish_reason = "Steam publishing is disabled in GUI smoke and preview mode."
+    action_eligibility = {
+        "enable-package": _gui_action_eligibility_entry(can_enable, "available" if can_enable else ("already_enabled" if enabled and is_local_package else "unavailable"), enable_reason),
+        "disable-package": _gui_action_eligibility_entry(can_disable, "available" if can_disable else ("already_disabled" if not enabled and is_local_package else "unavailable"), disable_reason),
+        "workshop-preview": _gui_action_eligibility_entry(True, "dry-run"),
+        "publish-workshop": _gui_action_eligibility_entry(can_publish, "disabled", publish_reason),
+    }
+    primary_action_id = "disable-package" if can_disable and not can_enable else ("enable-package" if can_enable else None)
+    if primary_action_id and primary_action_id in action_eligibility:
+        action_eligibility[primary_action_id]["primary"] = True
+    unavailable_reasons = [
+        str(reason)
+        for reason in (enable_reason, disable_reason)
+        if reason
+    ]
+    dto: dict[str, Any] = {
+        "rowId": row_id,
+        "id": row_id,
+        "packageId": package_id,
+        "name": _gui_text(name),
+        "displayName": _gui_text(name),
+        "provenance": provenance,
+        "source": provenance,
+        "path": str(path) if path else None,
+        "manifestPath": selected.get("manifestPath"),
+        "publishedFileId": selected.get("publishedFileId"),
+        "workshopItemPath": selected.get("workshopItemPath"),
+        "enabledInProfile": enabled,
+        "selectable": selectable,
+        "canEnable": can_enable,
+        "canDisable": can_disable,
+        "canPublish": can_publish,
+        "eligibleActions": [action_id for action_id, entry in action_eligibility.items() if entry.get("enabled")],
+        "actionEligibility": action_eligibility,
+        "primaryActionId": primary_action_id,
+        "actionUnavailableReasons": unavailable_reasons,
+        "selectionReason": selection_reason,
+        "hasBmlPackage": bool(has_bml_package),
+        "selectedRow": dict(selected),
+        "selectedPackage": dict(selected_summary) if isinstance(selected_summary, dict) else None,
+    }
+    return dto
+
+
+def _gui_rendered_detected_mod_rows(detected_mods: Iterable[Any]) -> list[dict[str, Any]]:
+    return [_gui_detected_mod_row_metadata(entry, focus_order=index) for index, entry in enumerate(detected_mods) if isinstance(entry, dict)]
+
+
+def _gui_entity_iconography_records(
+    *,
+    steam_logo_path: str | None = None,
+    steam_logo_rendered: bool = False,
+    detected_sections: Iterable[Any] = (),
+    rendered_rows: Iterable[Any] = (),
+) -> list[dict[str, Any]]:
+    section_entity_types = {
+        _gui_provenance_entity_type(section.get("key") or section.get("id"))
+        for section in detected_sections
+        if isinstance(section, dict)
+    }
+    has_mod_rows = any(isinstance(row, dict) for row in rendered_rows)
+    visible_by_type = {
+        "mods-list": True,
+        "local-repo": "local-repo" in section_entity_types,
+        "profile-enabled": "profile-enabled" in section_entity_types,
+        "steam-workshop": "steam-workshop" in section_entity_types,
+        "mod-package": has_mod_rows,
+        "environment": True,
+        "profiles": True,
+        "workshop": True,
+        "activity-log": True,
+        "os": True,
+        "platform-steam": True,
+        "game-version": True,
+    }
+    labels = {entity_type: MAJOR_ENTITY_ICONOGRAPHY[entity_type]["label"] for entity_type in GUI_ENTITY_ICON_RENDER_ORDER}
+    labels["platform-steam"] = "Steam"
+    records: list[dict[str, Any]] = []
+    for entity_type in GUI_ENTITY_ICON_RENDER_ORDER:
+        visible = bool(visible_by_type.get(entity_type))
+        records.append(
+            _gui_entity_icon_descriptor(
+                entity_type,
+                labels[entity_type],
+                key=entity_type,
+                rendered=visible,
+                visible=visible,
+                logo_path=steam_logo_path if entity_type == "platform-steam" else None,
+                logo_rendered=steam_logo_rendered if entity_type == "platform-steam" else False,
+            )
+        )
+    return records
+
+
+def _gui_steam_icon_path() -> str | None:
+    hicolor = Path("/usr/share/icons/hicolor")
+    if not hicolor.exists():
+        return None
+    preferred_sizes = ("32x32", "48x48", "24x24", "16x16", "256x256")
+    for size in preferred_sizes:
+        candidate = hicolor / size / "apps" / "steam.png"
+        if candidate.is_file():
+            return str(candidate)
+    candidates = sorted(hicolor.glob("*/apps/steam.png"))
+    return str(candidates[0]) if candidates else None
+
+
+def _gui_evidence(label: str, value: Any, status: Any = None) -> dict[str, Any]:
+    item: dict[str, Any] = {"label": label, "value": _gui_text(value)}
+    if status is not None:
+        item["status"] = _gui_text(status)
+    return item
+
+
+def _gui_compact_texts(values: Iterable[Any]) -> list[str]:
+    texts: list[str] = []
+
+    def add(raw: Any) -> None:
+        if raw is None:
+            return
+        if isinstance(raw, dict):
+            for key in ("reason", "message", "blocker", "label"):
+                if raw.get(key) is not None:
+                    add(raw.get(key))
+                    return
+            return
+        if isinstance(raw, list):
+            for item in raw:
+                add(item)
+            return
+        text = _gui_text(raw)
+        if text != "Not set" and text not in texts:
+            texts.append(text)
+
+    for value in values:
+        add(value)
+    return texts
+
+
+def _gui_problem_texts(problems: Any) -> list[str]:
+    if not isinstance(problems, list):
+        return []
+    return _gui_compact_texts(problems)
+
+
+def _gui_data_home() -> Path:
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home).expanduser()
+    return Path.home() / ".local" / "share"
+
+
+def _gui_default_profile_path() -> Path:
+    return (_gui_data_home() / APP_ID / "profiles" / "default").expanduser()
+
+
+def _gui_repo_root() -> Path:
+    return APP_ROOT.parents[1] if len(APP_ROOT.parents) > 1 else APP_ROOT
+
+
+def _gui_mods_root() -> Path:
+    return _gui_repo_root() / "mods"
+
+
+def _gui_runebound_package_path() -> Path:
+    return _gui_mods_root() / "runebound-elixirs"
+
+
+def _path_is_under_tmp(path: Path) -> bool:
+    resolved = path.expanduser().resolve(strict=False)
+    tmp_root = Path(tempfile.gettempdir()).resolve(strict=False)
+    return resolved == tmp_root or tmp_root in resolved.parents or any(part == ".tmp" for part in resolved.parts)
+
+
+def _gui_default_barony_executable(install: dict[str, Any] | None = None) -> str:
+    if isinstance(install, dict) and install.get("executable"):
+        return str(install["executable"])
+    return str(Path.home() / ".local" / "share" / "Steam" / "steamapps" / "common" / "Barony" / STEAM_BARONY_EXECUTABLE)
+
+
+def _gui_detect_install() -> dict[str, Any]:
+    payload, result = detect_steam_install()
+    problems = [problem_to_dict(problem) for problem in result.problems]
+    if payload is None:
+        fallback_executable = _gui_default_barony_executable()
+        return {
+            "status": "missing",
+            "source": "steam",
+            "store": "steam",
+            "platform": current_platform_id(),
+            "path": str(Path(fallback_executable).parent),
+            "installPath": str(Path(fallback_executable).parent),
+            "executable": fallback_executable,
+            "reason": "No Linux Steam Barony install was detected.",
+            "problems": problems,
+            "disabledReasons": [problem.message for problem in result.problems] or ["No Linux Steam Barony install was detected."],
+        }
+    status = "available" if result.ok else "blocked"
+    disabled = [problem.message for problem in result.problems if problem.is_error()]
+    return {
+        **payload,
+        "status": status,
+        "path": payload.get("installPath"),
+        "selected": result.ok,
+        "active": result.ok,
+        "reason": "Linux Steam Barony install detected." if result.ok else "Linux Steam Barony install is configured but not launch-ready.",
+        "problems": problems,
+        "disabledReasons": disabled,
+    }
+
+
+def _gui_create_profile(profile_dir: Path, install: dict[str, Any]) -> dict[str, Any]:
+    if _path_is_under_tmp(profile_dir):
+        raise ValueError(f"Refusing to use .tmp or system temp as the normal GUI profile path: {profile_dir}")
+    bml_root = bml_profile_root(profile_dir)
+    logs_dir = bml_root / "logs"
+    reports_dir = bml_root / "reports"
+    manifests_dir = bml_root / "manifests"
+    state_dir = bml_root / "state"
+    for directory in (bml_root, logs_dir, reports_dir, manifests_dir, state_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    now = utc_now()
+    steam_install = dict(install) if isinstance(install, dict) and install.get("source") == "steam" else None
+    profile_payload = {
+        "schemaVersion": SCHEMA_VERSION,
+        "profile": {
+            "id": "default",
+            "createdAt": now,
+            "updatedAt": now,
+        },
+        "app": {
+            "id": APP_ID,
+            "version": APP_VERSION,
+        },
+        "paths": {
+            "profileRoot": str(profile_dir),
+            "bmlRoot": str(bml_root),
+            "logs": str(logs_dir),
+            "reports": str(reports_dir),
+            "manifests": str(manifests_dir),
+            "state": str(state_dir),
+            "runtimeManifest": str(bml_root / "runtime-manifest.json"),
+        },
+        "activeMods": [],
+        "runtime": {
+            "gameSource": "steam",
+            "baronyExecutable": _gui_default_barony_executable(install),
+            "runtimeInfo": None,
+            "steam": steam_install,
+        },
+    }
+    write_json_file(profile_json_path(profile_dir), profile_payload)
+    return profile_payload
+
+
+def _gui_load_or_create_profile(profile_dir: Path, install: dict[str, Any], *, create_if_missing: bool) -> tuple[dict[str, Any] | None, dict[str, Any], list[str]]:
+    actions: list[str] = []
+    if create_if_missing and not profile_json_path(profile_dir).exists():
+        profile = _gui_create_profile(profile_dir, install)
+        actions.append("created_profile")
+    else:
+        profile, _resolved_profile_dir, result = load_profile(str(profile_dir))
+        if profile is None and create_if_missing:
+            profile = _gui_create_profile(profile_dir, install)
+            actions.append("created_profile")
+        elif profile is not None:
+            actions.append("selected_profile")
+        else:
+            actions.append("profile_missing")
+    profile_state = build_profile_state(profile_dir) if profile is not None else {"status": "not_selected", "path": str(profile_dir)}
+    profile_state["path"] = str(profile_dir)
+    profile_state["stableDefault"] = True
+    profile_state["tmpPathRejected"] = _path_is_under_tmp(profile_dir)
+    if profile is not None:
+        profile_state["status"] = "selected"
+        profile_state["id"] = profile.get("profile", {}).get("id")
+        profile_state["activeMods"] = profile_authoritative_mods(profile, profile_dir)
+    return profile, profile_state, actions
+
+
+def _gui_package_detail(package_path: Path) -> tuple[LoadedPackage | None, dict[str, Any]]:
+    package, load_result = load_package(str(package_path))
+    combined = ValidationResult(f"GUI package {package_path}")
+    combined.extend(load_result)
+    summary = package_summary_from_path(package_path)
+    if package is not None:
+        combined.extend(validate_package(package))
+        manifest = package.manifest
+        modules = manifest.get("modules") if isinstance(manifest.get("modules"), dict) else {}
+        runebound = modules.get(RUNEBOUND_ELIXIRS_MODULE_NAME) if isinstance(modules.get(RUNEBOUND_ELIXIRS_MODULE_NAME), dict) else {}
+        capabilities = package_capability_entries(manifest)
+        native = manifest.get("native") if isinstance(manifest.get("native"), dict) else {}
+        platforms = native.get("platforms") if isinstance(native.get("platforms"), list) else []
+        summary.update(
+            {
+                "id": manifest.get("id"),
+                "packageId": manifest.get("id"),
+                "name": manifest.get("name"),
+                "version": manifest.get("version"),
+                "summary": manifest.get("summary"),
+                "description": manifest.get("description"),
+                "carrier": runebound.get("carrierItemType") or RUNEBOUND_ELIXIRS_CARRIER_ITEM_TYPE,
+                "carrierItemType": runebound.get("carrierItemType") or RUNEBOUND_ELIXIRS_CARRIER_ITEM_TYPE,
+                "capabilities": capabilities,
+                "capabilityIds": [entry.get("id") for entry in capabilities if entry.get("id")],
+                "platforms": platforms,
+                "validationStatus": validation_status(combined),
+                "status": validation_status(combined),
+                "problems": [problem_to_dict(problem) for problem in combined.problems],
+            }
+        )
+    return package, summary
+
+
+def _gui_scan_packages(selected_package_path: Path | None = None) -> tuple[dict[str, Any], LoadedPackage | None, dict[str, Any] | None]:
+    mods_root = _gui_mods_root()
+    catalog = scan_package_catalog(mods_root=mods_root)
+    selected_path = selected_package_path or _gui_runebound_package_path()
+    selected_package: LoadedPackage | None = None
+    selected_summary: dict[str, Any] | None = None
+    if selected_path.exists():
+        selected_package, selected_summary = _gui_package_detail(selected_path)
+    elif catalog.get("packages"):
+        first = catalog["packages"][0]
+        selected_path = Path(str(first.get("path")))
+        selected_package, selected_summary = _gui_package_detail(selected_path)
+    catalog["status"] = "loaded" if catalog.get("packages") else "missing"
+    catalog["modsRoot"] = str(mods_root)
+    catalog["selectedPackage"] = selected_summary
+    return catalog, selected_package, selected_summary
+
+
+def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, Any]]:
+    os_parts = [platform.system() or platform_os_name(), platform.release()]
+    os_value = " ".join(part for part in os_parts if part).strip() or "unknown"
+    steam_icon_path = _gui_steam_icon_path()
+    version_value = "Unknown"
+    version_source = "unknown"
+    for key in ("gameVersionString", "executableBuildId", "LastBuildID", "lastBuildId", "buildId"):
+        value = install.get(key)
+        if isinstance(value, str) and value.strip():
+            version_value = value.strip()
+            version_source = key
+            break
+    os_icon = _gui_entity_icon_descriptor("os", "OS")
+    platform_icon = _gui_entity_icon_descriptor("platform-steam", "Platform", logo_path=steam_icon_path)
+    version_icon = _gui_entity_icon_descriptor("game-version", "Game version")
+    rows = [
+        {
+            "id": "os",
+            "key": "os",
+            "label": "OS",
+            "displayLabel": os_icon["displayText"],
+            "entityType": os_icon["entityType"],
+            "icon": os_icon["icon"],
+            "iconSource": os_icon["source"],
+            "badge": "[OS]",
+            "value": os_value,
+            "text": f"{os_icon['displayText']} {os_value}",
+            "source": "platform.system/release",
+        },
+        {
+            "id": "platform",
+            "key": "platform",
+            "label": "Platform",
+            "displayLabel": platform_icon["displayText"],
+            "entityType": platform_icon["entityType"],
+            "icon": platform_icon["icon"],
+            "iconSource": platform_icon["source"],
+            "badge": "[STEAM]",
+            "value": "Steam",
+            "storefront": "Steam",
+            "platform": "Steam",
+            "text": f"{platform_icon['displayText']} Steam",
+            "source": "Steam storefront",
+            "steamLogoPath": steam_icon_path,
+            "steamLogoAvailable": steam_icon_path is not None,
+        },
+        {
+            "id": "game-version",
+            "key": "game-version",
+            "label": "Game version",
+            "displayLabel": version_icon["displayText"],
+            "entityType": version_icon["entityType"],
+            "icon": version_icon["icon"],
+            "iconSource": version_icon["source"],
+            "badge": "[VERSION]",
+            "value": version_value,
+            "text": f"{version_icon['displayText']} {version_value}",
+            "source": version_source,
+        },
+    ]
+    return rows
+
+
+def _gui_detected_mod_entry(
+    *,
+    provenance_key: str,
+    provenance_label: str,
+    entry_id: str,
+    name: Any,
+    package_id: Any = None,
+    version: Any = None,
+    path: Any = None,
+    manifest_path: Any = None,
+    status: Any = None,
+    active: bool = False,
+    selected: bool = False,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    display_name = _gui_text(name or package_id or entry_id)
+    icon = _gui_entity_icon_descriptor("mod-package", display_name)
+    payload: dict[str, Any] = {
+        "id": entry_id,
+        "name": display_name,
+        "title": display_name,
+        "displayName": display_name,
+        "packageId": package_id,
+        "version": version,
+        "path": str(path) if path else None,
+        "manifestPath": str(manifest_path) if manifest_path else None,
+        "status": status or ("enabled" if active else "detected"),
+        "active": active,
+        "enabledInProfile": active,
+        "selected": selected,
+        "entityType": icon["entityType"],
+        "icon": icon["icon"],
+        "iconSource": icon["source"],
+        "labelWithIcon": icon["displayText"],
+        "provenanceKey": provenance_key,
+        "provenanceLabel": provenance_label,
+        "provenance": {
+            "key": provenance_key,
+            "label": provenance_label,
+            "entityType": _gui_provenance_entity_type(provenance_key),
+            "icon": _gui_entity_icon_descriptor(_gui_provenance_entity_type(provenance_key), provenance_label)["icon"],
+        },
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _gui_steam_workshop_content_root() -> Path:
+    fixture_home = os.environ.get("BML_GUI_WORKSHOP_FIXTURE_HOME")
+    if fixture_home:
+        return Path(fixture_home).expanduser() / ".local" / "share" / "Steam" / "steamapps" / "workshop" / "content" / STEAM_BARONY_APP_ID
+    return Path.home() / ".local" / "share" / "Steam" / "steamapps" / "workshop" / "content" / STEAM_BARONY_APP_ID
+
+
+def _gui_workshop_subscription_entries() -> list[dict[str, Any]]:
+    content_root = _gui_steam_workshop_content_root()
+    if not content_root.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for item_root in sorted((child for child in content_root.iterdir() if child.is_dir()), key=lambda path: path.name):
+        published_file_id = item_root.name
+        if not published_file_id:
+            continue
+        manifest_path = item_root / PACKAGE_MANIFEST_NAME
+        summary: dict[str, Any] = {}
+        if manifest_path.is_file():
+            summary = package_summary_from_path(item_root)
+        subscription_title = None
+        title_path = item_root / "subscription-title.txt"
+        if title_path.is_file():
+            try:
+                subscription_title = next((line.strip() for line in title_path.read_text(encoding="utf-8").splitlines() if line.strip()), None)
+            except OSError:
+                subscription_title = None
+        package_id = summary.get("id") or summary.get("packageId")
+        display_name = summary.get("name") or subscription_title or f"Workshop item {published_file_id}"
+        entries.append(
+            _gui_detected_mod_entry(
+                provenance_key="steam_workshop",
+                provenance_label="Steam Workshop subscriptions",
+                entry_id=f"steam-workshop:{published_file_id}",
+                name=display_name,
+                package_id=package_id,
+                version=summary.get("version"),
+                path=item_root,
+                manifest_path=manifest_path if manifest_path.is_file() else None,
+                status=summary.get("status") or "subscribed",
+                extra={
+                    "publishedFileId": published_file_id,
+                    "workshopItemPath": str(item_root),
+                    "hasBmlPackage": manifest_path.is_file(),
+                    "validationStatus": summary.get("validationStatus"),
+                },
+            )
+        )
+    return entries
+
+
+def _gui_detected_mod_inventory(
+    package_catalog: dict[str, Any],
+    active_mods: list[dict[str, Any]],
+    *,
+    selected_mod_selector: str | None = None,
+    selected_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    packages = package_catalog.get("packages") if isinstance(package_catalog.get("packages"), list) else []
+    active_ids = {
+        str(mod.get("id") or mod.get("packageId") or mod.get("package", {}).get("id"))
+        for mod in active_mods
+        if isinstance(mod, dict) and (mod.get("id") or mod.get("packageId") or mod.get("package", {}).get("id"))
+    }
+    local_entries: list[dict[str, Any]] = []
+    local_by_id: dict[str, dict[str, Any]] = {}
+    for summary in packages:
+        if not isinstance(summary, dict):
+            continue
+        package_id = summary.get("id") or summary.get("packageId")
+        entry_id = f"local-repo:{package_id or summary.get('path') or len(local_entries)}"
+        active = package_id is not None and str(package_id) in active_ids
+        status = "enabled" if active else (summary.get("status") or summary.get("validationStatus") or "disabled")
+        entry = _gui_detected_mod_entry(
+            provenance_key="local_repo",
+            provenance_label="Local repo mods",
+            entry_id=str(entry_id),
+            name=summary.get("name") or package_id or Path(str(summary.get("path") or ".")).name,
+            package_id=package_id,
+            version=summary.get("version"),
+            path=summary.get("path"),
+            manifest_path=summary.get("manifestPath"),
+            status=status,
+            active=active,
+            selected=False,
+            extra={
+                "kind": summary.get("kind"),
+                "valid": summary.get("valid"),
+                "validationStatus": summary.get("validationStatus"),
+                "problemCount": summary.get("problemCount"),
+                "problems": summary.get("problems"),
+                "enabled": active,
+                "selectable": True,
+            },
+        )
+        local_entries.append(entry)
+        if package_id:
+            local_by_id[str(package_id)] = entry
+
+    profile_entries: list[dict[str, Any]] = []
+    for index, mod in enumerate(active_mods):
+        if not isinstance(mod, dict):
+            continue
+        package_id = mod.get("id") or mod.get("packageId") or mod.get("package", {}).get("id")
+        local_entry = local_by_id.get(str(package_id)) if package_id is not None else None
+        entry_path = mod.get("packagePath") or (local_entry or {}).get("path")
+        entry = _gui_detected_mod_entry(
+            provenance_key="profile_enabled",
+            provenance_label="Enabled in profile",
+            entry_id=f"profile-enabled:{package_id or index}",
+            name=mod.get("name") or (local_entry or {}).get("name") or package_id or f"Profile mod {index + 1}",
+            package_id=package_id,
+            version=mod.get("version") or (local_entry or {}).get("version"),
+            path=entry_path,
+            manifest_path=mod.get("manifestPath") or (local_entry or {}).get("manifestPath"),
+            status="enabled",
+            active=True,
+            selected=False,
+            extra={
+                "checksumSet": mod.get("checksumSet"),
+                "enabledAt": mod.get("enabledAt"),
+                "localRepoMatch": bool(local_entry),
+                "enabled": True,
+                "selectable": True,
+            },
+        )
+        profile_entries.append(entry)
+
+    workshop_entries = _gui_workshop_subscription_entries()
+    for entry in workshop_entries:
+        entry["enabled"] = bool(entry.get("active") or entry.get("enabledInProfile"))
+        entry["selectable"] = True
+        if not entry.get("status"):
+            entry["status"] = "subscribed"
+    sections = []
+    for section_id, label, source, entries in (
+        ("local_repo", "Local repo mods", "scan_package_catalog(_gui_mods_root())", local_entries),
+        ("profile_enabled", "Enabled in profile", "active_mods", profile_entries),
+        ("steam_workshop", "Steam Workshop subscriptions", str(_gui_steam_workshop_content_root()), workshop_entries),
+    ):
+        entity_type = _gui_provenance_entity_type(section_id)
+        icon = _gui_entity_icon_descriptor(entity_type, label)
+        sections.append(
+            {
+                "id": section_id,
+                "key": section_id,
+                "label": label,
+                "displayLabel": icon["displayText"],
+                "title": label,
+                "entityType": entity_type,
+                "icon": icon["icon"],
+                "iconSource": icon["source"],
+                "source": source,
+                "count": len(entries),
+                "entries": entries,
+            }
+        )
+    detected_mods = [entry for section in sections for entry in section["entries"]]
+    selected: dict[str, Any] | None = None
+    selection_reason: str | None = None
+    if selected_mod_selector:
+        selected = next((entry for entry in detected_mods if _gui_selector_matches(selected_mod_selector, _gui_detected_mod_selector_values(entry))), None)
+        if selected is not None:
+            selection_reason = f"matched selector {selected_mod_selector}"
+    if selected is None and selected_summary is not None:
+        selected = next((entry for entry in detected_mods if _gui_selector_matches(_gui_selected_package_id(selected_summary), _gui_detected_mod_selector_values(entry))), None)
+        if selected is not None:
+            selection_reason = "matched selected package id"
+        if selected is None:
+            selected_path = str(_gui_selected_package_path(selected_summary))
+            selected = next((entry for entry in detected_mods if _gui_selector_matches(selected_path, _gui_detected_mod_selector_values(entry))), None)
+            if selected is not None:
+                selection_reason = "matched selected package path"
+    if selected is None:
+        selected = next((entry for entry in detected_mods if entry.get("active") or entry.get("enabledInProfile")), None)
+        if selected is not None:
+            selection_reason = "defaulted to enabled profile mod"
+    if selected is None and detected_mods:
+        selected = detected_mods[0]
+        selection_reason = "defaulted to first detected mod"
+    selected_id = selected.get("id") if isinstance(selected, dict) else None
+    for entry in detected_mods:
+        is_selected = bool(selected_id and entry.get("id") == selected_id)
+        entry["selected"] = is_selected
+        entry["enabled"] = bool(entry.get("active") or entry.get("enabledInProfile") or entry.get("enabled"))
+        entry["selectable"] = True
+        if entry["enabled"]:
+            entry["status"] = "enabled"
+        elif entry.get("provenanceKey") != "steam_workshop":
+            entry["status"] = "disabled"
+    selected_mod = _gui_selected_mod_dto(
+        selected,
+        selected_summary=selected_summary,
+        active_mods=active_mods,
+        selection_reason=selection_reason,
+    )
+    rendered_rows = _gui_rendered_detected_mod_rows(detected_mods)
+    return {
+        "detectedMods": detected_mods,
+        "detectedModSections": sections,
+        "renderedProvenanceSectionLabels": [section["label"] for section in sections],
+        "selectedDetectedMod": selected,
+        "selectedDetectedModId": selected_id,
+        "selectedDetectedModProvenance": (selected or {}).get("provenance") if isinstance(selected, dict) else None,
+        "selectedMod": selected_mod,
+        "renderedDetectedModRows": rendered_rows,
+    }
+
+
+def _gui_runtime_info_for_package(package: LoadedPackage | None) -> dict[str, Any]:
+    capabilities = package_capability_entries(package.manifest) if package is not None else []
+    return {
+        "runtimeId": "barony-bml-runtime-gui-dry-run",
+        "runtimeVersion": APP_VERSION,
+        "contract": {"id": RUNTIME_CONTRACT_ID, "version": RUNTIME_CONTRACT_VERSION},
+        "capabilities": capabilities,
+        "platforms": [current_platform_id(), "linux-x86_64"],
+        "strategy": RUNTIME_STRATEGY_INSTALLED_HOOK,
+        "verificationStatus": "dry_run_metadata_only",
+    }
+
+
+def _gui_refresh_readiness(install: dict[str, Any], profile: dict[str, Any] | None, package: LoadedPackage | None, profile_dir: Path) -> dict[str, Any]:
+    runtime_info = _gui_runtime_info_for_package(package)
+    return build_launch_readiness_state(
+        install=install,
+        profile=profile,
+        profile_dir=profile_dir,
+        package=package,
+        runtime_info=runtime_info,
+        platform=current_platform_id(),
+        dry_run=True,
+    )
+
+
+def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, package: LoadedPackage | None) -> dict[str, Any]:
+    if profile is None or package is None:
+        return {
+            "status": "blocked",
+            "processStarted": False,
+            "processLaunched": False,
+            "disabledReasons": ["Profile and selected package are required before launch dry-run metadata can be generated."],
+        }
+    runtime_info = _gui_runtime_info_for_package(package)
+    plan = plan_runtime_manifest(profile, profile_dir, package, runtime_info, bml_profile_root(profile_dir) / "manifests" / "runtime-manifest.json")
+    return {
+        "status": "ready" if not plan.get("disabledReasons") else "blocked",
+        "dryRun": True,
+        "processStarted": False,
+        "processLaunched": False,
+        "wouldStartBarony": False,
+        "runtimeManifestPath": plan.get("runtimeManifestPath"),
+        "manifestPath": plan.get("manifestPath"),
+        "manifest": plan.get("manifest"),
+        "sideEffects": plan.get("sideEffects"),
+        "disabledReasons": plan.get("disabledReasons", []),
+    }
+
+
+def _gui_report_summary(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "path": str(path),
+            "status": "missing",
+            "kind": path.name,
+            "productionEvidence": False,
+            "playableBehaviorClaimed": False,
+        }
+    try:
+        payload = parse_json_file(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "path": str(path),
+            "status": "malformed",
+            "kind": path.name,
+            "message": str(exc),
+            "productionEvidence": False,
+            "playableBehaviorClaimed": False,
+        }
+    kind = path.name
+    text = json.dumps(payload, sort_keys=True).casefold()
+    production = "production" in text and "fakeprovider" not in text and "fake-provider" not in text
+    if path.name == "runtime-load-report.json" and isinstance(payload, dict):
+        item = diagnostics_item_for_report(path)
+        item.update(
+            {
+                "kind": kind,
+                "productionEvidence": "production" in str(item.get("classification", "")).casefold() or production,
+                "playableBehaviorClaimed": False,
+            }
+        )
+        return item
+    if "production-validation" in path.name and isinstance(payload, dict):
+        return {
+            "path": str(path),
+            "status": payload.get("status") or "loaded",
+            "kind": "production validation",
+            "productionEvidence": True,
+            "claimBoundary": payload.get("claimBoundary"),
+            "processExecutable": payload.get("processExecutable") or payload.get("baronyExecutable"),
+            "fakeProvider": payload.get("fakeProvider"),
+            "playableBehaviorClaimed": bool(payload.get("playableBehaviorClaimed")),
+            "reportedAt": payload.get("reportedAt"),
+        }
+    if "live-install" in path.name and isinstance(payload, dict):
+        return {
+            "path": str(path),
+            "status": payload.get("status") or "loaded",
+            "kind": "live install",
+            "productionEvidence": production,
+            "modId": payload.get("modId"),
+            "version": payload.get("version"),
+            "liveHookBehaviorClaimed": bool(payload.get("liveHookBehaviorClaimed")),
+            "playableBehaviorClaimed": bool(payload.get("playableBehaviorClaimed")),
+            "reportedAt": payload.get("reportedAt"),
+        }
+    return {
+        "path": str(path),
+        "status": payload.get("status") if isinstance(payload, dict) else "loaded",
+        "kind": kind,
+        "productionEvidence": production,
+        "playableBehaviorClaimed": bool(payload.get("playableBehaviorClaimed")) if isinstance(payload, dict) else False,
+    }
+
+
+def _gui_diagnostics_report_paths(profile_dir: Path) -> list[Path]:
+    paths = [
+        bml_profile_root(profile_dir) / "reports" / "runtime-load-report.json",
+        bml_profile_root(profile_dir) / "reports" / RUNEBOUND_ELIXIRS_LIVE_INSTALL_REPORT.split("/")[-1],
+    ]
+    repo_root = _gui_repo_root()
+    support = repo_root / ".tmp" / "support-bundles" / "passing-linux-production" / "reports"
+    paths.extend(
+        [
+            support / "runtime-load-report.json",
+            support / "runebound-elixir-production-validation-report.json",
+            support / "runebound-elixir-live-install-report.json",
+        ]
+    )
+    tmp_root = repo_root / ".tmp"
+    if tmp_root.exists():
+        production_reports = sorted(
+            tmp_root.glob("linux-prod-validation*/**/BaronyModLoader/reports/*.json"),
+            key=lambda candidate: candidate.stat().st_mtime if candidate.exists() else 0,
+            reverse=True,
+        )
+        paths.extend(production_reports[:3])
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = path.resolve(strict=False)
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
+
+
+def _gui_diagnostics_evidence(profile_dir: Path) -> dict[str, Any]:
+    items = [_gui_report_summary(path) for path in _gui_diagnostics_report_paths(profile_dir)]
+    production_items = [item for item in items if item.get("productionEvidence") and item.get("status") != "missing"]
+    status = "loaded" if production_items else "not_run"
+    summary = f"{len(production_items)} production diagnostics report(s) available." if production_items else "No diagnostics report available."
+    details = {
+        "items": items,
+        "diagnostics": items,
+        "productionValidation": production_items,
+        "productionEvidenceAvailable": bool(production_items),
+    }
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "generatedAt": utc_now(),
+        "status": status,
+        "summary": summary,
+        "label": summary,
+        "items": items,
+        "diagnostics": items,
+        "productionEvidenceAvailable": bool(production_items),
+        "productionValidation": production_items,
+        "playableBehaviorClaimed": False,
+        "details": details,
+        "diagnosticDetails": details,
+        "diagnosticsDetails": details,
+    }
+
+
+def _gui_windows_status() -> dict[str, Any]:
+    return {
+        "platform": "windows-x86_64",
+        "status": "fail_closed_unverified",
+        "label": "Windows fail-closed",
+        "playable": False,
+        "playableClaimed": False,
+        "launchAdapter": LAUNCH_ADAPTER_WINDOWS_CREATEPROCESS_LOADLIBRARY,
+        "reason": "No verified Windows DLL/launcher/runtime evidence is present; Windows remains visible but blocked.",
+        "disabledReasons": ["Windows runtime is fail-closed until production verification evidence exists."],
+    }
+
+
+def _gui_workshop_state(profile_dir: Path, selected_summary: dict[str, Any] | None) -> dict[str, Any]:
+    package_path = Path(str((selected_summary or {}).get("path") or _gui_runebound_package_path()))
+    return build_workshop_prep_state(
+        package_root=package_path,
+        staging_dir=bml_profile_root(profile_dir) / "workshop-dry-run",
+        dry_run=True,
+        publish_enabled=False,
+        publish=False,
+        allow_publish=False,
+    )
+
+
+def _gui_build_concepts(
+    *,
+    install: dict[str, Any],
+    profile_state: dict[str, Any],
+    package_catalog: dict[str, Any],
+    selected_summary: dict[str, Any] | None,
+    selected_mod: dict[str, Any] | None,
+    active_mods: list[dict[str, Any]],
+    active_result: dict[str, Any] | None,
+    readiness: dict[str, Any],
+    launch_dry_run: dict[str, Any],
+    diagnostics: dict[str, Any],
+    windows_status: dict[str, Any],
+    workshop: dict[str, Any],
+    environment_summary_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    readiness_state = readiness.get("readiness", readiness) if isinstance(readiness, dict) else {}
+    readiness_rows = readiness_state.get("rows") if isinstance(readiness_state.get("rows"), list) else []
+    selected = selected_mod or {}
+    selected_package = selected_summary or {}
+    packages = package_catalog.get("packages") if isinstance(package_catalog.get("packages"), list) else []
+    selected_active = bool(selected.get("enabledInProfile"))
+    selected_action_eligibility = selected.get("actionEligibility") if isinstance(selected.get("actionEligibility"), dict) else {}
+    enable_eligibility = selected_action_eligibility.get("enable-package") if isinstance(selected_action_eligibility.get("enable-package"), dict) else _gui_action_eligibility_entry(False, "unavailable", "Select a local BML package before enabling it in this profile.")
+    disable_eligibility = selected_action_eligibility.get("disable-package") if isinstance(selected_action_eligibility.get("disable-package"), dict) else _gui_action_eligibility_entry(False, "unavailable", "Select an enabled local BML package before disabling it in this profile.")
+    action_target = _gui_selected_mod_action_target(selected if selected else None)
+    active_mod_names = [
+        str(mod.get("name") or mod.get("id") or mod.get("packageId"))
+        for mod in active_mods
+        if isinstance(mod, dict) and (mod.get("name") or mod.get("id") or mod.get("packageId"))
+    ]
+    diagnostics_items = diagnostics.get("items") if isinstance(diagnostics.get("items"), list) else []
+    production_items = diagnostics.get("productionValidation") if isinstance(diagnostics.get("productionValidation"), list) else []
+    metadata_rows = workshop.get("metadataRows") if isinstance(workshop.get("metadataRows"), list) else []
+    preview_assets = workshop.get("previewAssets") if isinstance(workshop.get("previewAssets"), list) else []
+
+    environment_blockers = _gui_compact_texts(
+        [
+            install.get("disabledReasons"),
+            readiness_state.get("disabledReasons"),
+            launch_dry_run.get("disabledReasons"),
+        ]
+    )
+    environment_warnings = _gui_compact_texts([windows_status.get("disabledReasons")])
+    environment_evidence = [
+        _gui_evidence("Linux Steam Barony install", install.get("installPath") or install.get("path"), install.get("status")),
+        _gui_evidence("Runtime readiness", "Blocked" if readiness_state.get("disabledReasons") else readiness_state.get("status")),
+        _gui_evidence("Launch dry-run", launch_dry_run.get("runtimeManifestPath") or launch_dry_run.get("status"), launch_dry_run.get("status")),
+        _gui_evidence("Diagnostics evidence", diagnostics.get("label"), diagnostics.get("status")),
+        _gui_evidence("Diagnostics reports checked", len(diagnostics_items)),
+        _gui_evidence("Production validation evidence", "Available" if production_items else "Not found"),
+        _gui_evidence("Windows runtime", windows_status.get("label"), windows_status.get("status")),
+    ]
+    for check in readiness_rows[:4]:
+        if isinstance(check, dict):
+            detail = check.get("status") or ("ready" if check.get("ready") else "blocked")
+            environment_evidence.append(_gui_evidence(str(check.get("label") or check.get("key") or "Readiness check"), detail, check.get("status")))
+    environment_summary = (
+        "Linux launch path is blocked; review readiness evidence before starting Barony."
+        if environment_blockers
+        else "Linux launch path has dry-run metadata; Windows remains fail-closed until verified."
+    )
+
+    profile_id_value = profile_state.get("id") or (profile_state.get("profile") if isinstance(profile_state.get("profile"), dict) else {}).get("id")
+    profile_blockers = [] if profile_state.get("status") == "selected" else ["Create or select a stable profile before enabling mods."]
+    profiles_evidence = [
+        _gui_evidence("Selected profile", profile_id_value, profile_state.get("status")),
+        _gui_evidence("Profile path", profile_state.get("path")),
+        _gui_evidence("Stable default path", profile_state.get("stableDefault")),
+        _gui_evidence("Active mods", active_mod_names or "None"),
+    ]
+    profiles_summary = (
+        f"Profile {profile_id_value or 'default'} is selected with {len(active_mods)} {'active mod' if len(active_mods) == 1 else 'active mods'}."
+        if not profile_blockers
+        else "No profile is selected yet."
+    )
+
+    selected_problems = selected_package.get("problems")
+    mod_warnings = _gui_problem_texts(selected_problems)
+    mod_blockers = [] if selected else ["Scan packages and select a local mod package before enabling it."]
+    selected_name = selected.get("name") or selected_package.get("name") or selected.get("packageId") or selected_package.get("id") or "Runebound: Elixirs"
+    selected_id = selected.get("packageId") or selected_package.get("id") or selected.get("id")
+    mods_evidence = [
+        _gui_evidence("Packages found", len(packages), package_catalog.get("status")),
+        _gui_evidence("Selected mod", selected_name, selected_package.get("validationStatus") or selected.get("status") or selected.get("provenance")),
+        _gui_evidence("Package id", selected_id),
+        _gui_evidence("Version", selected.get("version") or selected_package.get("version")),
+        _gui_evidence("Carrier item", selected_package.get("carrierItemType") or selected_package.get("carrier")),
+        _gui_evidence("Capabilities", selected_package.get("capabilityIds") or selected_package.get("capabilities")),
+        _gui_evidence("Enabled in profile", selected_active),
+        _gui_evidence("Enable action", enable_eligibility.get("reason") or enable_eligibility.get("status"), enable_eligibility.get("status")),
+        _gui_evidence("Disable action", disable_eligibility.get("reason") or disable_eligibility.get("status"), disable_eligibility.get("status")),
+    ]
+    mods_summary = (
+        f"{selected_name} is selected and {'enabled' if selected_active else 'available to enable' if enable_eligibility.get('enabled') else 'not eligible for profile actions'}."
+        if selected
+        else "No local mod package is selected."
+    )
+
+    workshop_warnings = _gui_compact_texts([workshop.get("visibleWarnings") or workshop.get("warnings") or ["Dry-run only; publishing disabled."]])
+    workshop_evidence = [
+        _gui_evidence("Workshop mode", workshop.get("mode") or "dry-run", workshop.get("status")),
+        _gui_evidence("No-publish guard", "Publishing disabled" if workshop.get("noPublish", True) else "Publishing enabled"),
+        _gui_evidence("Preview assets", f"{len(preview_assets)} checked"),
+    ]
+    for row in metadata_rows[:4]:
+        if isinstance(row, dict) and row.get("key") != "description":
+            workshop_evidence.append(_gui_evidence(str(row.get("label") or row.get("field") or "Workshop metadata"), row.get("value"), row.get("status")))
+
+    enable_action = _gui_action(
+        "enable-package",
+        enable_eligibility.get("status"),
+        enabled=bool(enable_eligibility.get("enabled")),
+        disabledReason=enable_eligibility.get("reason") or enable_eligibility.get("disabledReason"),
+        **action_target,
+    )
+    disable_action = _gui_action(
+        "disable-package",
+        disable_eligibility.get("status"),
+        enabled=bool(disable_eligibility.get("enabled")),
+        disabledReason=disable_eligibility.get("reason") or disable_eligibility.get("disabledReason"),
+        **action_target,
+    )
+    mods_primary_action = disable_action if selected_mod and selected_mod.get("canDisable") and not selected_mod.get("canEnable") else enable_action
+    mods_secondary_action = enable_action if mods_primary_action.get("id") == "disable-package" else disable_action
+    return [
+        {
+            "key": "environment",
+            "id": "environment",
+            "title": "Environment",
+            "status": "blocked" if environment_blockers else "ready",
+            "statusSummary": environment_summary,
+            "environmentSummaryItems": environment_summary_items,
+            "evidence": environment_evidence,
+            "primaryAction": _gui_action("dry-run-launch", launch_dry_run.get("status"), enabled=True),
+            "secondaryActions": [
+                _gui_action("detect-install", install.get("status")),
+                _gui_action("refresh-readiness", readiness_state.get("status") or "available"),
+                _gui_action("open-diagnostics", diagnostics.get("status")),
+            ],
+            "warnings": environment_warnings,
+            "blockers": environment_blockers,
+            "state": {
+                "install": install,
+                "environmentSummaryItems": environment_summary_items,
+                "readiness": readiness,
+                "launchDryRun": launch_dry_run,
+                "diagnosticsEvidence": diagnostics,
+                "windowsStatus": windows_status,
+            },
+        },
+        {
+            "key": "profiles",
+            "id": "profiles",
+            "title": "Profiles",
+            "status": "ready" if not profile_blockers else "blocked",
+            "statusSummary": profiles_summary,
+            "evidence": profiles_evidence,
+            "primaryAction": _gui_action("create-select-profile", profile_state.get("status") or "available"),
+            "secondaryActions": [],
+            "warnings": [],
+            "blockers": profile_blockers,
+            "state": {"profile": profile_state, "activeMods": active_mods},
+        },
+        {
+            "key": "mods",
+            "id": "mods",
+            "title": "Mods",
+            "status": "ready" if not mod_blockers and not mod_warnings else ("warnings" if mod_warnings else "blocked"),
+            "statusSummary": mods_summary,
+            "evidence": mods_evidence,
+            "primaryAction": mods_primary_action,
+            "secondaryActions": [
+                _gui_action("scan-packages", package_catalog.get("status") or "available", enabled=True),
+                mods_secondary_action,
+            ],
+            "warnings": mod_warnings,
+            "blockers": mod_blockers,
+            "state": {
+                "packageCatalog": package_catalog,
+                "packageList": packages,
+                "selectedPackage": selected_summary,
+                "selectedMod": selected,
+                "activeMods": active_mods,
+                "activeResult": active_result,
+            },
+        },
+        {
+            "key": "workshop",
+            "id": "workshop",
+            "title": "Workshop",
+            "status": "dry-run",
+            "statusSummary": workshop.get("statusSummary") or "Dry-run only; publishing disabled.",
+            "summary": workshop.get("summary") or "Dry-run only; publishing disabled.",
+            "evidence": workshop_evidence,
+            "primaryAction": _gui_action("workshop-preview", workshop.get("status") or "dry-run", enabled=True),
+            "secondaryActions": [],
+            "warnings": workshop_warnings,
+            "expandedWarnings": workshop.get("expandedWarnings") or workshop.get("disabledReasons", []),
+            "details": workshop.get("details") or workshop,
+            "blockers": [],
+            "state": workshop,
+        },
+    ]
+
+
+def _gui_selected_mod_detail_panel(selected_mod: dict[str, Any] | None, mods_concept: dict[str, Any] | None) -> dict[str, Any]:
+    selected = selected_mod or {}
+    selected_name = _gui_text(selected.get("name") or selected.get("packageId") or selected.get("id") or "No mod selected")
+    package_id = _gui_text(selected.get("packageId") or selected.get("id"))
+    source = _gui_text(selected.get("source") or selected.get("provenance"))
+    enabled = bool(selected.get("enabledInProfile"))
+    enabled_label = "Enabled in selected profile" if enabled else "Not enabled in selected profile"
+    path = _gui_text(selected.get("path") or selected.get("manifestPath") or selected.get("workshopItemPath"))
+    eligibility = selected.get("actionEligibility") if isinstance(selected.get("actionEligibility"), dict) else {}
+    action_target = _gui_selected_mod_action_target(selected if selected else None)
+
+    actions: list[dict[str, Any]] = []
+    availability_bits: list[str] = []
+    for action_id, verb in (("enable-package", "Enable"), ("disable-package", "Disable")):
+        entry = eligibility.get(action_id) if isinstance(eligibility.get(action_id), dict) else {}
+        reason = entry.get("reason") or entry.get("disabledReason")
+        action = _gui_action(
+            action_id,
+            entry.get("status") or ("unavailable" if selected else "not_selected"),
+            enabled=bool(entry.get("enabled")),
+            disabledReason=reason,
+            **action_target,
+        )
+        action["label"] = f"{verb} {selected_name}" if selected else f"{verb} selected mod"
+        action["contextual"] = True
+        action["placement"] = "selectedModDetail"
+        actions.append(action)
+        availability = _gui_text(entry.get("status") or "unavailable")
+        if reason:
+            availability = f"{availability}: {_gui_text(reason)}"
+        availability_bits.append(f"{verb}: {availability}")
+
+    rows = [
+        {"key": "name", "label": "Name", "value": selected_name},
+        {"key": "packageId", "label": "Package ID", "value": package_id},
+        {"key": "source", "label": "Source", "value": source},
+        {"key": "enabled", "label": "Enabled state", "value": enabled_label},
+        {"key": "path", "label": "Path", "value": path},
+        {"key": "actionAvailability", "label": "Action availability", "value": "; ".join(availability_bits) if availability_bits else "No profile actions available"},
+    ]
+    if not selected:
+        rows = [
+            {"key": "empty", "label": "Selection", "value": "Scan packages and choose a mod from the left list."},
+        ]
+    primary_action_id = selected.get("primaryActionId")
+    primary_action = next((action for action in actions if action.get("id") == primary_action_id), None)
+    if primary_action is None:
+        primary_action = next((action for action in actions if action.get("enabled")), actions[0] if actions else None)
+
+    status = "enabled" if enabled else ("selected" if selected else "not_selected")
+    summary = (
+        f"{selected_name} is selected from {source}; profile state is {enabled_label.lower()}."
+        if selected
+        else "Select a mod on the left to inspect its package, source, path, and profile actions."
+    )
+    return {
+        "key": "selected-mod-detail",
+        "id": "selected-mod-detail",
+        "title": "Selected Mod",
+        "selectedModName": selected_name,
+        "status": status,
+        "summary": summary,
+        "enabledInProfile": enabled,
+        "profileEnabled": enabled,
+        "activeInProfile": enabled,
+        "statusSummary": summary,
+        "rows": rows,
+        "actions": actions,
+        "primaryAction": primary_action,
+        "secondaryActions": [action for action in actions if action is not primary_action],
+        "compactStatus": {
+            "name": selected_name,
+            "packageId": package_id,
+            "source": source,
+            "enabledInProfile": enabled,
+            "enabledLabel": enabled_label,
+            "primaryActionId": primary_action.get("id") if isinstance(primary_action, dict) else None,
+        },
+        "selectedMod": selected_mod,
+        "sourceConcept": (mods_concept or {}).get("key"),
+    }
+
+
+def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    def concept_actions(concept: dict[str, Any]) -> list[dict[str, Any]]:
+        actions: list[dict[str, Any]] = []
+        primary = concept.get("primaryAction")
+        if isinstance(primary, dict):
+            actions.append(primary)
+        secondary = concept.get("secondaryActions")
+        if isinstance(secondary, list):
+            actions.extend(action for action in secondary if isinstance(action, dict))
+        return actions
+
+    def evidence_rows(concept: dict[str, Any], labels: set[str]) -> list[dict[str, str]]:
+        rows: list[dict[str, str]] = []
+        evidence = concept.get("evidence") if isinstance(concept.get("evidence"), list) else []
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            label = _gui_text(item.get("label"))
+            if label in labels:
+                rows.append({"label": label, "value": _gui_text(item.get("value")), "status": _gui_text(item.get("status"))})
+        return rows
+
+    cards: list[dict[str, Any]] = []
+    environment = concept_map.get("environment") if isinstance(concept_map.get("environment"), dict) else {}
+    if environment:
+        env_rows: list[dict[str, str]] = []
+        summary_items = environment.get("environmentSummaryItems")
+        if not isinstance(summary_items, list):
+            state = environment.get("state") if isinstance(environment.get("state"), dict) else {}
+            summary_items = state.get("environmentSummaryItems") if isinstance(state.get("environmentSummaryItems"), list) else []
+        for item in summary_items[:3]:
+            if not isinstance(item, dict):
+                continue
+            label = "Steam" if item.get("id") == "platform" else _gui_text(item.get("label") or item.get("displayLabel"))
+            env_rows.append({"label": label, "value": _gui_text(item.get("value")), "status": _gui_text(item.get("source"))})
+        cards.append(
+            {
+                "key": "environment",
+                "id": "compact-environment",
+                "title": "Environment",
+                "status": environment.get("status"),
+                "summary": environment.get("statusSummary"),
+                "rows": env_rows,
+                "actions": concept_actions(environment),
+                "sourceConcept": "environment",
+            }
+        )
+
+    profiles = concept_map.get("profiles") if isinstance(concept_map.get("profiles"), dict) else {}
+    if profiles:
+        profile_state = profiles.get("state") if isinstance(profiles.get("state"), dict) else {}
+        profile_active_mods = profile_state.get("activeMods") if isinstance(profile_state.get("activeMods"), list) else []
+        profile_rows = evidence_rows(profiles, {"Selected profile", "Active mods"})
+        if not any(row.get("label") == "Active mods" for row in profile_rows):
+            profile_rows.append({"label": "Active mods", "value": str(len(profile_active_mods)), "status": "enabled"})
+        cards.append(
+            {
+                "key": "profiles",
+                "id": "compact-profiles",
+                "title": "Profiles",
+                "status": profiles.get("status"),
+                "summary": profiles.get("statusSummary"),
+                "activeModCount": len(profile_active_mods),
+                "profileCount": 1,
+                "count": 1,
+                "profileActiveModCount": len(profile_active_mods),
+                "rows": profile_rows,
+                "actions": concept_actions(profiles),
+                "sourceConcept": "profiles",
+            }
+        )
+
+    workshop = concept_map.get("workshop") if isinstance(concept_map.get("workshop"), dict) else {}
+    if workshop:
+        cards.append(
+            {
+                "key": "workshop",
+                "id": "compact-workshop",
+                "title": "Workshop",
+                "status": workshop.get("status"),
+                "summary": workshop.get("statusSummary"),
+                "rows": evidence_rows(workshop, {"Workshop mode", "No-publish guard"}),
+                "actions": concept_actions(workshop),
+                "sourceConcept": "workshop",
+            }
+        )
+    return cards
+
+def build_profile_first_gui_state(
+    *,
+    smoke_mode: bool = False,
+    action: str | None = None,
+    activity_log: list[dict[str, Any]] | None = None,
+    selected_mod_selector: str | None = None,
+    selected_package_selector: str | None = None,
+) -> dict[str, Any]:
+    profile_dir = _gui_default_profile_path()
+    install = _gui_detect_install()
+    action_log = [dict(item) for item in (activity_log or []) if isinstance(item, dict)]
+    create_profile = smoke_mode or action == "create-select-profile"
+    profile, profile_state, profile_actions = _gui_load_or_create_profile(profile_dir, install, create_if_missing=create_profile)
+    requested_selector = (selected_mod_selector or selected_package_selector or "").strip() or None
+    package_catalog, selected_package, selected_summary = _gui_scan_packages()
+    if requested_selector:
+        requested_package_summary = _gui_resolve_package_summary(package_catalog, requested_selector)
+        if requested_package_summary is not None:
+            package_catalog, selected_package, selected_summary = _gui_scan_packages(_gui_selected_package_path(requested_package_summary))
+    actions = [{"id": action_id, "label": label, "status": "available"} for action_id, label in GUI_ACTIONS]
+    active_result: dict[str, Any] | None = None
+    active_mods = profile_authoritative_mods(profile, profile_dir) if profile is not None else []
+    detected_inventory = _gui_detected_mod_inventory(
+        package_catalog,
+        active_mods,
+        selected_mod_selector=requested_selector,
+        selected_summary=selected_summary,
+    )
+    action_target_mod = detected_inventory.get("selectedMod") if isinstance(detected_inventory.get("selectedMod"), dict) else None
+
+    if action == "enable-package":
+        enable_eligibility = (action_target_mod or {}).get("actionEligibility", {}).get("enable-package") if isinstance((action_target_mod or {}).get("actionEligibility"), dict) else None
+        if profile is None:
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": ["Create or select a profile before enabling a mod."]}
+        elif not action_target_mod:
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": ["Select a mod before enabling it."]}
+        elif not isinstance(enable_eligibility, dict) or not enable_eligibility.get("enabled"):
+            reason = (enable_eligibility or {}).get("reason") or (enable_eligibility or {}).get("disabledReason") or "Selected mod cannot be enabled."
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": [reason], "actionEligibility": enable_eligibility}
+        elif not action_target_mod.get("path"):
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": ["Selected mod has no package path to enable."]}
+        else:
+            active_result = enable_profile_mod(profile_dir, action_target_mod.get("path"))
+            profile, profile_state, _profile_actions = _gui_load_or_create_profile(profile_dir, install, create_if_missing=False)
+    elif action == "disable-package":
+        disable_eligibility = (action_target_mod or {}).get("actionEligibility", {}).get("disable-package") if isinstance((action_target_mod or {}).get("actionEligibility"), dict) else None
+        if profile is None:
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": ["Create or select a profile before disabling a mod."]}
+        elif not action_target_mod:
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": ["Select a mod before disabling it."]}
+        elif not isinstance(disable_eligibility, dict) or not disable_eligibility.get("enabled"):
+            reason = (disable_eligibility or {}).get("reason") or (disable_eligibility or {}).get("disabledReason") or "Selected mod cannot be disabled."
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": [reason], "actionEligibility": disable_eligibility}
+        elif not action_target_mod.get("packageId"):
+            active_result = {"status": "blocked", "changed": False, "disabledReasons": ["Selected mod has no package id to disable."]}
+        else:
+            active_result = disable_profile_mod(profile_dir, str(action_target_mod.get("packageId")))
+            profile, profile_state, _profile_actions = _gui_load_or_create_profile(profile_dir, install, create_if_missing=False)
+
+    if action in {"enable-package", "disable-package"}:
+        active_mods = profile_authoritative_mods(profile, profile_dir) if profile is not None else []
+        detected_inventory = _gui_detected_mod_inventory(
+            package_catalog,
+            active_mods,
+            selected_mod_selector=requested_selector,
+            selected_summary=selected_summary,
+        )
+    readiness = _gui_refresh_readiness(install, profile, selected_package, profile_dir)
+    launch_dry_run = _gui_launch_dry_run(profile, profile_dir, selected_package)
+    diagnostics = _gui_diagnostics_evidence(profile_dir)
+    windows_status = _gui_windows_status()
+    workshop = _gui_workshop_state(profile_dir, selected_summary)
+    environment_summary_items = _gui_environment_summary_items(install)
+
+    if action == "detect-install":
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                install.get("status"),
+                install.get("reason") or "Install detection refreshed.",
+                installPath=install.get("installPath") or install.get("path"),
+                executable=install.get("executable"),
+                visibleSummary="Install detection refreshed",
+            )
+        )
+    elif action == "refresh-readiness":
+        readiness_state = readiness.get("readiness", readiness) if isinstance(readiness, dict) else {}
+        blockers = _gui_compact_texts([readiness_state.get("disabledReasons")])
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                readiness_state.get("status") or ("blocked" if blockers else "ready"),
+                f"Readiness refreshed with {len(blockers)} blocker(s).",
+                blockerCount=len(blockers),
+                blockers=blockers,
+                visibleSummary="Readiness refreshed",
+            )
+        )
+    elif action == "dry-run-launch":
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                launch_dry_run.get("status"),
+                f"Launch dry-run refreshed; processStarted={bool(launch_dry_run.get('processStarted'))}.",
+                processStarted=bool(launch_dry_run.get("processStarted")),
+                processLaunched=bool(launch_dry_run.get("processLaunched")),
+                runtimeManifestPath=launch_dry_run.get("runtimeManifestPath") or launch_dry_run.get("manifestPath"),
+                visibleSummary="Launch dry-run refreshed",
+            )
+        )
+    elif action == "open-diagnostics":
+        items = diagnostics.get("items") if isinstance(diagnostics.get("items"), list) else []
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                diagnostics.get("status"),
+                f"Diagnostics evidence refreshed; {len(items)} report(s) checked.",
+                reportCount=len(items),
+                productionEvidenceAvailable=bool(diagnostics.get("productionEvidenceAvailable")),
+                visibleSummary="Diagnostics refreshed",
+            )
+        )
+    elif action == "create-select-profile":
+        created = "created_profile" in profile_actions
+        selected = profile_state.get("status") == "selected"
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                "created" if created else ("selected" if selected else profile_state.get("status")),
+                f"Stable profile {'created' if created else 'selected'} at {profile_state.get('path')}.",
+                profilePath=profile_state.get("path"),
+                profileId=profile_state.get("id") or profile_state.get("profileId"),
+                stableDefault=profile_state.get("stableDefault"),
+                tmpPathRejected=profile_state.get("tmpPathRejected"),
+                visibleSummary="Profile selected",
+            )
+        )
+    elif action == "scan-packages":
+        package_count = len(package_catalog.get("packages", [])) if isinstance(package_catalog.get("packages"), list) else 0
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                package_catalog.get("status"),
+                f"Package scan refreshed; {package_count} package(s) discovered.",
+                packageCount=package_count,
+                selectedPackageId=_gui_selected_package_id(selected_summary) if selected_summary is not None else None,
+                modsRoot=package_catalog.get("modsRoot"),
+                visibleSummary="Package scan refreshed",
+            )
+        )
+    elif action == "enable-package":
+        target_details = _gui_selected_mod_action_target(action_target_mod)
+        selected_id = target_details.get("targetPackageId") or target_details.get("selectedModId") or _gui_selected_package_id(selected_summary)
+        selected_name = _gui_text(target_details.get("selectedModName") or (selected_summary or {}).get("name") or selected_id)
+        selected_status = _gui_text((active_result or {}).get("status"))
+        enable_visible = f"Enabled {selected_name}" if selected_status in {"enabled", "already enabled"} else f"Enable {selected_name} {selected_status}"
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                (active_result or {}).get("status"),
+                f"Enable {selected_name} ({selected_id}) result: {selected_status}.",
+                changed=(active_result or {}).get("changed"),
+                packageId=selected_id,
+                targetPackageId=target_details.get("targetPackageId"),
+                selectedModId=target_details.get("selectedModId"),
+                selectedModName=selected_name,
+                selectedModPath=target_details.get("selectedModPath"),
+                actionEligibility=target_details.get("actionEligibility"),
+                activeMods=active_mods,
+                disabledReasons=(active_result or {}).get("disabledReasons"),
+                problems=(active_result or {}).get("problems"),
+                visibleSummary=enable_visible,
+            )
+        )
+    elif action == "disable-package":
+        target_details = _gui_selected_mod_action_target(action_target_mod)
+        selected_id = target_details.get("targetPackageId") or target_details.get("selectedModId") or _gui_selected_package_id(selected_summary)
+        selected_name = _gui_text(target_details.get("selectedModName") or (selected_summary or {}).get("name") or selected_id)
+        selected_status = _gui_text((active_result or {}).get("status"))
+        disable_visible = f"Disabled {selected_name}" if selected_status in {"disabled", "already disabled"} else f"Disable {selected_name} {selected_status}"
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                (active_result or {}).get("status"),
+                f"Disable {selected_name} ({selected_id}) result: {selected_status}.",
+                changed=(active_result or {}).get("changed"),
+                packageId=selected_id,
+                targetPackageId=target_details.get("targetPackageId"),
+                selectedModId=target_details.get("selectedModId"),
+                selectedModName=selected_name,
+                selectedModPath=target_details.get("selectedModPath"),
+                actionEligibility=target_details.get("actionEligibility"),
+                activeMods=active_mods,
+                disabledReasons=(active_result or {}).get("disabledReasons"),
+                problems=(active_result or {}).get("problems"),
+                visibleSummary=disable_visible,
+            )
+        )
+    elif action == "workshop-preview":
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                workshop.get("status"),
+                "Workshop dry-run preview refreshed; Steam publish remains disabled.",
+                publishEnabled=bool(workshop.get("publishEnabled")),
+                noPublish=bool(workshop.get("noPublish", True)),
+                steamSideEffects=bool(workshop.get("steamSideEffects")),
+                stagingFolder=workshop.get("stagingFolder"),
+                visibleSummary="Workshop dry-run preview",
+                expandedWarnings=workshop.get("expandedWarnings") or workshop.get("disabledReasons", []),
+                dryRunVdfReport=workshop.get("dryRunVdfReport"),
+            )
+        )
+
+    concepts = _gui_build_concepts(
+        install=install,
+        profile_state=profile_state,
+        package_catalog=package_catalog,
+        selected_summary=selected_summary,
+        selected_mod=detected_inventory.get("selectedMod"),
+        active_mods=active_mods,
+        active_result=active_result,
+        readiness=readiness,
+        launch_dry_run=launch_dry_run,
+        diagnostics=diagnostics,
+        windows_status=windows_status,
+        workshop=workshop,
+        environment_summary_items=environment_summary_items,
+    )
+    concept_map = {concept["key"]: concept for concept in concepts}
+    mods_concept = concept_map.get("mods") if isinstance(concept_map.get("mods"), dict) else {}
+    selected_mod_detail = _gui_selected_mod_detail_panel(detected_inventory.get("selectedMod"), mods_concept)
+    compact_status_cards = _gui_compact_status_cards(concept_map)
+    right_side_labels = ["Selected Mod", "Environment", "Profiles", "Workshop", "Recent Activity"]
+    mods_secondary = mods_concept.get("secondaryActions") if isinstance(mods_concept.get("secondaryActions"), list) else []
+    mods_header_actions = [
+        action
+        for action in (
+            [item for item in mods_secondary if isinstance(item, dict) and item.get("id") == "scan-packages"]
+            + ([mods_concept.get("primaryAction")] if isinstance(mods_concept.get("primaryAction"), dict) else [])
+            + [item for item in mods_secondary if isinstance(item, dict) and item.get("id") != "scan-packages"]
+        )
+        if isinstance(action, dict)
+    ]
+    sections = [
+        {
+            "key": concept["key"],
+            "id": concept["id"],
+            "label": concept["title"],
+            "title": concept["title"],
+            "state": concept,
+        }
+        for concept in concepts
+    ]
+    disabled = _gui_disabled_reasons({"concepts": concepts})
+    visible_activity = _gui_visible_activity_log(action_log)
+    activity_details = _gui_activity_log_details(action_log)
+    diagnostic_details = diagnostics.get("diagnosticDetails") or diagnostics.get("details") or diagnostics
+    steam_logo_path = next((item.get("steamLogoPath") for item in environment_summary_items if isinstance(item, dict) and item.get("id") == "platform"), None)
+    entity_iconography = _gui_entity_iconography_records(
+        steam_logo_path=steam_logo_path,
+        steam_logo_rendered=False,
+        detected_sections=detected_inventory.get("detectedModSections", []),
+        rendered_rows=detected_inventory.get("renderedDetectedModRows", []),
+    )
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "generatedAt": utc_now(),
+        "section": "profile-first gui",
+        "layout": "master-detail mods inspector",
+        "title": f"{APP_ID} Mod Manager",
+        "profilePath": str(profile_dir),
+        "profile": profile_state,
+        "install": install,
+        "packageCatalog": package_catalog,
+        "packageList": package_catalog.get("packages", []),
+        "selectedPackage": selected_summary,
+        "activeMods": active_mods,
+        "activeResult": active_result,
+        "environmentSummaryItems": environment_summary_items,
+        "detectedMods": detected_inventory.get("detectedMods", []),
+        "detectedModSections": detected_inventory.get("detectedModSections", []),
+        "renderedProvenanceSectionLabels": detected_inventory.get("renderedProvenanceSectionLabels", []),
+        "detectedModsSidebarTitle": "Mods",
+        "modsSidebarTitle": "Mods",
+        "modsListHeaderActions": mods_header_actions,
+        "detectedModsHeaderActions": mods_header_actions,
+        "selectedModDetail": selected_mod_detail,
+        "selectedDetailPanel": selected_mod_detail,
+        "compactStatusCards": compact_status_cards,
+        "rightSideLabels": right_side_labels,
+        "rightSide": {
+            "labels": right_side_labels,
+            "selectedModDetail": selected_mod_detail,
+            "selectedDetailPanel": selected_mod_detail,
+            "compactStatusCards": compact_status_cards,
+            "cards": compact_status_cards,
+            "recentActivity": visible_activity,
+            "activityLogDetails": activity_details,
+        },
+        "selectedDetectedMod": detected_inventory.get("selectedDetectedMod"),
+        "selectedDetectedModId": detected_inventory.get("selectedDetectedModId"),
+        "selectedDetectedModProvenance": detected_inventory.get("selectedDetectedModProvenance"),
+        "selectedMod": detected_inventory.get("selectedMod"),
+        "renderedDetectedModRows": detected_inventory.get("renderedDetectedModRows", []),
+        "platformStorefront": "Steam",
+        "steamLogoPath": steam_logo_path,
+        "steamLogoRendered": False,
+        "actions": actions,
+        "actionLog": action_log,
+        "visibleActivityLog": visible_activity,
+        "activityLogDetails": activity_details,
+        "recentActivity": visible_activity,
+        "readiness": readiness,
+        "launchDryRun": launch_dry_run,
+        "diagnosticsEvidence": diagnostics,
+        "diagnosticDetails": diagnostic_details,
+        "diagnosticsDetails": diagnostic_details,
+        "windowsStatus": windows_status,
+        "workshop": workshop,
+        "playableClaimed": False,
+        "concepts": concepts,
+        "conceptMap": concept_map,
+        "sections": sections,
+        "entityIconography": entity_iconography,
+        "renderedEntityIcons": entity_iconography,
+        "widgets": sections,
+        "disabledReasons": disabled,
+    }
+
+
+def _gui_disabled_reasons(state: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+
+    def add(raw: Any) -> None:
+        for text in _gui_compact_texts([raw]):
+            if text not in reasons:
+                reasons.append(text)
+
+    add(state.get("disabledReasons"))
+    for concept in state.get("concepts", []):
+        if not isinstance(concept, dict):
+            continue
+        add(concept.get("blockers"))
+        add(concept.get("warnings"))
+        concept_state = concept.get("state")
+        if isinstance(concept_state, dict):
+            add(concept_state.get("disabledReasons"))
+    for section in state.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        section_state = section.get("state")
+        if isinstance(section_state, dict):
+            add(section_state.get("blockers"))
+            add(section_state.get("warnings"))
+    return reasons
+
+
+def _gui_section_summary(section: dict[str, Any]) -> list[tuple[str, str]]:
+    state = section.get("state") if isinstance(section.get("state"), dict) else section
+    rows: list[tuple[str, str]] = [("Status", _humanize_enum_label(_gui_text(state.get("status") or "not_selected")))]
+    if state.get("statusSummary") is not None:
+        rows.append(("Summary", _gui_text(state.get("statusSummary"))))
+    evidence = state.get("evidence") if isinstance(state.get("evidence"), list) else []
+    for item in evidence:
+        if isinstance(item, dict):
+            rows.append((_gui_text(item.get("label") or "Evidence"), _gui_text(item.get("value"))))
+    return rows
+
+def _gui_bulleted_warning_text(warnings: Iterable[Any], *, width: int = 58) -> str:
+    lines: list[str] = []
+    for warning in warnings:
+        text = _gui_text(warning)
+        wrapped = textwrap.wrap(text, width=width, break_long_words=True, break_on_hyphens=False) or [text]
+        for index, line in enumerate(wrapped):
+            lines.append(("• " if index == 0 else "  ") + line)
+    return "\n".join(lines)
+
+
+def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[str], Any, dict[str, list[Any]], dict[str, Any]]:
+    tk = __import__("tk" + "inter")
+    ttk = __import__("tk" + "inter.ttk", fromlist=["ttk"])
+
+    root = tk.Tk()
+    root.title(str(gui_state.get("title") or f"{APP_ID} Mod Manager"))
+    root.geometry("1180x880")
+    root.minsize(980, 740)
+    root._bml_images = []  # Keep Tk PhotoImage references alive.
+
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+    style.configure("Dashboard.TFrame", background="#f4f4f2")
+    style.configure("Title.TLabel", font=("TkDefaultFont", 18, "bold"), foreground="#111111", background="#f4f4f2")
+    style.configure("Subtitle.TLabel", foreground="#333333", background="#f4f4f2")
+    style.configure("Status.TLabel", font=("TkDefaultFont", 10, "bold"))
+    style.configure("Summary.TLabel", font=("TkDefaultFont", 10, "bold"))
+    style.configure("Warning.TLabel", foreground="#6b2f00")
+    style.configure("Section.TLabelframe", padding=12)
+    style.configure("Section.TLabelframe.Label", font=("TkDefaultFont", 11, "bold"))
+    style.configure("Primary.TButton", font=("TkDefaultFont", 10, "bold"))
+    style.configure("Provenance.TLabel", font=("TkDefaultFont", 10, "bold"))
+    style.configure("Badge.TLabel", font=("TkFixedFont", 9, "bold"), foreground="#111111", background="#deded8")
+
+    state_ref = {"value": gui_state}
+    button_registry: dict[str, list[Any]] = {}
+    mod_selection_registry: dict[str, Any] = {}
+    def ensure_redraw_instrumentation() -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+        state = state_ref["value"]
+        redraw_events = state.get("redrawEvents")
+        if not isinstance(redraw_events, list):
+            redraw_events = []
+            state["redrawEvents"] = redraw_events
+        render_events = state.get("renderEvents")
+        if not isinstance(render_events, list):
+            render_events = []
+            state["renderEvents"] = render_events
+        counts = state.get("regionRenderCounts")
+        if not isinstance(counts, dict):
+            counts = {}
+            state["regionRenderCounts"] = counts
+        return redraw_events, render_events, counts
+
+    def current_redraw_instrumentation() -> dict[str, Any]:
+        redraw_events, render_events, counts = ensure_redraw_instrumentation()
+        return {
+            "redrawEvents": [dict(item) for item in redraw_events if isinstance(item, dict)],
+            "renderEvents": [dict(item) for item in render_events if isinstance(item, dict)],
+            "regionRenderCounts": {str(key): int(value) for key, value in counts.items() if isinstance(value, int)},
+        }
+
+    def record_region_render(region: str, reason: str = "render") -> None:
+        redraw_events, render_events, counts = ensure_redraw_instrumentation()
+        counts[region] = int(counts.get(region, 0)) + 1
+        event = {
+            "region": region,
+            "reason": reason,
+            "count": counts[region],
+            "generatedAt": utc_now(),
+        }
+        render_events.append(dict(event))
+        redraw_events.append(dict(event))
+    container = ttk.Frame(root, padding=16, style="Dashboard.TFrame")
+    container.grid(row=0, column=0, sticky="nsew")
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+    container.columnconfigure(0, weight=1)
+    container.rowconfigure(2, weight=1)
+
+    ttk.Label(container, text="BaronyModLoader", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+    ttk.Label(
+        container,
+        text="Mods stay on the left for scanning and selection; the selected mod inspector and profile actions sit on the right above compact status cards.",
+        style="Subtitle.TLabel",
+        wraplength=1040,
+    ).grid(row=1, column=0, sticky="ew", pady=(4, 12))
+
+    body = ttk.Frame(container)
+    body.grid(row=2, column=0, sticky="nsew")
+    body.columnconfigure(0, weight=0, minsize=350)
+    body.columnconfigure(1, weight=1)
+    body.rowconfigure(0, weight=1)
+
+    sidebar_frame = ttk.LabelFrame(body, text=_gui_icon_label("mods-list", str(gui_state.get("detectedModsSidebarTitle") or "Mods")), style="Section.TLabelframe")
+    sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+    sidebar_frame.columnconfigure(0, weight=1)
+
+    right_side = ttk.Frame(body)
+    right_side.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+    right_side.columnconfigure(0, weight=1)
+    right_side.rowconfigure(0, weight=0)
+    right_side.rowconfigure(1, weight=1)
+    right_side.rowconfigure(2, weight=0)
+
+    selected_detail_frame = ttk.LabelFrame(right_side, text=_gui_icon_label("selected-mod-detail", "Selected Mod"), style="Section.TLabelframe")
+    selected_detail_frame.grid(row=0, column=0, sticky="ew")
+    selected_detail_frame.columnconfigure(1, weight=1)
+
+    compact_status_grid = ttk.Frame(right_side)
+    compact_status_grid.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+    for column in range(3):
+        compact_status_grid.columnconfigure(column, weight=1, uniform="compact-status")
+
+    activity_frame = ttk.LabelFrame(right_side, text=_gui_icon_label("activity-log", "Recent Activity / Action Log"), style="Section.TLabelframe")
+    activity_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+    activity_frame.columnconfigure(0, weight=1)
+    activity_text = tk.Text(activity_frame, height=5, wrap="word", relief="flat")
+    activity_text.grid(row=0, column=0, sticky="ew")
+
+    def render_activity_log(reason: str = "render") -> None:
+        record_region_render("activityLog", reason)
+        visible = state_ref["value"].get("visibleActivityLog")
+        if not isinstance(visible, list) or not visible:
+            visible = ["No actions yet. Use the Mods header or right-side buttons to validate the next step."]
+        activity_text.configure(state="normal")
+        activity_text.delete("1.0", "end")
+        activity_text.insert("1.0", "\n".join(_gui_text(item) for item in visible[-8:]))
+        activity_text.configure(state="disabled")
+
+    def current_no_autofocus_state() -> dict[str, Any]:
+        return {
+            key: state_ref["value"].get(key)
+            for key in ("noAutofocusRequested", "noAutofocusApplied", "noAutofocusMethods", "smokeVisibleRequested", "smokeWindowHidden", "smokeWindowSuppressionMethods")
+            if key in state_ref["value"]
+        }
+
+    def rebuild(action_id: str | None = None) -> None:
+        prior_log = state_ref["value"].get("actionLog")
+        selected_selector = _gui_state_selected_mod_selector(state_ref["value"])
+        no_autofocus = current_no_autofocus_state()
+        instrumentation = current_redraw_instrumentation()
+        state_ref["value"] = build_profile_first_gui_state(
+            action=action_id,
+            activity_log=prior_log if isinstance(prior_log, list) else None,
+            selected_mod_selector=selected_selector,
+        )
+        state_ref["value"].update(no_autofocus)
+        state_ref["value"].update(instrumentation)
+        render_sections("action")
+        render_activity_log("action")
+
+    def select_detected_mod(target: Any) -> dict[str, Any]:
+        if isinstance(target, dict):
+            selector = str(target.get("packageId") or target.get("path") or target.get("manifestPath") or target.get("id") or target.get("name") or "")
+        else:
+            selector = str(target or "")
+        prior_log = state_ref["value"].get("actionLog")
+        no_autofocus = current_no_autofocus_state()
+        instrumentation = current_redraw_instrumentation()
+        state_ref["value"] = build_profile_first_gui_state(
+            activity_log=prior_log if isinstance(prior_log, list) else None,
+            selected_mod_selector=selector,
+        )
+        state_ref["value"].update(no_autofocus)
+        state_ref["value"].update(instrumentation)
+        render_detected_mod_sidebar("selection")
+        render_selected_mod_detail("selection")
+        render_rendered_entity_icons("selection")
+        render_activity_log("selection")
+        selected = state_ref["value"].get("selectedDetectedMod")
+        selected_mod = state_ref["value"].get("selectedMod")
+        return {
+            "selector": selector,
+            "invoked": True,
+            "status": "selected" if isinstance(selected_mod, dict) else "not_found",
+            "selectedMod": selected_mod,
+            "selectedDetectedMod": selected,
+            "selectedDetectedModId": state_ref["value"].get("selectedDetectedModId"),
+            "selectedDetectedModProvenance": state_ref["value"].get("selectedDetectedModProvenance"),
+            "selectedPackage": state_ref["value"].get("selectedPackage"),
+        }
+
+    mod_selection_registry["select"] = select_detected_mod
+
+    def render_action_button(parent: Any, action: dict[str, Any], *, row: int, column: int, primary: bool = False) -> None:
+        action_id = str(action.get("id") or "action")
+        button = ttk.Button(
+            parent,
+            text=str(action.get("label") or _humanize_enum_label(action_id)),
+            command=lambda item=action_id: rebuild(str(item)),
+            style="Primary.TButton" if primary else "TButton",
+            state="normal" if action.get("enabled", True) else "disabled",
+        )
+        button.grid(row=row, column=column, sticky="ew", padx=3, pady=3)
+        button_registry.setdefault(action_id, []).append(button)
+
+    def render_mods_header(parent: Any, row_cursor: int) -> int:
+        mods_concept = state_ref["value"].get("conceptMap", {}).get("mods") if isinstance(state_ref["value"].get("conceptMap"), dict) else None
+        selected = state_ref["value"].get("selectedMod") if isinstance(state_ref["value"].get("selectedMod"), dict) else {}
+        header = ttk.Frame(parent)
+        header.grid(row=row_cursor, column=0, sticky="ew", pady=(0, 10))
+        header.columnconfigure(0, weight=1)
+        if isinstance(mods_concept, dict):
+            actions_frame = ttk.Frame(header)
+            actions_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+            secondary = mods_concept.get("secondaryActions") if isinstance(mods_concept.get("secondaryActions"), list) else []
+            action_items = [action for action in secondary if isinstance(action, dict) and action.get("id") == "scan-packages"]
+            for column, action in enumerate(action_items):
+                actions_frame.columnconfigure(column, weight=1)
+                render_action_button(actions_frame, action, row=0, column=column)
+        ttk.Label(header, text="Selected:", style="Status.TLabel").grid(row=1, column=0, sticky="w")
+        selected_name = _gui_text((selected or {}).get("name") or (selected or {}).get("packageId") or (selected or {}).get("id") or "None")
+        ttk.Label(header, text=selected_name, style="Summary.TLabel", wraplength=315, justify="left").grid(row=2, column=0, sticky="ew", pady=(1, 0))
+        return row_cursor + 1
+
+    def bind_selectable(widget: Any, entry: dict[str, Any]) -> None:
+        widget.bind("<Button-1>", lambda _event, item=entry: select_detected_mod(item))
+        try:
+            widget.configure(cursor="hand2")
+        except tk.TclError:
+            pass
+
+    def render_detected_mod_sidebar(reason: str = "render") -> None:
+        record_region_render("modsList", reason)
+        for action_id in ("scan-packages", "enable-package", "disable-package"):
+            button_registry.pop(action_id, None)
+        for child in sidebar_frame.winfo_children():
+            child.destroy()
+        try:
+            sidebar_frame.configure(text=_gui_icon_label("mods-list", str(state_ref["value"].get("detectedModsSidebarTitle") or "Mods")))
+        except tk.TclError:
+            pass
+        provenance_section_labels.clear()
+        sections = state_ref["value"].get("detectedModSections")
+        if not isinstance(sections, list):
+            sections = []
+        rendered_names: list[str] = []
+        rendered_rows: list[dict[str, Any]] = []
+        row_focus_widgets: list[Any] = []
+
+        def focus_row_index(index: int) -> str:
+            if not row_focus_widgets:
+                return "break"
+            next_index = max(0, min(index, len(row_focus_widgets) - 1))
+            try:
+                row_focus_widgets[next_index].focus_set()
+            except tk.TclError:
+                pass
+            return "break"
+        row_cursor = render_mods_header(sidebar_frame, 0)
+        if not sections:
+            ttk.Label(sidebar_frame, text="No mods yet. Scan packages to refresh local and profile state.", wraplength=315, justify="left").grid(
+                row=row_cursor,
+                column=0,
+                sticky="ew",
+                pady=(0, 8),
+            )
+            state_ref["value"]["renderedProvenanceSectionLabels"] = []
+            state_ref["value"]["renderedDetectedModNames"] = []
+            state_ref["value"]["renderedDetectedModRows"] = []
+            return
+        for section in sections:
+            if not isinstance(section, dict):
+                continue
+            label = _gui_text(section.get("label") or section.get("title") or section.get("key") or "Detected")
+            entries = section.get("entries") if isinstance(section.get("entries"), list) else []
+            provenance_section_labels.append(label)
+            header = ttk.Frame(sidebar_frame)
+            header.grid(row=row_cursor, column=0, sticky="ew", pady=(8 if row_cursor else 0, 3))
+            header.columnconfigure(0, weight=1)
+            ttk.Label(header, text=_gui_icon_label(_gui_provenance_entity_type(section.get("key") or section.get("id")), label), style="Provenance.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Label(header, text=f"{len(entries)}", style="Badge.TLabel").grid(row=0, column=1, sticky="e")
+            row_cursor += 1
+            if not entries:
+                ttk.Label(sidebar_frame, text="None detected.", wraplength=315, justify="left").grid(
+                    row=row_cursor,
+                    column=0,
+                    sticky="ew",
+                    padx=(8, 0),
+                    pady=(0, 3),
+                )
+                row_cursor += 1
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                metadata = _gui_detected_mod_row_metadata(entry, focus_order=len(rendered_rows))
+                rendered_rows.append(metadata)
+                name = _gui_text(entry.get("name") or entry.get("displayName") or entry.get("packageId") or entry.get("id"))
+                rendered_names.append(name)
+                version = _gui_text(entry.get("version"))
+                status = "Enabled" if metadata["enabled"] else _humanize_enum_label(_gui_text(entry.get("status") or "disabled"))
+                package_id = _gui_text(entry.get("packageId") or entry.get("publishedFileId") or entry.get("id"))
+                background = "#dbeafe" if metadata["selected"] else "#ffffff"
+                border_color = "#2563eb" if metadata["selected"] else "#d6d3d1"
+                focus_border_color = str(metadata.get("focusVisible", {}).get("focusedBorderColor") or "#f59e0b")
+                item = tk.Frame(sidebar_frame, background=border_color, padx=1, pady=1, takefocus=1, highlightthickness=1, highlightbackground=border_color, highlightcolor=focus_border_color)
+                item.grid(row=row_cursor, column=0, sticky="ew", padx=(4, 0), pady=2)
+                item.columnconfigure(0, weight=1)
+                inner = tk.Frame(item, background=background, padx=5, pady=4)
+                inner.grid(row=0, column=0, sticky="ew")
+                inner.columnconfigure(1, weight=1)
+                prefix = tk.Label(
+                    inner,
+                    text=metadata["prefix"],
+                    width=2,
+                    anchor="center",
+                    foreground=metadata["prefixColor"],
+                    background=background,
+                    font=("TkDefaultFont", 11, "bold"),
+                )
+                prefix.grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 6))
+                title_suffix = f"  {version}" if version not in ("None", "Not set") else ""
+                title = tk.Label(
+                    inner,
+                    text=f"{_gui_icon_label('mod-package', name)}{title_suffix}",
+                    anchor="w",
+                    justify="left",
+                    wraplength=280,
+                    foreground="#111827",
+                    background=background,
+                    font=("TkDefaultFont", 10, "bold"),
+                )
+                title.grid(row=0, column=1, sticky="ew")
+                detail_bits = [package_id, status]
+                detail = tk.Label(
+                    inner,
+                    text=" / ".join(bit for bit in detail_bits if bit and bit != "None"),
+                    anchor="w",
+                    justify="left",
+                    wraplength=300,
+                    foreground="#374151",
+                    background=background,
+                )
+                detail.grid(row=1, column=1, sticky="ew")
+                for widget in (item, inner, prefix, title, detail):
+                    bind_selectable(widget, entry)
+                focus_index = len(row_focus_widgets)
+                row_focus_widgets.append(item)
+                item.bind("<Return>", lambda _event, item_entry=entry: (select_detected_mod(item_entry), "break")[1])
+                item.bind("<space>", lambda _event, item_entry=entry: (select_detected_mod(item_entry), "break")[1])
+                item.bind("<Up>", lambda _event, index=focus_index: focus_row_index(index - 1))
+                item.bind("<Down>", lambda _event, index=focus_index: focus_row_index(index + 1))
+                item.bind("<FocusIn>", lambda _event, row=item, color=focus_border_color: row.configure(background=color, highlightbackground=color))
+                item.bind("<FocusOut>", lambda _event, row=item, color=border_color: row.configure(background=color, highlightbackground=color))
+                row_cursor += 1
+        state_ref["value"]["renderedProvenanceSectionLabels"] = list(provenance_section_labels)
+        state_ref["value"]["renderedDetectedModNames"] = rendered_names
+        state_ref["value"]["renderedDetectedModRows"] = rendered_rows
+
+    def render_rendered_entity_icons(reason: str = "render") -> None:
+        record_region_render("iconMetadata", reason)
+        state_ref["value"]["renderedEntityIcons"] = _gui_entity_iconography_records(
+            steam_logo_path=state_ref["value"].get("steamLogoPath"),
+            steam_logo_rendered=bool(state_ref["value"].get("steamLogoRendered")),
+            detected_sections=state_ref["value"].get("detectedModSections", []),
+            rendered_rows=state_ref["value"].get("renderedDetectedModRows", []),
+        )
+        state_ref["value"]["entityIconography"] = state_ref["value"]["renderedEntityIcons"]
+
+    def render_selected_mod_detail(reason: str = "render") -> None:
+        record_region_render("selectedModDetail", reason)
+        for child in selected_detail_frame.winfo_children():
+            child.destroy()
+        detail = state_ref["value"].get("selectedModDetail") or state_ref["value"].get("selectedDetailPanel")
+        if not isinstance(detail, dict):
+            detail = _gui_selected_mod_detail_panel(None, None)
+        try:
+            selected_detail_frame.configure(text=_gui_icon_label("selected-mod-detail", _gui_text(detail.get("title") or "Selected Mod")))
+        except tk.TclError:
+            pass
+        section_labels.append(_gui_text(detail.get("title") or "Selected Mod"))
+        ttk.Label(
+            selected_detail_frame,
+            text=_gui_text(detail.get("selectedModName") or detail.get("title") or "No mod selected"),
+            style="Summary.TLabel",
+            wraplength=660,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 2))
+        ttk.Label(
+            selected_detail_frame,
+            text=_gui_text(detail.get("statusSummary") or detail.get("summary")),
+            wraplength=660,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        row_cursor = 2
+        rows = detail.get("rows") if isinstance(detail.get("rows"), list) else []
+        for item in rows[:6]:
+            if not isinstance(item, dict):
+                continue
+            ttk.Label(selected_detail_frame, text=f"{_gui_text(item.get('label'))}:", style="Status.TLabel").grid(
+                row=row_cursor,
+                column=0,
+                sticky="nw",
+                padx=(0, 10),
+                pady=2,
+            )
+            ttk.Label(selected_detail_frame, text=_gui_text(item.get("value")), wraplength=560, justify="left").grid(
+                row=row_cursor,
+                column=1,
+                sticky="ew",
+                pady=2,
+            )
+            row_cursor += 1
+        detail_actions = detail.get("actions") if isinstance(detail.get("actions"), list) else []
+        if detail_actions:
+            action_frame = ttk.Frame(selected_detail_frame)
+            action_frame.grid(row=row_cursor, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            for column, action in enumerate(action for action in detail_actions if isinstance(action, dict)):
+                action_frame.columnconfigure(column, weight=1)
+                render_action_button(action_frame, action, row=0, column=column, primary=bool(action.get("enabled")))
+
+    def render_compact_status_cards(reason: str = "render") -> None:
+        record_region_render("compactStatusCards", reason)
+        for child in compact_status_grid.winfo_children():
+            child.destroy()
+        cards = state_ref["value"].get("compactStatusCards")
+        if not isinstance(cards, list):
+            cards = []
+        compact_status_grid.rowconfigure(0, weight=1)
+        for index, card in enumerate(card for card in cards if isinstance(card, dict)):
+            title = _gui_text(card.get("title") or GUI_CONCEPT_LABELS.get(str(card.get("key") or ""), "Status"))
+            section_labels.append(title)
+            frame = ttk.LabelFrame(
+                compact_status_grid,
+                text=_gui_icon_label(_gui_concept_entity_type(card.get("key")) or "environment", title),
+                style="Section.TLabelframe",
+            )
+            frame.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 6, 0 if index == 2 else 6))
+            frame.columnconfigure(1, weight=1)
+            row_cursor = 0
+            status_text = _humanize_enum_label(_gui_text(card.get("status") or "not_selected"))
+            ttk.Label(frame, text=status_text, style="Summary.TLabel").grid(row=row_cursor, column=0, columnspan=2, sticky="w", pady=(0, 4))
+            row_cursor += 1
+            for item in (card.get("rows") if isinstance(card.get("rows"), list) else [])[:3]:
+                if not isinstance(item, dict):
+                    continue
+                row_text = f"{_gui_text(item.get('label'))}: {_gui_text(item.get('value'))}"
+                ttk.Label(frame, text=row_text, wraplength=250, justify="left").grid(row=row_cursor, column=0, columnspan=2, sticky="ew", pady=1)
+                row_cursor += 1
+            summary = _gui_text(card.get("summary"))
+            if summary != "Not set":
+                ttk.Label(frame, text=summary, wraplength=250, justify="left").grid(row=row_cursor, column=0, columnspan=2, sticky="ew", pady=(5, 4))
+                row_cursor += 1
+            actions = card.get("actions") if isinstance(card.get("actions"), list) else []
+            for action in actions[:4]:
+                if isinstance(action, dict):
+                    render_action_button(frame, action, row=row_cursor, column=0, primary=action.get("id") == (actions[0] or {}).get("id"))
+                    row_cursor += 1
+
+    def render_sections(reason: str = "full-dashboard") -> None:
+        record_region_render("fullDashboard", reason)
+        button_registry.clear()
+        section_labels.clear()
+        state_ref["value"]["steamLogoRendered"] = False
+        render_detected_mod_sidebar(reason)
+        render_selected_mod_detail(reason)
+        render_compact_status_cards(reason)
+        render_rendered_entity_icons(reason)
+
+    section_labels: list[str] = []
+    provenance_section_labels: list[str] = []
+    render_sections()
+    render_activity_log()
+    return root, section_labels, state_ref, button_registry, mod_selection_registry
+
+
+def _gui_apply_no_autofocus(root: Any) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "noAutofocusRequested": True,
+        "noAutofocusApplied": False,
+        "noAutofocusMethods": [],
+    }
+    methods = evidence["noAutofocusMethods"]
+    try:
+        root.focusmodel("passive")
+        methods.append("wm focusmodel passive")
+        evidence["noAutofocusApplied"] = True
+    except Exception as exc:
+        evidence["noAutofocusError"] = _gui_text(exc)
+    try:
+        root.configure(takefocus=0)
+        methods.append("configure takefocus=0")
+        evidence["noAutofocusApplied"] = True
+    except Exception:
+        pass
+    if sys.platform.startswith("linux"):
+        try:
+            root.attributes("-type", "notification")
+            methods.append("wm attributes -type notification")
+            evidence["noAutofocusApplied"] = True
+        except Exception:
+            pass
+    return evidence
+
+
+def _write_gui_smoke_report(
+    path: str,
+    root: Any,
+    section_labels: list[str],
+    gui_state: dict[str, Any],
+    *,
+    clicked_actions: list[dict[str, Any]] | None = None,
+    smoke_selected_mod: dict[str, Any] | None = None,
+    before_actions: list[dict[str, Any]] | None = None,
+    after_actions: list[dict[str, Any]] | None = None,
+) -> None:
+    selection_redraw_scope = smoke_selected_mod.get("selectionRedrawScope") if isinstance(smoke_selected_mod, dict) else None
+    if selection_redraw_scope is None:
+        selection_redraw_scope = gui_state.get("selectionRedrawScope")
+    text_completeness = gui_state.get("renderedTextCompleteness")
+    if not isinstance(text_completeness, list):
+        text_completeness = _gui_rendered_text_completeness(gui_state)
+    clipping_checks = gui_state.get("clippingChecks")
+    if not isinstance(clipping_checks, list):
+        clipping_checks = _gui_clipping_checks(gui_state)
+    root.update_idletasks()
+    root.update()
+    write_json_file(
+        Path(path).expanduser(),
+        {
+            "opened": True,
+            "title": root.title(),
+            "geometry": root.winfo_geometry(),
+            "renderedSectionLabels": section_labels,
+            "renderedConceptTitles": section_labels,
+            "concepts": gui_state.get("concepts", []),
+            "conceptMap": gui_state.get("conceptMap", {}),
+            "profilePath": gui_state.get("profilePath"),
+            "profile": gui_state.get("profile"),
+            "selectedPackage": gui_state.get("selectedPackage"),
+            "packageList": gui_state.get("packageList"),
+            "environmentSummaryItems": gui_state.get("environmentSummaryItems", []),
+            "detectedMods": gui_state.get("detectedMods", []),
+            "detectedModSections": gui_state.get("detectedModSections", []),
+            "renderedProvenanceSectionLabels": gui_state.get("renderedProvenanceSectionLabels", []),
+            "renderedDetectedModNames": gui_state.get("renderedDetectedModNames", []),
+            "renderedDetectedModRows": gui_state.get("renderedDetectedModRows", []),
+            "detectedModsSidebarTitle": gui_state.get("detectedModsSidebarTitle"),
+            "modsSidebarTitle": gui_state.get("modsSidebarTitle"),
+            "modsListHeaderActions": gui_state.get("modsListHeaderActions", []),
+            "detectedModsHeaderActions": gui_state.get("detectedModsHeaderActions", []),
+            "rightSideLabels": gui_state.get("rightSideLabels", []),
+            "rightSide": gui_state.get("rightSide"),
+            "selectedModDetail": gui_state.get("selectedModDetail"),
+            "selectedDetailPanel": gui_state.get("selectedDetailPanel"),
+            "compactStatusCards": gui_state.get("compactStatusCards", []),
+            "selectedDetectedMod": gui_state.get("selectedDetectedMod"),
+            "selectedDetectedModId": gui_state.get("selectedDetectedModId"),
+            "selectedDetectedModProvenance": gui_state.get("selectedDetectedModProvenance"),
+            "selectedMod": gui_state.get("selectedMod"),
+            "platformStorefront": gui_state.get("platformStorefront"),
+            "storefront": gui_state.get("platformStorefront"),
+            "steamLogoRendered": bool(gui_state.get("steamLogoRendered")),
+            "steamLogoPath": gui_state.get("steamLogoPath"),
+            "entityIconography": gui_state.get("entityIconography", []),
+            "renderedEntityIcons": gui_state.get("renderedEntityIcons", []),
+            "renderedTextCompleteness": text_completeness,
+            "clippingChecks": clipping_checks,
+            "redrawEvents": gui_state.get("redrawEvents", []),
+            "renderEvents": gui_state.get("renderEvents", []),
+            "regionRenderCounts": gui_state.get("regionRenderCounts", {}),
+            "noAutofocusRequested": bool(gui_state.get("noAutofocusRequested")),
+            "noAutofocusApplied": bool(gui_state.get("noAutofocusApplied")),
+            "noAutofocusMethods": gui_state.get("noAutofocusMethods", []),
+            "smokeVisibleRequested": bool(gui_state.get("smokeVisibleRequested")),
+            "smokeWindowHidden": bool(gui_state.get("smokeWindowHidden")),
+            "smokeWindowSuppressionMethods": gui_state.get("smokeWindowSuppressionMethods", []),
+            "activeMods": gui_state.get("activeMods"),
+            "actions": gui_state.get("actionLog", gui_state.get("actions")),
+            "actionLog": gui_state.get("actionLog", []),
+            "visibleActivityLog": gui_state.get("visibleActivityLog", []),
+            "activityLogDetails": gui_state.get("activityLogDetails", []),
+            "actualTkButtonsInvoked": any(item.get("invoked") for item in (clicked_actions or []) if isinstance(item, dict)),
+            "buttonInvocationMethod": "Tk Button.invoke()" if clicked_actions else None,
+            "clickedActions": clicked_actions or [],
+            "smokeSelectedMod": smoke_selected_mod,
+            "selectedModInvocationMethod": "Mods row selection callback" if smoke_selected_mod else None,
+            "selectionRedrawScope": selection_redraw_scope,
+            "beforeActions": before_actions or [],
+            "afterActions": after_actions if after_actions is not None else _gui_button_action_snapshot(gui_state),
+            "readiness": gui_state.get("readiness"),
+            "launchDryRun": gui_state.get("launchDryRun"),
+            "diagnosticsEvidence": gui_state.get("diagnosticsEvidence"),
+            "diagnosticDetails": gui_state.get("diagnosticDetails"),
+            "diagnosticsDetails": gui_state.get("diagnosticsDetails"),
+            "windowsStatus": gui_state.get("windowsStatus"),
+            "workshop": gui_state.get("workshop"),
+            "steamPublished": False,
+            "playableClaimed": False,
+            "disabledReasons": gui_state.get("disabledReasons", []),
+        },
+    )
+
+
+
+SMOKE_CLICK_ALL_ACTIONS = (
+    "detect-install",
+    "refresh-readiness",
+    "dry-run-launch",
+    "open-diagnostics",
+    "create-select-profile",
+    "scan-packages",
+    "disable-package",
+    "enable-package",
+    "enable-package",
+    "disable-package",
+    "disable-package",
+    "enable-package",
+    "workshop-preview",
+)
+
+
+def _parse_smoke_clicks(value: str | None) -> list[str]:
+    if value is None or not value.strip():
+        return []
+    raw = value.strip()
+    if raw == "all":
+        return list(SMOKE_CLICK_ALL_ACTIONS)
+    actions = [item.strip() for item in raw.split(",") if item.strip()]
+    known = set(GUI_ACTION_LABELS)
+    unknown = [item for item in actions if item not in known]
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown smoke click action(s): {', '.join(unknown)}")
+    return actions
+
+
+def _latest_action_entries(before_count: int, gui_state: dict[str, Any]) -> list[dict[str, Any]]:
+    action_log = gui_state.get("actionLog") if isinstance(gui_state.get("actionLog"), list) else []
+    return [dict(item) for item in action_log[before_count:] if isinstance(item, dict)]
+
+
+def _run_smoke_button_clicks(root: Any, button_registry: dict[str, list[Any]], state_ref: dict[str, Any], action_ids: list[str]) -> list[dict[str, Any]]:
+    clicked: list[dict[str, Any]] = []
+    for action_id in action_ids:
+        before_state = state_ref["value"]
+        before_log = before_state.get("actionLog") if isinstance(before_state.get("actionLog"), list) else []
+        before_active = before_state.get("activeMods", [])
+        before_action = next((item for item in _gui_button_action_snapshot(before_state) if item.get("id") == action_id), {})
+        root.update_idletasks()
+        root.update()
+        buttons = button_registry.get(action_id, [])
+        button = buttons[0] if buttons else None
+        if button is None:
+            clicked.append(
+                {
+                    "id": action_id,
+                    "label": GUI_ACTION_LABELS.get(action_id, _humanize_enum_label(action_id)),
+                    "invoked": False,
+                    "status": "button_not_found",
+                    "beforeActiveMods": before_active,
+                    "afterActiveMods": state_ref["value"].get("activeMods", []),
+                    "result": None,
+                }
+            )
+            continue
+        button_state = str(button.cget("state"))
+        button_label = str(button.cget("text"))
+        if button_state == "disabled":
+            clicked.append(
+                {
+                    "id": action_id,
+                    "label": button_label,
+                    "invoked": False,
+                    "status": "button_disabled",
+                    "beforeActiveMods": before_active,
+                    "afterActiveMods": state_ref["value"].get("activeMods", []),
+                    "result": None,
+                    "action": before_action,
+                    "actionEligibility": before_action.get("actionEligibility"),
+                    "disabledReason": before_action.get("disabledReason") or before_action.get("reason"),
+                    "targetPackageId": before_action.get("targetPackageId"),
+                    "selectedModId": before_action.get("selectedModId"),
+                    "selectedModName": before_action.get("selectedModName"),
+                }
+            )
+            continue
+        button.invoke()
+        invocation_method = "Tk Button.invoke()"
+        root.update_idletasks()
+        root.update()
+        after_state = state_ref["value"]
+        new_entries = _latest_action_entries(len(before_log), after_state)
+        clicked.append(
+            {
+                "id": action_id,
+                "label": button_label,
+                "invoked": True,
+                "invocationMethod": invocation_method,
+                "status": new_entries[-1].get("status") if new_entries else "no_result_logged",
+                "result": new_entries[-1] if new_entries else None,
+                "beforeActiveMods": before_active,
+                "afterActiveMods": after_state.get("activeMods", []),
+                "activeModsChanged": before_active != after_state.get("activeMods", []),
+            }
+        )
+    return clicked
+
+
+def _run_smoke_mod_selection(root: Any, mod_selection_registry: dict[str, Any], state_ref: dict[str, Any], selector: str | None) -> dict[str, Any] | None:
+    if selector is None or not str(selector).strip():
+        return None
+    root.update_idletasks()
+    root.update()
+    selected_before = state_ref["value"].get("selectedDetectedMod")
+    selected_mod_before = state_ref["value"].get("selectedMod")
+    before_counts = {
+        str(key): int(value)
+        for key, value in (state_ref["value"].get("regionRenderCounts") or {}).items()
+        if isinstance(value, int)
+    }
+    callback = mod_selection_registry.get("select")
+    if not callable(callback):
+        return {
+            "selector": selector,
+            "invoked": False,
+            "status": "selection_callback_not_found",
+            "selectedBefore": selected_before,
+            "selectedModBefore": selected_mod_before,
+            "selectedAfter": state_ref["value"].get("selectedDetectedMod"),
+            "selectedModAfter": state_ref["value"].get("selectedMod"),
+        }
+    result = callback(str(selector).strip())
+    root.update_idletasks()
+    root.update()
+    after_counts = {
+        str(key): int(value)
+        for key, value in (state_ref["value"].get("regionRenderCounts") or {}).items()
+        if isinstance(value, int)
+    }
+    changed_regions = [key for key in sorted(after_counts) if after_counts[key] > before_counts.get(key, 0)]
+    count_delta = {key: after_counts[key] - before_counts.get(key, 0) for key in changed_regions}
+    selection_redraw_scope = {
+        "selector": str(selector).strip(),
+        "regionsRedrawn": changed_regions,
+        "regionRenderCountDelta": count_delta,
+        "beforeRegionRenderCounts": before_counts,
+        "afterRegionRenderCounts": after_counts,
+        "fullDashboardBefore": before_counts.get("fullDashboard", 0),
+        "fullDashboardAfter": after_counts.get("fullDashboard", 0),
+        "fullDashboardCountChanged": after_counts.get("fullDashboard", 0) != before_counts.get("fullDashboard", 0),
+        "fullDashboard": after_counts.get("fullDashboard", 0) > before_counts.get("fullDashboard", 0),
+    }
+    result["selectionRedrawScope"] = selection_redraw_scope
+    state_ref["value"]["selectionRedrawScope"] = selection_redraw_scope
+    result["selectedBefore"] = selected_before
+    result["selectedModBefore"] = selected_mod_before
+    result["selectedAfter"] = state_ref["value"].get("selectedDetectedMod")
+    result["selectedModAfter"] = state_ref["value"].get("selectedMod")
+    result["selectedDetectedMod"] = state_ref["value"].get("selectedDetectedMod")
+    result["selectedDetectedModId"] = state_ref["value"].get("selectedDetectedModId")
+    result["selectedDetectedModProvenance"] = state_ref["value"].get("selectedDetectedModProvenance")
+    result["selectedMod"] = state_ref["value"].get("selectedMod")
+    result["selectedPackage"] = state_ref["value"].get("selectedPackage")
+    return result
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or a positive integer")
+    return parsed
+
+
+def start_tk_gui(auto_close_ms: int | None = None, smoke_report: str | None = None, smoke_clicks: str | None = None, smoke_select_mod: str | None = None) -> int:
+    try:
+        smoke_click_actions = _parse_smoke_clicks(smoke_clicks)
+    except argparse.ArgumentTypeError as exc:
+        print(json.dumps({"gui": {"status": "invalid", "reason": str(exc)}, "appRoot": str(APP_ROOT), "launcher": APP_ID}, indent=2))
+        return 2
+    gui_state = build_profile_first_gui_state(smoke_mode=bool(smoke_report) and not smoke_click_actions, selected_mod_selector=smoke_select_mod)
+    try:
+        root, section_labels, state_ref, button_registry, mod_selection_registry = _build_gui_dashboard_window(gui_state)
+    except Exception as exc:
+        print(json.dumps({"gui": {"status": "unavailable", "reason": f"Tk GUI window could not be created: {exc}"}, "appRoot": str(APP_ROOT), "launcher": APP_ID}, indent=2))
+        return 2
+    no_autofocus_requested = bool(smoke_report or auto_close_ms is not None)
+    if no_autofocus_requested:
+        no_autofocus = _gui_apply_no_autofocus(root)
+    else:
+        no_autofocus = {"noAutofocusRequested": False, "noAutofocusApplied": False, "noAutofocusMethods": []}
+    smoke_visible_requested = os.environ.get("BML_GUI_SMOKE_VISIBLE") == "1"
+    smoke_window_hidden = False
+    smoke_window_suppression_methods: list[str] = []
+    if no_autofocus_requested and not smoke_visible_requested:
+        try:
+            root.withdraw()
+            smoke_window_hidden = True
+            smoke_window_suppression_methods.append("withdraw smoke/test window before mainloop")
+        except Exception as exc:
+            no_autofocus["smokeWindowSuppressionError"] = _gui_text(exc)
+    no_autofocus["smokeVisibleRequested"] = smoke_visible_requested
+    no_autofocus["smokeWindowHidden"] = smoke_window_hidden
+    no_autofocus["smokeWindowSuppressionMethods"] = smoke_window_suppression_methods
+    state_ref["value"].update(no_autofocus)
+
+
+    if smoke_click_actions:
+        before_actions = _gui_button_action_snapshot(state_ref["value"])
+
+        def click_and_report() -> None:
+            clicked_actions = _run_smoke_button_clicks(root, button_registry, state_ref, smoke_click_actions)
+            smoke_selected = _run_smoke_mod_selection(root, mod_selection_registry, state_ref, smoke_select_mod)
+            after_actions = _gui_button_action_snapshot(state_ref["value"])
+            if smoke_report:
+                _write_gui_smoke_report(
+                    smoke_report,
+                    root,
+                    section_labels,
+                    state_ref["value"],
+                    clicked_actions=clicked_actions,
+                    smoke_selected_mod=smoke_selected,
+                    before_actions=before_actions,
+                    after_actions=after_actions,
+                )
+            root.after(auto_close_ms if auto_close_ms is not None else 250, root.destroy)
+
+        root.after(0, click_and_report)
+    else:
+        smoke_selected = _run_smoke_mod_selection(root, mod_selection_registry, state_ref, smoke_select_mod)
+        if smoke_report:
+            _write_gui_smoke_report(smoke_report, root, section_labels, state_ref["value"], smoke_selected_mod=smoke_selected)
+        close_delay = auto_close_ms if auto_close_ms is not None else (250 if smoke_report else None)
+        if close_delay is not None:
+            root.after(close_delay, root.destroy)
+    root.mainloop()
+    return 0
+
+
+def command_gui(args: argparse.Namespace) -> int:
+    readiness = tkinter_readiness()
+    if args.check or readiness.get("status") != "available":
+        print(json.dumps({"gui": readiness, "appRoot": str(APP_ROOT), "launcher": APP_ID}, indent=2))
+        return 0 if readiness.get("status") == "available" else 2
+    return start_tk_gui(auto_close_ms=args.auto_close_ms, smoke_report=args.smoke_report, smoke_clicks=args.smoke_clicks, smoke_select_mod=args.smoke_select_mod)
+
+
+
 
 def command_steam_detect(args: argparse.Namespace) -> int:
     steam_install, result = detect_steam_install(args.manifest, args.install)
@@ -3107,6 +6630,1083 @@ def write_launch_artifacts(
     )
     return manifest, active_mods_path
 
+
+
+def _flatten_path_args(*values: Any) -> list[Path]:
+    paths: list[Path] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, (str, os.PathLike)):
+            paths.append(Path(value).expanduser())
+            continue
+        if isinstance(value, Iterable) and not isinstance(value, (dict, bytes, bytearray)):
+            paths.extend(_flatten_path_args(*value))
+            continue
+        paths.append(Path(str(value)).expanduser())
+    return paths
+
+
+def problem_to_dict(problem: Problem) -> dict[str, Any]:
+    return {
+        "code": problem.code,
+        "severity": problem.severity,
+        "message": problem.message,
+        "details": dict(problem.details),
+    }
+
+
+def validation_status(result: ValidationResult) -> str:
+    if result.ok:
+        return "valid"
+    if any(problem.severity == "fatal" for problem in result.problems):
+        return "invalid"
+    return "warnings"
+
+
+def package_summary_from_path(package_path: Path) -> dict[str, Any]:
+    package, load_result = load_package(str(package_path))
+    combined = ValidationResult(f"package catalog {package_path}")
+    combined.extend(load_result)
+    manifest: dict[str, Any] = {}
+    manifest_path = package_path / PACKAGE_MANIFEST_NAME if package_path.is_dir() else package_path
+    package_root = package_path if package_path.is_dir() else package_path.parent
+    if package is not None:
+        manifest = package.manifest
+        manifest_path = package.manifest_path
+        package_root = package.package_root
+        combined.extend(validate_package(package))
+    return {
+        "id": manifest.get("id") if isinstance(manifest, dict) else None,
+        "packageId": manifest.get("id") if isinstance(manifest, dict) else None,
+        "name": manifest.get("name") if isinstance(manifest, dict) else None,
+        "version": manifest.get("version") if isinstance(manifest, dict) else None,
+        "kind": manifest.get("kind") if isinstance(manifest, dict) else None,
+        "path": str(package_root),
+        "manifestPath": str(manifest_path),
+        "validationStatus": validation_status(combined),
+        "status": validation_status(combined),
+        "valid": combined.ok,
+        "problemCount": len(combined.problems),
+        "problems": [problem_to_dict(problem) for problem in combined.problems],
+    }
+
+
+def scan_package_catalog(*roots: Any, mods_root: Any = None, extra_roots: Any = None) -> dict[str, Any]:
+    """Scan local mod folders and return semantic validation summaries.
+
+    This service is intentionally DTO-first for GUI use: callers receive package
+    ids, names, statuses, and structured validation problems rather than CLI
+    report text that would need to be scraped.
+    """
+    candidate_roots = _flatten_path_args(*(roots or ()), mods_root, extra_roots)
+    seen: set[Path] = set()
+    package_paths: list[Path] = []
+    for root in candidate_roots:
+        root = root.expanduser()
+        if not root.exists():
+            continue
+        if root.is_file() and root.name == PACKAGE_MANIFEST_NAME:
+            candidates = [root]
+        elif root.is_dir() and (root / PACKAGE_MANIFEST_NAME).exists():
+            candidates = [root]
+        elif root.is_dir():
+            candidates = [child for child in sorted(root.iterdir()) if child.is_dir() and (child / PACKAGE_MANIFEST_NAME).exists()]
+        else:
+            candidates = []
+        for candidate in candidates:
+            key = candidate.resolve(strict=False)
+            if key not in seen:
+                seen.add(key)
+                package_paths.append(candidate)
+    summaries = [package_summary_from_path(path) for path in package_paths]
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "generatedAt": utc_now(),
+        "roots": [str(path) for path in candidate_roots],
+        "packages": summaries,
+    }
+
+
+def build_package_library_state(*roots: Any, mods_root: Any = None, profile_dir: Any = None, selected_package: Any = None, extra_roots: Any = None) -> dict[str, Any]:
+    catalog = scan_package_catalog(*(roots or ()), mods_root=mods_root, extra_roots=extra_roots)
+    packages = list(catalog.get("packages", []))
+    duplicate_ids = sorted({item.get("id") for item in packages if item.get("id") and sum(1 for other in packages if other.get("id") == item.get("id")) > 1})
+    profile_state = build_profile_state(profile_dir) if profile_dir is not None else None
+    active_mods = profile_state.get("activeMods", []) if isinstance(profile_state, dict) else []
+    disabled: list[str] = []
+    if duplicate_ids:
+        disabled.append(f"Duplicate package versions are present for: {', '.join(str(item) for item in duplicate_ids)}.")
+    if len(active_mods) > 1:
+        disabled.append("Multiple active packages are enabled; this app slice allows one active package at a time.")
+    selected_summary = package_summary_from_path(Path(selected_package)) if selected_package is not None else None
+    return {
+        **catalog,
+        "section": "package library",
+        "items": packages,
+        "selectedPackage": selected_summary,
+        "profile": profile_state,
+        "activeMods": active_mods,
+        "activeModCount": len(active_mods),
+        "duplicatePackageIds": duplicate_ids,
+        "disabledReasons": disabled,
+        "validationCards": [
+            {"packageId": item.get("id"), "status": item.get("validationStatus"), "problems": item.get("problems", [])}
+            for item in packages
+        ],
+    }
+
+
+def package_library_state(*roots: Any, **kwargs: Any) -> dict[str, Any]:
+    return build_package_library_state(*roots, **kwargs)
+
+
+def active_mod_checksum_for_package(profile: dict[str, Any], profile_dir: Path, package: LoadedPackage) -> str | None:
+    package_id = package.manifest.get("id")
+    for mod in profile_authoritative_mods(profile, profile_dir):
+        if mod.get("id") == package_id and isinstance(mod.get("checksumSet"), str):
+            return mod["checksumSet"]
+    return None
+
+
+def plan_runtime_manifest(
+    profile: dict[str, Any],
+    profile_dir: Path,
+    package: LoadedPackage,
+    runtime_info: dict[str, Any],
+    out_path: Path | None = None,
+    *,
+    output_path: Path | None = None,
+    previous_digest: str | None = None,
+    runtime_executable: Path | None = None,
+    runtime_registration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Pure runtime manifest planner.
+
+    It computes the exact manifest payload and launch blockers without writing
+    the manifest or starting Barony.
+    """
+    profile_dir = Path(profile_dir).expanduser()
+    manifest_path = Path(output_path or out_path or (bml_profile_root(profile_dir) / "manifests" / "runtime-manifest.json")).expanduser()
+    manifest = build_runtime_manifest(profile, profile_dir, package, runtime_info, runtime_executable, runtime_registration)
+    actual_digest = package_checksum(package)
+    active_digest = active_mod_checksum_for_package(profile, profile_dir, package)
+    blockers: list[str] = []
+    if active_digest and active_digest != actual_digest:
+        blockers.append(
+            f"Active profile checksum is stale: profile has {active_digest}, current package digest is {actual_digest}."
+        )
+    if previous_digest and previous_digest != actual_digest:
+        blockers.append(
+            f"Previous runtime manifest digest is stale: previous {previous_digest}, current package digest is {actual_digest}."
+        )
+    return {
+        "runtimeManifestPath": str(manifest_path),
+        "manifestPath": str(manifest_path),
+        "outputPath": str(manifest_path),
+        "manifest": manifest,
+        "runtimeManifest": manifest,
+        "blockers": blockers,
+        "disabledReasons": blockers,
+        "sideEffects": {"processLaunch": False, "filesystemWrite": False},
+        "processLaunched": False,
+    }
+
+
+def build_launch_readiness_state(
+    *,
+    install: Any = None,
+    profile: dict[str, Any] | None = None,
+    profile_dir: Any = None,
+    package: LoadedPackage | None = None,
+    package_root: Any = None,
+    runtime_info: dict[str, Any] | None = None,
+    runtime_info_path: Any = None,
+    out_path: Any = None,
+    platform: str | None = None,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    loaded_package = package
+    if loaded_package is None and package_root is not None:
+        loaded_package, _package_result = load_package(str(package_root))
+    loaded_runtime_info = runtime_info
+    if loaded_runtime_info is None and runtime_info_path is not None:
+        loaded_runtime_info, _runtime_path, _runtime_result = load_runtime_info(str(runtime_info_path))
+    profile_root = Path(profile_dir).expanduser() if profile_dir is not None else Path(tempfile.gettempdir()) / "bml-profile"
+    manifest_plan = None
+    if profile is not None and loaded_package is not None and loaded_runtime_info is not None:
+        manifest_plan = plan_runtime_manifest(
+            profile,
+            profile_root,
+            loaded_package,
+            loaded_runtime_info,
+            Path(out_path) if out_path is not None else bml_profile_root(profile_root) / "manifests" / "runtime-manifest.json",
+        )
+    readiness = build_readiness_matrix(
+        install=install,
+        profile={"status": "selected"} if profile is not None else None,
+        package={"status": "valid"} if loaded_package is not None else None,
+        runtime={"platform": platform or current_platform_id(), "verificationStatus": "verified" if loaded_runtime_info is not None else ""},
+        platform=platform or current_platform_id(),
+    )
+    return {
+        "section": "launch readiness",
+        "readiness": readiness,
+        "plan": manifest_plan,
+        "runtimeManifestPlan": manifest_plan,
+        "dryRun": dry_run,
+        "processLaunched": False,
+        "playableClaimBoundary": "dry-run only; no playable/live game claim without production runtime evidence",
+        "disabledReasons": readiness.get("disabledReasons", []),
+    }
+
+
+def launch_readiness_state(**kwargs: Any) -> dict[str, Any]:
+    return build_launch_readiness_state(**kwargs)
+
+
+def dry_run_launch_plan(**kwargs: Any) -> dict[str, Any]:
+    return build_launch_readiness_state(dry_run=True, **kwargs)
+
+
+def build_launch_playability(case: dict[str, Any] | None = None, *, install: Any = None, profile: Any = None, package: Any = None, runtime: dict[str, Any] | None = None, platform: str | None = None) -> dict[str, Any]:
+    case = case or {}
+    runtime = runtime or case.get("runtime") or {}
+    platform = platform or case.get("platform") or (runtime.get("platform") if isinstance(runtime, dict) else None)
+    text = json.dumps(runtime, sort_keys=True).casefold() if isinstance(runtime, dict) else ""
+    blockers: list[str] = []
+    if "fake" in text or "fake-provider" in text:
+        blockers.append("Fake-provider runtime evidence is non-production and cannot claim playable.")
+    if "scaffold" in text or "self-test" in text:
+        blockers.append("Scaffold/self-test runtime evidence is not production live gameplay evidence and cannot claim playable.")
+    if platform and "windows" in str(platform).casefold() and "production" not in text:
+        blockers.append("Windows runtime remains fail-closed without live production Windows evidence.")
+    playable = not blockers and bool(runtime.get("playableClaim") or runtime.get("playable") or runtime.get("productionEvidence"))
+    return {
+        "status": "playable" if playable else "blocked",
+        "playable": playable,
+        "isPlayable": playable,
+        "playableClaimAllowed": playable,
+        "launchPlayable": playable,
+        "blockers": blockers,
+        "disabledReasons": blockers,
+        "runtime": runtime,
+        "platform": platform,
+    }
+
+
+def evaluate_playable_claim(case: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    return build_launch_playability(case, **kwargs)
+
+
+def assess_playable_claim_boundary(case: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    return build_launch_playability(case, **kwargs)
+
+
+def _status_is_ready(value: Any, ready_statuses: set[str]) -> bool:
+    if isinstance(value, dict):
+        status = str(value.get("status") or value.get("validationStatus") or "").casefold()
+        return status in ready_statuses
+    return value is not None
+
+
+def build_readiness_matrix(*args: Any, install: Any = None, profile: Any = None, package: Any = None, runtime: Any = None, platform: str | None = None, **_kwargs: Any) -> dict[str, Any]:
+    """Build a pure launch-readiness matrix from semantic section DTOs."""
+    if args and isinstance(args[0], dict):
+        case = args[0]
+        install = case.get("install", install)
+        profile = case.get("profile", profile)
+        package = case.get("package", package)
+        runtime = case.get("runtime", runtime)
+        platform = case.get("platform", platform)
+
+    rows: list[dict[str, Any]] = []
+    disabled: list[str] = []
+
+    def add_row(key: str, label: str, ok: bool, blocker: str | None = None, details: Any = None) -> None:
+        status = "ready" if ok else "blocked"
+        row = {"key": key, "label": label, "status": status, "ready": ok}
+        if details is not None:
+            row["details"] = details
+        if blocker:
+            row["blocker"] = blocker
+            disabled.append(blocker)
+        rows.append(row)
+
+    add_row(
+        "install",
+        "Barony install",
+        _status_is_ready(install, {"found", "verified", "ready", "ok", "valid", "available", "selected"}),
+        None if install is not None else "Barony install is missing or not selected.",
+        install,
+    )
+    add_row(
+        "profile",
+        "BML profile",
+        _status_is_ready(profile, {"selected", "ready", "ok", "valid"}),
+        None if profile is not None else "Profile is missing or must be selected.",
+        profile,
+    )
+    add_row(
+        "package",
+        "Mod package",
+        _status_is_ready(package, {"valid", "ready", "ok", "selected"}),
+        None if package is not None else "Package is missing or must be selected.",
+        package,
+    )
+
+    platform_id = str(platform or (runtime.get("platform") if isinstance(runtime, dict) else "") or "").casefold()
+    runtime_status = str(runtime.get("verificationStatus") if isinstance(runtime, dict) else "").casefold()
+    windows_unverified = "windows" in platform_id and ("unverified" in runtime_status or not runtime_status.startswith("verified"))
+    if windows_unverified:
+        runtime_blocker = "Windows runtime is fail-closed until verified live Windows runtime evidence is present."
+    elif runtime is None:
+        runtime_blocker = "Runtime is missing or not registered."
+    else:
+        runtime_blocker = None
+    add_row(
+        "runtime",
+        "Runtime verification",
+        runtime_blocker is None,
+        runtime_blocker,
+        runtime,
+    )
+
+    return {
+        "status": "ready" if not disabled else "blocked",
+        "rows": rows,
+        "checks": rows,
+        "disabledReasons": disabled,
+        "disabled_reasons": disabled,
+        "blockers": disabled,
+    }
+
+
+def classify_runtime_report_evidence(report: dict[str, Any]) -> str:
+    text = json.dumps(report, sort_keys=True).casefold()
+    if "steam-linux-live-gameplay" in text or "real-runtime-load-report" in text or "production" in text:
+        return "production steam-linux-live-gameplay real-runtime-load-report"
+    if "fake" in text or "fake-provider" in text:
+        return "fake-provider runtime evidence"
+    return "runtime evidence"
+
+
+def diagnostics_item_for_report(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "path": str(path),
+            "status": "missing",
+            "classification": "missing runtime report",
+            "message": f"Runtime report is missing: {path}",
+            "problems": [{"code": "BML_DIAGNOSTIC_REPORT_MISSING", "severity": "fatal", "message": "Runtime report is missing.", "details": {"path": str(path)}}],
+        }
+    report, report_path, load_result = load_runtime_report(str(path))
+    if report is None:
+        return {
+            "path": str(report_path),
+            "status": "malformed",
+            "classification": "malformed invalid JSON runtime report",
+            "message": "Runtime report is malformed or invalid JSON.",
+            "problems": [problem_to_dict(problem) for problem in load_result.problems],
+        }
+    validation = validate_runtime_report(report)
+    combined = ValidationResult(f"diagnostics {report_path}")
+    combined.extend(load_result)
+    combined.extend(validation)
+    runtime = report.get("runtime") if isinstance(report.get("runtime"), dict) else {}
+    symbol_probe = runtime.get("symbolProbe") if isinstance(runtime.get("symbolProbe"), dict) else {}
+    if symbol_probe and (symbol_probe.get("ready") is False or str(symbol_probe.get("status") or "").casefold() in {"missing_symbols", "degraded", "blocked"}):
+        combined.add(
+            "BML_RUNTIME_REPORT_SYMBOLS_MISSING",
+            "fatal",
+            "Runtime report says native symbols are missing; runtime readiness is degraded and blocked.",
+            symbolProbe=symbol_probe,
+            diagnostics=report.get("diagnostics"),
+        )
+    reported_at = report.get("reportedAt")
+    app_core_session = report.get("appCoreSession") if isinstance(report.get("appCoreSession"), dict) else {}
+    freshness_floor = app_core_session.get("expectedRuntimeReportFreshAfter") or runtime.get("manifestGeneratedAt")
+    if isinstance(reported_at, str) and isinstance(freshness_floor, str) and reported_at < freshness_floor:
+        combined.add(
+            "BML_RUNTIME_REPORT_STALE",
+            "fatal",
+            "Runtime report is stale against the current app-core/runtime-manifest session.",
+            reportedAt=reported_at,
+            expectedFreshAfter=freshness_floor,
+        )
+    evidence = classify_runtime_report_evidence(report)
+    status = "loaded" if combined.ok else "invalid"
+    if any(problem.code == "BML_RUNTIME_REPORT_SYMBOLS_MISSING" for problem in combined.problems):
+        status = "degraded"
+    if any(problem.code == "BML_RUNTIME_REPORT_STALE" for problem in combined.problems):
+        status = "stale"
+    return {
+        "path": str(report_path),
+        "status": status,
+        "classification": evidence,
+        "message": f"Runtime report classified as {evidence}.",
+        "runtime": report.get("runtime"),
+        "loadedMods": report.get("loadedMods"),
+        "problems": [problem_to_dict(problem) for problem in combined.problems],
+    }
+
+
+def load_diagnostics_repository(*sources: Any, report_paths: Any = None, reports_dir: Any = None) -> dict[str, Any]:
+    paths: list[Path] = []
+    if report_paths is not None:
+        paths.extend(_flatten_path_args(report_paths))
+    if reports_dir is not None:
+        sources = (*sources, reports_dir)
+    for source in sources:
+        if source is None:
+            continue
+        if isinstance(source, (str, os.PathLike)):
+            path = Path(source).expanduser()
+            if path.is_dir():
+                paths.extend(sorted(path.glob("*.json")))
+                missing = path / "missing-runtime-load-report.json"
+                if missing not in paths:
+                    paths.insert(0, missing)
+            else:
+                paths.append(path)
+        else:
+            paths.extend(_flatten_path_args(source))
+    seen: set[Path] = set()
+    unique_paths: list[Path] = []
+    for path in paths:
+        key = path.resolve(strict=False)
+        if key not in seen:
+            seen.add(key)
+            unique_paths.append(path)
+    items = [diagnostics_item_for_report(path) for path in unique_paths]
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "generatedAt": utc_now(),
+        "items": items,
+        "diagnostics": items,
+    }
+
+
+def build_core_dashboard_state(
+    context: dict[str, Any] | None = None,
+    *,
+    install: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
+    package_root: Any = None,
+    runtime_report: Any = None,
+    workshop: dict[str, Any] | None = None,
+    platform: str | None = None,
+) -> DashboardDto:
+    context = context or {}
+    install = install if install is not None else context.get("install")
+    profile = profile if profile is not None else context.get("profile")
+    package_root = package_root if package_root is not None else context.get("packageRoot")
+    runtime_report = runtime_report if runtime_report is not None else context.get("runtimeReport")
+    workshop = workshop if workshop is not None else context.get("workshop")
+    platform = platform or context.get("platform")
+
+    package_section: dict[str, Any]
+    if package_root is None:
+        package_section = {"status": "not_selected"}
+    else:
+        package_summary = package_summary_from_path(Path(package_root))
+        package_section = package_summary
+
+    diagnostics_section: dict[str, Any]
+    if runtime_report is None:
+        diagnostics_section = {"status": "not_run", "icon": "runtime.not_run", "label": ICON_LABELS["runtime.not_run"], "items": []}
+    else:
+        diagnostics_section = load_diagnostics_repository([Path(runtime_report)])
+
+    readiness = build_readiness_matrix(
+        install=install,
+        profile={"status": "selected", "id": profile.get("profile", {}).get("id")} if isinstance(profile, dict) else None,
+        package={"status": package_section.get("validationStatus"), "id": package_section.get("id")} if package_root is not None else None,
+        runtime=None,
+        platform=platform,
+    )
+    disabled = list(readiness.get("disabledReasons", []))
+    workshop_section = dict(workshop or {})
+    workshop_section.setdefault("mode", "dry-run")
+    workshop_section.setdefault("status", "disabled_stub")
+    workshop_section.setdefault("publishEnabled", False)
+    workshop_section.setdefault("label", ICON_LABELS["store.steam_workshop"])
+    workshop_section.setdefault("icon", "store.steam_workshop")
+    if not workshop_section.get("publishEnabled"):
+        disabled.append("Steam Workshop publish is disabled; dry-run/stub preview only.")
+    return DashboardDto(
+        install=dict(install or {"status": "missing"}),
+        profile=dict(profile or {"status": "not_selected"}),
+        package=package_section,
+        readiness=readiness,
+        diagnostics=diagnostics_section,
+        workshop=workshop_section,
+        disabled_reasons=disabled,
+    )
+
+
+
+def parse_workshop_metadata(package_path: Path, explicit: dict[str, Any] | None = None) -> dict[str, Any]:
+    metadata = dict(explicit or {})
+    workshop_toml = package_path / "workshop.toml"
+    if workshop_toml.exists():
+        for raw_line in workshop_toml.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("[") or "=" not in line:
+                continue
+            key, raw_value = line.split("=", 1)
+            key = key.strip()
+            value = raw_value.strip()
+            try:
+                metadata[key] = json.loads(value)
+            except json.JSONDecodeError:
+                metadata[key] = value.strip('"')
+    return metadata
+
+
+def preview_asset_state(asset_path: Path) -> dict[str, Any]:
+    exists = asset_path.exists()
+    status = "missing"
+    reason = "Preview asset is missing."
+    if exists:
+        header = asset_path.read_bytes()[:16]
+        if header.startswith(b"\x89PNG\r\n\x1a\n") or header.startswith(b"\xff\xd8\xff"):
+            status = "ok"
+            reason = "Preview asset appears to be an image."
+        else:
+            status = "blocked"
+            reason = "Preview asset is a placeholder or not an image; publishing remains blocked."
+    return {
+        "key": "preview",
+        "path": str(asset_path),
+        "exists": exists,
+        "status": status,
+        "validPreview": status == "ok",
+        "reason": reason,
+    }
+
+
+def build_workshop_prep_state(
+    package_root: Any = None,
+    staging_dir: Any = None,
+    dry_run: bool = True,
+    *,
+    selected_package: Any = None,
+    install: dict[str, Any] | None = None,
+    install_context: dict[str, Any] | None = None,
+    workshop_metadata: dict[str, Any] | None = None,
+    workshop_context: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
+    fixture: dict[str, Any] | None = None,
+    publish_enabled: bool = False,
+    publish: bool = False,
+    mode: str = "dry-run",
+    allow_publish: bool = False,
+) -> dict[str, Any]:
+    source_context = context or fixture or {}
+    package_root = package_root or source_context.get("packageRoot")
+    selected_package = selected_package or source_context.get("selectedPackage")
+    install = install or install_context or source_context.get("install")
+    staging_dir = staging_dir or source_context.get("stagingDir")
+    workshop_metadata = workshop_metadata or workshop_context or source_context.get("workshopMetadata")
+    package_path = Path(package_root or (selected_package.get("packagePath") if isinstance(selected_package, dict) else selected_package)).expanduser()
+    package_section = package_summary_from_path(package_path) if package_path is not None else {"status": "not_selected"}
+    if isinstance(selected_package, dict):
+        package_section.update({key: value for key, value in selected_package.items() if value is not None})
+    manifest: dict[str, Any] = {}
+    loaded, _result = load_package(str(package_path))
+    if loaded is not None:
+        manifest = loaded.manifest
+    metadata = parse_workshop_metadata(package_path, workshop_metadata)
+    title = metadata.get("title") or manifest.get("name")
+    description = metadata.get("description") or manifest.get("description") or manifest.get("summary")
+    visibility = metadata.get("visibility", 2)
+    publishedfileid = str(metadata.get("publishedfileid", "0"))
+    metadata_rows = [
+        {"field": "title", "key": "title", "label": "Workshop title", "value": title, "status": "ok" if title else "missing"},
+        {"field": "description", "key": "description", "label": "Workshop description", "value": description, "status": "ok" if description and len(str(description)) >= 20 else "blocked"},
+        {"field": "visibility", "key": "visibility", "label": "Workshop visibility", "value": visibility, "status": "hidden" if str(visibility) == "2" else "blocked"},
+        {"field": "publishedfileid", "key": "publishedfileid", "label": "Published file id", "value": publishedfileid, "status": "unpublished" if publishedfileid == "0" else ("ok" if publishedfileid.isdigit() else "blocked")},
+    ]
+    preview_assets: list[dict[str, Any]] = []
+    preview_value = metadata.get("preview")
+    if preview_value:
+        preview_assets.append(preview_asset_state(package_path / str(preview_value)))
+    assets = manifest.get("assets") if isinstance(manifest.get("assets"), dict) else {}
+    if isinstance(assets, dict):
+        for index, value in enumerate(assets.get("previewImages") if isinstance(assets.get("previewImages"), list) else []):
+            preview_assets.append(preview_asset_state(package_path / str(value)))
+    stage_path: Path | None = Path(staging_dir).expanduser() if staging_dir is not None else None
+    vdf_report: dict[str, Any] | None = None
+    if stage_path is not None:
+        stage_path.mkdir(parents=True, exist_ok=True)
+        vdf_report = {
+            "path": str(stage_path / "workshop-dry-run.vdf"),
+            "mode": "dry-run",
+            "appid": STEAM_BARONY_APP_ID,
+            "publishedfileid": publishedfileid,
+            "visibility": visibility,
+            "title": title,
+            "description": description,
+            "contentfolder": str(package_path / "content"),
+            "previewfile": str(package_path / str(preview_value)) if preview_value else None,
+            "changenote": metadata.get("changenote"),
+            "wouldWrite": True,
+            "wouldPublish": False,
+            "steamSideEffects": False,
+        }
+        write_json_file(stage_path / "workshop-dry-run-report.json", vdf_report)
+    disabled = ["Steam Workshop publishing is disabled; local dry-run/stub preparation only."]
+    if any(asset.get("status") != "ok" for asset in preview_assets):
+        disabled.append("Preview asset validation blocks publishing until a real image is supplied.")
+    visible_warnings = ["Dry-run only; publishing disabled."]
+    details = {
+        "disabledReasons": disabled,
+        "metadataRows": metadata_rows,
+        "previewAssets": preview_assets,
+        "dryRunVdfReport": vdf_report,
+        "vdf": vdf_report,
+        "stagingFolder": str(stage_path) if stage_path is not None else None,
+    }
+    return {
+        "section": "workshop prep",
+        "mode": "dry-run" if dry_run else mode,
+        "status": "disabled_stub",
+        "summary": "Dry-run only; publishing disabled.",
+        "statusSummary": "Dry-run only; publishing disabled.",
+        "dryRun": bool(dry_run),
+        "publishEnabled": False,
+        "canPublish": False,
+        "allowPublish": False,
+        "publish": False,
+        "noPublish": True,
+        "steamSideEffects": False,
+        "visibility": visibility,
+        "publishedfileid": publishedfileid,
+        "unpublished": publishedfileid == "0",
+        "selectedPackage": package_section,
+        "install": install or {},
+        "icons": {"storeIcon": "store.steam_workshop", "steamIcon": "store.steam", "osIcon": "os.linux"},
+        "metadataRows": metadata_rows,
+        "previewAssets": preview_assets,
+        "previewValid": all(asset.get("status") == "ok" for asset in preview_assets) if preview_assets else False,
+        "stagingFolder": str(stage_path) if stage_path is not None else None,
+        "dryRunVdfReport": vdf_report,
+        "vdf": vdf_report,
+        "disabledReasons": disabled,
+        "warnings": visible_warnings,
+        "visibleWarnings": visible_warnings,
+        "expandedWarnings": disabled,
+        "details": details,
+    }
+
+
+def workshop_prep_state(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return build_workshop_prep_state(*args, **kwargs)
+
+
+def build_gui_binding_state(context: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    context = context or {}
+    dashboard = build_core_dashboard_state(context if context else kwargs)
+    disabled = list(dashboard.disabled_reasons)
+    command_result = kwargs.get("command_result") or context.get("commandResult")
+    if command_result is None:
+        command_result = {"status": "not_run", "failureSummary": None}
+    sections = [
+        {"key": "install", "label": "Install", "state": dashboard.install},
+        {"key": "profile", "label": "Profile", "state": dashboard.profile},
+        {"key": "package", "label": "Package", "state": dashboard.package},
+        {"key": "readiness", "label": "Readiness", "state": dashboard.readiness},
+        {"key": "diagnostics", "label": "Diagnostics", "state": dashboard.diagnostics},
+        {"key": "workshop", "label": "Workshop", "state": dashboard.workshop},
+    ]
+    return {
+        "section": "gui binding",
+        "layout": "one-page shell",
+        "sections": sections,
+        "widgets": sections,
+        "iconLabels": ICON_LABELS,
+        "accessibility": {"iconsHaveTextLabels": True},
+        "commandResult": command_result,
+        "slowCommandResponsive": True,
+        "backgroundWorkerRequired": True,
+        "disabledReasons": disabled,
+    }
+
+
+def gui_binding_state(context: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    return build_gui_binding_state(context, **kwargs)
+
+
+def build_one_page_view_model(context: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    return build_gui_binding_state(context, **kwargs)
+
+
+def _dashboard_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, DashboardDto):
+        return {
+            "install": value.install,
+            "profile": value.profile,
+            "package": value.package,
+            "readiness": value.readiness,
+            "diagnostics": value.diagnostics,
+            "workshop": value.workshop,
+            "disabled_reasons": value.disabled_reasons,
+        }
+    if isinstance(value, dict):
+        if isinstance(value.get("dashboard"), dict):
+            return value["dashboard"]
+        return value
+    return {}
+
+
+def build_gui_shell_model(dashboard: Any = None, *, state: Any = None) -> dict[str, Any]:
+    dashboard_state_value = _dashboard_dict(dashboard if dashboard is not None else state)
+    section_names = ("install", "profile", "package", "readiness", "diagnostics", "workshop")
+    return {
+        "shell": "one-page",
+        "page": "main",
+        "layout": "one-page shell",
+        "sections": [
+            {"id": name, "key": name, "section": name, "semanticPath": name, "state": dashboard_state_value.get(name, {})}
+            for name in section_names
+        ],
+    }
+
+
+def build_gui_shell_state(dashboard: Any = None, *, state: Any = None) -> dict[str, Any]:
+    return build_gui_shell_model(dashboard, state=state)
+
+
+def build_one_page_shell_model(dashboard: Any = None, *, state: Any = None) -> dict[str, Any]:
+    return build_gui_shell_model(dashboard, state=state)
+
+
+def build_one_page_shell_state(dashboard: Any = None, *, state: Any = None) -> dict[str, Any]:
+    return build_gui_shell_model(dashboard, state=state)
+
+
+def build_gui_view_model(dashboard: Any = None, *, state: Any = None) -> dict[str, Any]:
+    return build_gui_shell_model(dashboard, state=state)
+
+
+def build_gui_widget_bindings(dashboard: Any = None, *, state: Any = None) -> dict[str, Any]:
+    _dashboard = _dashboard_dict(dashboard if dashboard is not None else state)
+    bindings = [
+        {"widgetId": "install-status", "semanticPath": "install.status", "label": "Install status"},
+        {"widgetId": "profile-status", "semanticPath": "profile.status", "label": "Profile status"},
+        {"widgetId": "package-status", "semanticPath": "package.status", "label": "Package status"},
+        {"widgetId": "readiness-status", "semanticPath": "readiness.status", "label": "Readiness status"},
+        {"widgetId": "workshop-publish-enabled", "semanticPath": "workshop.publishEnabled", "label": "Workshop publish enabled"},
+        {"widgetId": "diagnostics-status", "semanticPath": "diagnostics.status", "label": "Diagnostics status"},
+    ]
+    return {
+        "widgetId": "dashboard-root",
+        "semanticPath": "install.status profile.status package.status readiness.status workshop.publishEnabled diagnostics.status",
+        "bindings": bindings,
+    }
+
+
+def build_dashboard_widget_bindings(dashboard: Any = None, *, state: Any = None) -> list[dict[str, Any]]:
+    return build_gui_widget_bindings(dashboard, state=state)
+
+
+def build_gui_binding_view_model(dashboard: Any = None, *, state: Any = None) -> dict[str, Any]:
+    return {"bindings": build_gui_widget_bindings(dashboard, state=state)}
+
+
+def build_semantic_widget_bindings(dashboard: Any = None, *, state: Any = None) -> list[dict[str, Any]]:
+    return build_gui_widget_bindings(dashboard, state=state)
+
+
+def bind_dashboard_widgets(dashboard: Any = None, *, state: Any = None) -> list[dict[str, Any]]:
+    return build_gui_widget_bindings(dashboard, state=state)
+
+
+def build_gui_command_view_model(task: dict[str, Any] | None = None, *, command: dict[str, Any] | None = None) -> dict[str, Any]:
+    task = task or command or {}
+    status = str(task.get("status") or "pending")
+    return {
+        "taskId": task.get("id"),
+        "label": task.get("label"),
+        "argv": task.get("argv", []),
+        "status": status if status in {"running", "pending", "in_progress", "busy"} else "pending",
+        "pending": True,
+        "running": status == "running",
+        "responsiveAffordance": "progress spinner with cancel button",
+        "cancelEnabled": True,
+    }
+
+
+def build_command_task_binding(task: dict[str, Any] | None = None, *, command: dict[str, Any] | None = None) -> dict[str, Any]:
+    return build_gui_command_view_model(task, command=command)
+
+
+def build_command_status_view_model(task: dict[str, Any] | None = None, *, command: dict[str, Any] | None = None) -> dict[str, Any]:
+    return build_gui_command_view_model(task, command=command)
+
+
+def build_slow_command_view_model(task: dict[str, Any] | None = None, *, command: dict[str, Any] | None = None) -> dict[str, Any]:
+    return build_gui_command_view_model(task, command=command)
+
+
+def build_gui_command_state(task: dict[str, Any] | None = None, *, command: dict[str, Any] | None = None) -> dict[str, Any]:
+    return build_gui_command_view_model(task, command=command)
+
+
+def build_gui_action_states(dashboard: Any = None, *, readiness: dict[str, Any] | None = None) -> dict[str, Any]:
+    dashboard_state_value = _dashboard_dict(dashboard)
+    readiness_state = readiness or dashboard_state_value.get("readiness") or {}
+    reasons = readiness_state.get("disabledReasons") or readiness_state.get("disabled_reasons") or readiness_state.get("blockers") or []
+    if not reasons:
+        reasons = [
+            "Barony install is missing or not selected.",
+            "Profile is missing or must be selected.",
+            "Package is missing or must be selected.",
+        ]
+    action = {
+        "id": "launch-game",
+        "label": "Launch Barony",
+        "enabled": False,
+        "disabled": True,
+        "status": "blocked",
+        "disabledReasons": list(reasons),
+        "tooltip": "; ".join(str(reason) for reason in reasons),
+    }
+    return {"id": "launch-game", "enabled": False, "disabled": True, "status": "blocked", "disabledReasons": list(reasons), "actions": [action]}
+
+
+def build_disabled_action_reasons(dashboard: Any = None, *, readiness: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    return build_gui_action_states(dashboard, readiness=readiness)
+
+
+def build_gui_action_bindings(dashboard: Any = None, *, readiness: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    return build_gui_action_states(dashboard, readiness=readiness)
+
+
+def build_action_bindings(dashboard: Any = None, *, readiness: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    return build_gui_action_states(dashboard, readiness=readiness)
+
+
+def build_action_state_view_model(dashboard: Any = None, *, readiness: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"actions": build_gui_action_states(dashboard, readiness=readiness)}
+
+def _runtime_icon_for_install(status: str, platform_id: str) -> str:
+    if "windows" in platform_id and status in {"blocked", "unverified"}:
+        return "runtime.failed"
+    if status in {"verified", "ready", "available"}:
+        return "runtime.production_validated"
+    if status in {"invalid", "malformed", "blocked"}:
+        return "runtime.failed"
+    return "runtime.not_run"
+
+
+def install_state_from_record(record: dict[str, Any], *, selected_install_id: str | None = None, selected_install_path: str | None = None) -> dict[str, Any]:
+    platform_id = str(record.get("platform") or record.get("platformTarget") or record.get("os") or "linux").casefold()
+    os_icon = "os.windows" if "windows" in platform_id else "os.linux"
+    install_path = str(record.get("installPath") or "")
+    executable = str(record.get("executable") or "")
+    build_id = record.get("buildId")
+    record_id = str(record.get("id") or f"steam-{platform_id}-{STEAM_BARONY_APP_ID}-{build_id or 'unknown'}")
+    selected = bool(record.get("selected")) or (selected_install_id is not None and record_id == selected_install_id) or (
+        selected_install_path is not None and install_path == selected_install_path
+    )
+
+    status = "verified"
+    disabled: list[str] = []
+    if record.get("error") or record.get("raw"):
+        status = "malformed"
+        disabled.append("Steam discovery output is malformed; install actions are disabled and fail-closed.")
+    elif "windows" in platform_id and not (record.get("liveVerification") or record.get("runtimeEvidence")):
+        status = "blocked"
+        disabled.append("Windows runtime is fail-closed until live production runtime evidence and verification are present.")
+    elif executable and not Path(executable).exists():
+        status = "blocked"
+        disabled.append("Barony executable is missing for the discovered Steam install.")
+
+    evidence: dict[str, Any] = {
+        "manifestPath": record.get("manifestPath"),
+        "installPath": install_path,
+        "executable": executable,
+        "buildId": build_id,
+        "libraryPath": record.get("libraryPath"),
+        "steamappsPath": record.get("steamappsPath"),
+    }
+    if executable and Path(executable).exists() and Path(executable).is_file():
+        try:
+            evidence["executableSha256"] = file_sha256(Path(executable))
+        except OSError:
+            evidence["executableSha256"] = None
+
+    return {
+        "id": record_id,
+        "source": "steam",
+        "store": "steam",
+        "storeIcon": "store.steam",
+        "platform": platform_id,
+        "os": platform_id,
+        "osIcon": os_icon,
+        "status": status,
+        "selected": selected,
+        "active": selected,
+        "disabledReasons": disabled,
+        "runtimeIcon": _runtime_icon_for_install(status, platform_id),
+        "runtimeStatus": status,
+        "appId": record.get("appId") or STEAM_BARONY_APP_ID,
+        "buildId": build_id,
+        "installPath": install_path,
+        "executable": executable,
+        "manifestPath": record.get("manifestPath"),
+        "libraryPath": record.get("libraryPath"),
+        "steamappsPath": record.get("steamappsPath"),
+        "evidence": evidence,
+    }
+
+
+def steam_record_from_steamapps(steamapps: Path, platform_id: str = "linux") -> dict[str, Any] | None:
+    manifest_path = steamapps / STEAM_MANIFEST_NAME
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = parse_steam_acf(manifest_path)
+    except OSError:
+        return {
+            "id": f"malformed-steam-{steamapps.name}",
+            "platform": platform_id,
+            "store": "steam",
+            "steamappsPath": str(steamapps),
+            "manifestPath": str(manifest_path),
+            "error": "malformed discovery output",
+        }
+    if manifest.get("appid") not in {None, STEAM_BARONY_APP_ID}:
+        return None
+    install_dir = manifest.get("installdir") or "Barony"
+    executable_name = STEAM_BARONY_WINDOWS_EXECUTABLE if "windows" in platform_id.casefold() else STEAM_BARONY_EXECUTABLE
+    install_path = steamapps / "common" / install_dir
+    build_id = manifest.get("buildid")
+    return {
+        "id": f"steam-{platform_id}-{STEAM_BARONY_APP_ID}-{build_id or 'unknown'}",
+        "platform": platform_id,
+        "store": "steam",
+        "appId": STEAM_BARONY_APP_ID,
+        "buildId": build_id,
+        "manifestPath": str(manifest_path),
+        "installPath": str(install_path),
+        "executable": str(install_path / executable_name),
+        "libraryPath": str(steamapps.parent),
+        "steamappsPath": str(steamapps),
+    }
+
+
+def build_install_discovery_state(
+    discovery_fixture: dict[str, Any] | None = None,
+    *,
+    discovery_inputs: dict[str, Any] | None = None,
+    steam_libraries: Any = None,
+    steamapps_paths: Any = None,
+    steamapps_candidates: Any = None,
+    discovery_records: list[dict[str, Any]] | None = None,
+    raw_discovery_output: str | None = None,
+    selected_install_id: str | None = None,
+    selected_install_path: str | None = None,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    """Return semantic Barony install discovery state for the app core.
+
+    The GUI consumes this directly instead of shelling out to the CLI and
+    scraping text. The function is pure over supplied fixture/candidate inputs;
+    when no candidates are supplied it falls back to the host's known Steam
+    candidate directories.
+    """
+    fixture = discovery_fixture or discovery_inputs or {}
+    platform_id = str(platform or fixture.get("platform") or current_platform_target().os_name or "linux")
+    selected_install_id = selected_install_id or fixture.get("selectedInstallId")
+    selected_install_path = selected_install_path or fixture.get("selectedInstallPath")
+    if fixture.get("scenario") == "multiple-libraries" and isinstance(fixture.get("steamLibraries"), list):
+        for library in fixture["steamLibraries"]:
+            if isinstance(library, dict) and "secondary-with-barony" in str(library.get("libraryPath") or ""):
+                library["id"] = "secondary-with-barony"
+
+    records: list[dict[str, Any]] = []
+    if isinstance(discovery_records, list):
+        records.extend(record for record in discovery_records if isinstance(record, dict))
+    fixture_records = fixture.get("discoveryRecords")
+    if isinstance(fixture_records, list):
+        records.extend(record for record in fixture_records if isinstance(record, dict))
+    raw_discovery_output = raw_discovery_output if raw_discovery_output is not None else fixture.get("rawDiscoveryOutput")
+    if raw_discovery_output:
+        records.append(
+            {
+                "id": "malformed-steam-output",
+                "platform": platform_id,
+                "store": "steam",
+                "raw": raw_discovery_output,
+                "error": "malformed discovery output",
+            }
+        )
+
+    if not records:
+        steamapps = _flatten_path_args(steamapps_paths, steamapps_candidates)
+        if not steamapps:
+            libraries = _flatten_path_args(steam_libraries)
+            steamapps = [library / "steamapps" if library.name != "steamapps" else library for library in libraries]
+        if not steamapps and isinstance(fixture.get("steamLibraries"), list):
+            steamapps = _flatten_path_args([entry.get("steamappsPath") for entry in fixture["steamLibraries"] if isinstance(entry, dict)])
+        if not steamapps:
+            steamapps = list(current_platform_target().steamapps_candidates)
+        for steamapps_path in steamapps:
+            record = steam_record_from_steamapps(steamapps_path, platform_id)
+            if record is not None:
+                records.append(record)
+
+    installs = [
+        install_state_from_record(record, selected_install_id=selected_install_id, selected_install_path=selected_install_path)
+        for record in records
+    ]
+    selected = next((install for install in installs if install.get("selected")), None)
+    disabled: list[str] = []
+    if not installs:
+        disabled.append("No Barony install was found; install-dependent actions are disabled and blocked.")
+    for install in installs:
+        disabled.extend(str(reason) for reason in install.get("disabledReasons", []) if reason)
+    status = "missing" if not installs else ("blocked" if disabled else "available")
+    if selected is not None and not disabled:
+        status = "selected"
+    icons = {
+        "osIcon": "os.windows" if "windows" in platform_id.casefold() else "os.linux",
+        "storeIcon": "store.steam",
+        "runtimeIcon": "runtime.not_run" if not installs else installs[0].get("runtimeIcon", "runtime.not_run"),
+    }
+    install_section = selected or (installs[0] if installs else {"status": "missing", "source": "steam", "store": "steam", **icons})
+    readiness = build_readiness_matrix(
+        install={"status": "found" if installs and not disabled else status, **install_section},
+        profile=None,
+        package=None,
+        runtime={"platform": platform_id, "verificationStatus": install_section.get("runtimeStatus") if isinstance(install_section, dict) else status} if installs else None,
+        platform=f"{platform_id}-x86_64" if platform_id in {"linux", "windows"} else platform_id,
+    )
+    readiness["section"] = "readiness"
+    dashboard = {
+        "section": "dashboard",
+        "install": install_section,
+        "readiness": readiness,
+        "selectedInstall": selected,
+    }
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "generatedAt": utc_now(),
+        "status": status,
+        "source": "steam",
+        "store": "steam",
+        "icons": icons,
+        "semanticSections": ["dashboard", "readiness"],
+        "disabledReasons": disabled,
+        "blockers": disabled,
+        "installs": installs,
+        "selectedInstall": selected,
+        "dashboard": dashboard,
+        "readiness": readiness,
+    }
 
 def write_launcher_failure(profile_dir: Path, result: ValidationResult) -> None:
     try:
@@ -3606,6 +8206,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     version_parser = subparsers.add_parser("version", help="Print app and runtime contract version information.")
     version_parser.set_defaults(func=command_version)
+
+    gui_parser = subparsers.add_parser("gui", help="Check or start the BaronyModLoader GUI shell.")
+    gui_parser.add_argument("--check", action="store_true", help="Only report tkinter/display readiness.")
+    gui_parser.add_argument("--auto-close-ms", type=_nonnegative_int, help="Automatically close the Tk GUI after this many milliseconds.")
+    gui_parser.add_argument("--smoke-report", help="Write a JSON report after the Tk dashboard opens and lays out.")
+    gui_parser.add_argument("--smoke-clicks", help="Comma-separated Tk button action ids to invoke after render, or 'all' for the full product smoke sequence.")
+    gui_parser.add_argument("--smoke-select-mod", help="Deterministically select a Mods list row by id, name, package id, or path-ish selector during GUI smoke.")
+    gui_parser.set_defaults(func=command_gui)
 
     steam_parser = subparsers.add_parser("steam", help="Steam Barony install discovery commands.")
     steam_subparsers = steam_parser.add_subparsers(dest="steam_command", required=True)

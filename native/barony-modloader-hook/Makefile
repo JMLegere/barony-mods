@@ -41,7 +41,7 @@ WINDOWS_SELF_TEST_REPORT := $(BUILD_DIR)/windows-adapter-self-test-report.json
 
 .PHONY: all clean test
 .PHONY: static-readiness
-.PHONY: check-winegcc check-wine windows-smoke
+.PHONY: check-winegcc check-wine windows-smoke elixir-production-validation
 
 all: $(TARGETS)
 
@@ -78,6 +78,10 @@ clean:
 test: all $(TEST_SYMBOL_PROVIDER)
 	$(PYTHON) $(TEST_DIR)/test_stash_backend_parity.py
 	sh $(TEST_DIR)/smoke_ld_preload.sh $(abspath $(LINUX_TARGET)) $(abspath $(TEST_SYMBOL_PROVIDER))
+
+# Opt-in real Steam executable proof for Runebound: Elixirs; intentionally not part of `test`.
+elixir-production-validation: $(LINUX_TARGET)
+	PYTHON=$(PYTHON) sh $(TEST_DIR)/run_elixir_production_validation.sh $(abspath $(LINUX_TARGET))
 
 windows-smoke: BML_PLATFORM=windows-x86_64
 windows-smoke: $(WINDOWS_TARGET) $(WINDOWS_LAUNCHER) | check-wine

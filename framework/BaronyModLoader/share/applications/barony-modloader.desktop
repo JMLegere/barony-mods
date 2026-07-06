@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=BaronyModLoader
+Comment=Manage Barony mod packages and launch readiness
+Exec=/home/jerry/Workspace/barony-mods/framework/BaronyModLoader/bin/barony-mod-loader gui
+TryExec=/home/jerry/Workspace/barony-mods/framework/BaronyModLoader/bin/barony-mod-loader
+Icon=barony-modloader
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=true
+Keywords=Barony;Mods;Mod Loader;Workshop;

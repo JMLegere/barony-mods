@@ -45,13 +45,18 @@
 #define BML_RUNES_ELIXIR_SELF_TEST_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-elixir-self-test-report.json"
 #define BML_RUNES_ELIXIR_PACKAGE_ID "jml.runebound-elixirs"
 #define BML_RUNES_ELIXIR_LIVE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
-#define BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_EMPTY 210
+#define BML_RUNES_ELIXIR_PRODUCTION_VALIDATION_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-elixir-production-validation-report.json"
+#define BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH 225
+#define BML_RUNES_ELIXIR_LIVE_HOOK_COUNT 6U
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
 #define BML_STASH_INVENTORY_FORMAT_HEADER "# bml-stash-inventory-v2"
 #define BML_STASH_INVENTORY_COLUMN_COUNT 19
 #define BML_STASH_DIAGNOSTICS_RELATIVE_PATH "BaronyModLoader/state/stash-diagnostics.jsonl"
 #define BML_STASH_STAT_VOID_CHEST_INVENTORY_OFFSET ((uintptr_t)0x9e8U)
+#define BML_RUNES_ELIXIR_EMPTY_FLASK_HINT_LANGUAGE_ID 3336
+#define BML_RUNES_ELIXIR_HUDWEAPON_PLAYERNUM_SKILL_INDEX 11U
+#define BML_RUNES_ELIXIR_STAT_WEAPON_OFFSET (BML_STASH_STAT_VOID_CHEST_INVENTORY_OFFSET + sizeof(BmlBaronyList) + (5U * sizeof(void *)))
 #define BML_MAX_ERRORS 12
 #define BML_MAX_TEXT 256
 #define BML_MAX_MANIFEST_BYTES (1024U * 1024U)
@@ -111,6 +116,7 @@
 #define BML_STASH_SPRITE_CHEST_SPAWN 21
 #define BML_STASH_SPRITE_CHEST_VOID_VISUAL 1791
 #define BML_STASH_SPRITE_LID_SPAWN 216
+#define BML_STASH_SPRITE_ASSIST_SHRINE_VISUAL 1484
 #define BML_STASH_SPRITE_LID_VOID_VISUAL 1790
 #define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
 #define BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST 4005
@@ -316,6 +322,7 @@ typedef struct BmlRuneboundElixirDefinition {
     int effect_magnitude;
     int duration_turns;
     const char *tradeoff_summary;
+    const char *description_body;
 } BmlRuneboundElixirDefinition;
 
 typedef struct BmlRuneboundElixirPartySnapshot {
@@ -2168,6 +2175,7 @@ static void bml_runebound_elixir_make_fixture_definition(BmlRuneboundElixirDefin
     definition->effect_magnitude = 2;
     definition->duration_turns = -1;
     definition->tradeoff_summary = "+2 STR, -1 DEX for the rest of the run.";
+    definition->description_body = "Bargain: +2 STR, -1 DEX for the rest of the run.";
 }
 
 static void bml_runebound_elixir_make_solo_party_snapshot(BmlRuneboundElixirPartySnapshot *snapshot, int class_id) {
@@ -2266,7 +2274,7 @@ static void bml_runebound_elixir_make_drop_generation_decision(const BmlRuneboun
     decision->solo_class_policy = "local_player_class";
     decision->party_size_policy = "generation_time_only";
     decision->reason = "not_evaluated";
-    decision->carrier_item_type = metadata != NULL ? metadata->carrier_item_type : "POTION_EMPTY";
+    decision->carrier_item_type = metadata != NULL ? metadata->carrier_item_type : "POTION_STRENGTH";
     decision->max_generated_elixirs_per_source = 1U;
     decision->max_generated_elixirs_per_floor = 1U;
     decision->no_global_all_class_pool = true;
@@ -2311,7 +2319,7 @@ static void bml_runebound_elixir_make_drop_generation_decision(const BmlRuneboun
 
 static void bml_runebound_elixir_make_fixture_carrier(const BmlRuneboundElixirDefinition *definition, BmlRuneboundElixirCarrierMetadata *metadata) {
     metadata->instance_id = 1380736049U;
-    metadata->carrier_item_type = "POTION_EMPTY";
+    metadata->carrier_item_type = "POTION_STRENGTH";
     metadata->definition = definition;
 }
 
@@ -2322,9 +2330,24 @@ static int bml_runebound_elixir_render_carrier_display(const BmlRuneboundElixirC
     }
     written = snprintf(out,
                        out_size,
-                       "%s (%s)",
-                       metadata->definition->display_name,
-                       metadata->definition->tradeoff_summary);
+                       "%s",
+                       metadata->definition->display_name);
+    if (written < 0 || (size_t)written >= out_size) {
+        out[0] = '\0';
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_runebound_elixir_render_carrier_description(const BmlRuneboundElixirCarrierMetadata *metadata, char *out, size_t out_size) {
+    int written;
+    if (metadata == NULL || metadata->definition == NULL || out == NULL || out_size == 0U) {
+        return -1;
+    }
+    written = snprintf(out,
+                       out_size,
+                       "%s",
+                       metadata->definition->description_body);
     if (written < 0 || (size_t)written >= out_size) {
         out[0] = '\0';
         return -1;
@@ -2597,6 +2620,7 @@ static int bml_write_runebound_elixir_self_test_report(const char *report_path,
                                                        const BmlRuneboundElixirDropGenerationDecision *drop_generation,
                                                        const BmlRuneboundElixirDropGenerationDecision *no_matching_class_drop_generation,
                                                        const char *rendered_display,
+                                                       const char *rendered_description,
                                                        const char *serialized_carrier_metadata,
                                                        const BmlRuneboundElixirConsumptionResult *consumption,
                                                        const char *serialized_active_effect,
@@ -2637,7 +2661,7 @@ static int bml_write_runebound_elixir_self_test_report(const char *report_path,
                                          drop_generation->generated_carrier_count_for_floor <= 1U;
     const bool multiplayer_state_authority_host = true;
     const bool multiplayer_rejects_mismatched_contract = true;
-    const char *expected_display = "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)";
+    const char *expected_display = "Elixir of the Iron Vow";
 
     if (file == NULL) {
         return -1;
@@ -2783,6 +2807,8 @@ static int bml_write_runebound_elixir_self_test_report(const char *report_path,
     bml_json_write_escaped(file, metadata != NULL ? metadata->carrier_item_type : "");
     fputs(",\n      \"renderedDisplay\": ", file);
     bml_json_write_escaped(file, rendered_display);
+    fputs(",\n      \"renderedDescription\": ", file);
+    bml_json_write_escaped(file, rendered_description);
     fputs(",\n      \"serialized\": ", file);
     bml_json_write_escaped(file, serialized_carrier_metadata);
     fputs("\n    },\n    \"consumption\": {\n      \"consumed\": ", file);
@@ -2883,6 +2909,7 @@ static int bml_run_runebound_elixir_self_test(const char *report_path, const Bml
     BmlRuneboundElixirConsumptionResult consumption;
     BmlRuneboundElixirSerializedActiveEffect round_trip_effect;
     char rendered_display[BML_MAX_TEXT];
+    char rendered_description[BML_MAX_TEXT];
     char serialized_carrier_metadata[BML_RUNES_ELIXIR_SERIALIZED_STATE_MAX];
     char serialized_active_effect[BML_RUNES_ELIXIR_SERIALIZED_STATE_MAX];
     char error_code[BML_MAX_TEXT];
@@ -2910,6 +2937,7 @@ static int bml_run_runebound_elixir_self_test(const char *report_path, const Bml
     memset(&consumption, 0, sizeof(consumption));
     memset(&round_trip_effect, 0, sizeof(round_trip_effect));
     memset(rendered_display, 0, sizeof(rendered_display));
+    memset(rendered_description, 0, sizeof(rendered_description));
     memset(serialized_carrier_metadata, 0, sizeof(serialized_carrier_metadata));
     memset(serialized_active_effect, 0, sizeof(serialized_active_effect));
     memset(error_code, 0, sizeof(error_code));
@@ -2954,6 +2982,10 @@ static int bml_run_runebound_elixir_self_test(const char *report_path, const Bml
         bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_DISPLAY_RENDER_FAILED");
         bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs carrier display rendering exceeded the native self-test buffer.");
     }
+    if (!bml_has_value(error_code) && bml_runebound_elixir_render_carrier_description(&metadata, rendered_description, sizeof(rendered_description)) != 0) {
+        bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_DESCRIPTION_RENDER_FAILED");
+        bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs carrier description rendering exceeded the native self-test buffer.");
+    }
     if (!bml_has_value(error_code) && bml_runebound_elixir_serialize_carrier_metadata(&metadata, serialized_carrier_metadata, sizeof(serialized_carrier_metadata)) != 0) {
         bml_copy_string(error_code, sizeof(error_code), "BML_RUNES_ELIXIR_CARRIER_SERIALIZE_FAILED");
         bml_copy_string(error_message, sizeof(error_message), "Runebound: Elixirs carrier metadata serialization exceeded the native self-test buffer.");
@@ -2991,7 +3023,8 @@ static int bml_run_runebound_elixir_self_test(const char *report_path, const Bml
              drop_generation_matched &&
              no_matching_class_skipped &&
              anti_bloat_limit_applied &&
-             strcmp(rendered_display, "Elixir of the Iron Vow (+2 STR, -1 DEX for the rest of the run.)") == 0 &&
+             strcmp(rendered_display, "Elixir of the Iron Vow") == 0 &&
+             strcmp(rendered_description, "Bargain: +2 STR, -1 DEX for the rest of the run.") == 0 &&
              consumption.active_effect_created &&
              bml_has_value(serialized_active_effect) &&
              round_trip_loaded &&
@@ -3015,6 +3048,7 @@ static int bml_run_runebound_elixir_self_test(const char *report_path, const Bml
                                                     &drop_generation,
                                                     &no_matching_class_drop_generation,
                                                     rendered_display,
+                                                    rendered_description,
                                                     serialized_carrier_metadata,
                                                     &consumption,
                                                     serialized_active_effect,
@@ -4344,6 +4378,8 @@ static void *bml_uid_to_entity_replacement(int uid) {
     return entity;
 }
 
+static const char *bml_runebound_try_handle_empty_flask_hint(void);
+
 static const char *bml_language_get_replacement(int language_id) {
     ++g_bml_language_get_replacement_calls;
     if (language_id == BML_STASH_PROMPT_LANGUAGE_ID_TOOLTIP_ACTION && g_bml_stash_recent_uid_to_entity_was_framework_stash) {
@@ -4352,6 +4388,11 @@ static const char *bml_language_get_replacement(int language_id) {
         bool recent_uid_stash = bml_stash_consume_recent_uid_to_entity_prompt_context();
         if (bml_stash_any_selected_entity_is_framework_stash_access() || recent_uid_stash) {
             return BML_STASH_PROMPT_OPEN_STASH;
+        }
+    } else if (language_id == BML_RUNES_ELIXIR_EMPTY_FLASK_HINT_LANGUAGE_ID) {
+        const char *runebound_message = bml_runebound_try_handle_empty_flask_hint();
+        if (runebound_message != NULL) {
+            return runebound_message;
         }
     } else if (g_bml_stash_recent_uid_to_entity_was_framework_stash) {
         bml_stash_clear_recent_uid_to_entity_prompt_context();
@@ -4458,6 +4499,86 @@ static bool bml_stash_find_nearest_walkable_tile(BmlStashPlacementMapPrefix *map
         *world_y_out = best_world_y;
     }
     return true;
+}
+static bool bml_stash_map_tile_is_walkable(BmlStashPlacementMapPrefix *map_prefix, unsigned int tile_x, unsigned int tile_y) {
+    size_t base;
+    if (map_prefix == NULL || map_prefix->tiles == NULL || tile_x == 0U || tile_y == 0U || tile_x + 1U >= map_prefix->width || tile_y + 1U >= map_prefix->height) {
+        return false;
+    }
+    base = (size_t)tile_y * 3U + (size_t)tile_x * 3U * (size_t)map_prefix->height;
+    return map_prefix->tiles[base] != 0 && map_prefix->tiles[base + 1U] == 0;
+}
+static bool bml_stash_playable_tile_is_occupied(void *map_argument, unsigned int tile_x, unsigned int tile_y, const void *ignore_entity) {
+    BmlBaronyList *entity_list = bml_stash_playable_get_map_entity_list(map_argument);
+    if (entity_list == NULL) {
+        return false;
+    }
+    for (const BmlBaronyNode *node = entity_list->first; node != NULL; node = node->next) {
+        void *entity = node->element;
+        double x;
+        double y;
+        if (entity == NULL || entity == ignore_entity) {
+            continue;
+        }
+        x = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_X);
+        y = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_Y);
+        if (x < 0.0 || y < 0.0) {
+            continue;
+        }
+        if ((unsigned int)(x / 16.0) == tile_x && (unsigned int)(y / 16.0) == tile_y) {
+            return true;
+        }
+    }
+    return false;
+}
+static void *bml_stash_playable_find_assist_shrine(void *map_argument) {
+    BmlBaronyList *entity_list = bml_stash_playable_get_map_entity_list(map_argument);
+    if (entity_list == NULL) {
+        return NULL;
+    }
+    for (const BmlBaronyNode *node = entity_list->first; node != NULL; node = node->next) {
+        void *entity = node->element;
+        if (entity != NULL && bml_entity_get_s32(entity, BML_STASH_ENTITY_OFFSET_SPRITE) == BML_STASH_SPRITE_ASSIST_SHRINE_VISUAL) {
+            return entity;
+        }
+    }
+    return NULL;
+}
+static bool bml_stash_playable_choose_lobby_tile_near_assist_shrine(void *map_argument, BmlStashPlacementMapPrefix *map_prefix, double *world_x_out, double *world_y_out) {
+    static const int offsets[][2] = {
+        { 1, 0 },
+        { -1, 0 },
+        { 0, -1 },
+        { 0, 1 }
+    };
+    void *assist_shrine = bml_stash_playable_find_assist_shrine(map_argument);
+    unsigned int shrine_tile_x;
+    unsigned int shrine_tile_y;
+    if (assist_shrine == NULL || map_prefix == NULL || map_prefix->width == 0U || map_prefix->height == 0U) {
+        return false;
+    }
+    shrine_tile_x = (unsigned int)(bml_entity_get_real(assist_shrine, BML_STASH_ENTITY_OFFSET_X) / 16.0);
+    shrine_tile_y = (unsigned int)(bml_entity_get_real(assist_shrine, BML_STASH_ENTITY_OFFSET_Y) / 16.0);
+    for (size_t index = 0U; index < sizeof(offsets) / sizeof(offsets[0]); ++index) {
+        int candidate_x = (int)shrine_tile_x + offsets[index][0];
+        int candidate_y = (int)shrine_tile_y + offsets[index][1];
+        if (candidate_x <= 0 || candidate_y <= 0) {
+            continue;
+        }
+        if (!bml_stash_map_tile_is_walkable(map_prefix, (unsigned int)candidate_x, (unsigned int)candidate_y)) {
+            continue;
+        }
+        if (bml_stash_playable_tile_is_occupied(map_argument, (unsigned int)candidate_x, (unsigned int)candidate_y, assist_shrine)) {
+            continue;
+        }
+        bml_stash_world_tile_center((unsigned int)candidate_x, (unsigned int)candidate_y, world_x_out, world_y_out);
+        return true;
+    }
+    return bml_stash_find_nearest_walkable_tile(map_prefix,
+                                                bml_entity_get_real(assist_shrine, BML_STASH_ENTITY_OFFSET_X),
+                                                bml_entity_get_real(assist_shrine, BML_STASH_ENTITY_OFFSET_Y),
+                                                world_x_out,
+                                                world_y_out);
 }
 static bool bml_stash_playable_read_int_symbol(const char *name, int *value_out) {
     void *symbol = dlsym(RTLD_DEFAULT, name);
@@ -4629,6 +4750,7 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     void *lid = NULL;
     double x_pos = BML_STASH_LOBBY_PLACEMENT_X;
     double y_pos = BML_STASH_LOBBY_PLACEMENT_Y;
+    bool anchored_to_assist_shrine = false;
     if (!g_bml_stash_playable_active) {
         return false;
     }
@@ -4640,11 +4762,14 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     if (g_bml_stash_assign_actions_original != NULL) {
         g_bml_stash_assign_actions_original(map_argument);
     }
-    (void)bml_stash_find_nearest_walkable_tile(map_prefix, x_pos, y_pos, &x_pos, &y_pos);
+    anchored_to_assist_shrine = bml_stash_playable_choose_lobby_tile_near_assist_shrine(map_argument, map_prefix, &x_pos, &y_pos);
+    if (!anchored_to_assist_shrine) {
+        (void)bml_stash_find_nearest_walkable_tile(map_prefix, x_pos, y_pos, &x_pos, &y_pos);
+    }
     if (bml_stash_playable_place_chest_and_lid_at(map_argument, x_pos, y_pos, BML_STASH_LOBBY_PLACEMENT_YAW, &chest, &lid)) {
         g_bml_stash_playable_last_placed_chest = chest;
         g_bml_stash_playable_last_placed_lid = lid;
-        bml_append_stash_diagnostic_event("stash_access_point_created", "lobby", map_prefix != NULL ? map_prefix->name : NULL, true, x_pos, y_pos, -1);
+        bml_append_stash_diagnostic_event("stash_access_point_created", anchored_to_assist_shrine ? "lobby_assist_shrine_adjacent" : "lobby", map_prefix != NULL ? map_prefix->name : NULL, true, x_pos, y_pos, -1);
         g_bml_stash_playable_lobby_placements_succeeded += 1;
         return true;
     }
@@ -5160,24 +5285,31 @@ static int bml_install_stash_detour_group(BmlStashCoreDetourInstall *targets, si
 typedef void (*BmlRuneboundUseItemFunction)(void *, int, void *, bool, bool);
 typedef void (*BmlRuneboundConsumeItemFunction)(void **, int);
 typedef char *(*BmlRuneboundItemGetNameFunction)(void *);
+typedef char *(*BmlRuneboundItemDescriptionFunction)(void *);
 typedef int (*BmlRuneboundStatGetFunction)(void *, void *);
+typedef void (*BmlRuneboundHudWeaponFunction)(void *);
 _Static_assert(sizeof(BmlRuneboundUseItemFunction) == sizeof(void *), "BML Linux x86_64 Runebound useItem detours expect function pointers to fit in void pointers");
 _Static_assert(sizeof(BmlRuneboundConsumeItemFunction) == sizeof(void *), "BML Linux x86_64 Runebound consumeItem helper expects function pointers to fit in void pointers");
 _Static_assert(sizeof(BmlRuneboundItemGetNameFunction) == sizeof(void *), "BML Linux x86_64 Runebound Item::getName detours expect function pointers to fit in void pointers");
+_Static_assert(sizeof(BmlRuneboundItemDescriptionFunction) == sizeof(void *), "BML Linux x86_64 Runebound Item::description detours expect function pointers to fit in void pointers");
 _Static_assert(sizeof(BmlRuneboundStatGetFunction) == sizeof(void *), "BML Linux x86_64 Runebound stat detours expect function pointers to fit in void pointers");
+_Static_assert(sizeof(BmlRuneboundHudWeaponFunction) == sizeof(void *), "BML Linux x86_64 Runebound actHudWeapon detours expect function pointers to fit in void pointers");
 
 static BmlRuneboundUseItemFunction g_bml_runebound_use_item_original = NULL;
 static BmlRuneboundConsumeItemFunction g_bml_runebound_consume_item = NULL;
 static BmlRuneboundItemGetNameFunction g_bml_runebound_item_get_name_original = NULL;
+static BmlRuneboundItemDescriptionFunction g_bml_runebound_item_description_original = NULL;
 static BmlRuneboundStatGetFunction g_bml_runebound_stat_get_str_original = NULL;
 static BmlRuneboundStatGetFunction g_bml_runebound_stat_get_dex_original = NULL;
-static BmlStashCoreDetourInstall g_bml_runebound_live_targets[4];
+static BmlRuneboundHudWeaponFunction g_bml_runebound_act_hud_weapon_original = NULL;
+static BmlStashCoreDetourInstall g_bml_runebound_live_targets[BML_RUNES_ELIXIR_LIVE_HOOK_COUNT];
 static size_t g_bml_runebound_live_target_count = 0U;
 static bool g_bml_runebound_live_fake_provider_self_probe = false;
 static BmlRuneboundElixirDefinition g_bml_runebound_live_definition;
 static BmlRuneboundElixirCarrierMetadata g_bml_runebound_live_carrier;
 static BmlRuneboundElixirActiveEffect g_bml_runebound_live_active_effect;
 static char g_bml_runebound_live_display[BML_MAX_TEXT];
+static char g_bml_runebound_live_description[BML_MAX_TEXT];
 static char g_bml_runebound_live_last_display[BML_MAX_TEXT];
 static int g_bml_runebound_use_item_replacement_calls = 0;
 static int g_bml_runebound_use_item_recognized_calls = 0;
@@ -5187,10 +5319,18 @@ static int g_bml_runebound_active_effects_created = 0;
 static int g_bml_runebound_item_get_name_replacement_calls = 0;
 static int g_bml_runebound_item_get_name_iron_vow_returns = 0;
 static int g_bml_runebound_item_get_name_original_delegations = 0;
+static int g_bml_runebound_item_description_replacement_calls = 0;
+static int g_bml_runebound_item_description_iron_vow_returns = 0;
+static int g_bml_runebound_item_description_original_delegations = 0;
 static int g_bml_runebound_stat_get_str_replacement_calls = 0;
 static int g_bml_runebound_stat_get_str_bonus_applications = 0;
 static int g_bml_runebound_stat_get_dex_replacement_calls = 0;
 static int g_bml_runebound_stat_get_dex_penalty_applications = 0;
+static int g_bml_runebound_act_hud_weapon_replacement_calls = 0;
+static int g_bml_runebound_held_empty_flask_hint_conversions = 0;
+static int g_bml_runebound_held_elixir_consumptions = 0;
+static int g_bml_runebound_held_weapon_slot_cleared = 0;
+static int g_bml_runebound_current_hud_weapon_player = -1;
 static int g_bml_runebound_live_last_str_result = 0;
 static int g_bml_runebound_live_last_dex_result = 0;
 
@@ -5217,6 +5357,18 @@ static BmlRuneboundItemGetNameFunction bml_runebound_item_get_name_function_from
     memcpy(&function, &address, sizeof(function));
     return function;
 }
+static BmlRuneboundItemDescriptionFunction bml_runebound_item_description_function_from_address(void *address) {
+    BmlRuneboundItemDescriptionFunction function = NULL;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_runebound_item_description_function_address(BmlRuneboundItemDescriptionFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
 
 static void *bml_runebound_item_get_name_function_address(BmlRuneboundItemGetNameFunction function) {
     void *address = NULL;
@@ -5236,6 +5388,18 @@ static void *bml_runebound_stat_get_function_address(BmlRuneboundStatGetFunction
     return address;
 }
 
+static BmlRuneboundHudWeaponFunction bml_runebound_hud_weapon_function_from_address(void *address) {
+    BmlRuneboundHudWeaponFunction function = NULL;
+    memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+static void *bml_runebound_hud_weapon_function_address(BmlRuneboundHudWeaponFunction function) {
+    void *address = NULL;
+    memcpy(&address, &function, sizeof(address));
+    return address;
+}
+
 static void bml_reset_runebound_live_state(void) {
     memset(g_bml_runebound_live_targets, 0, sizeof(g_bml_runebound_live_targets));
     memset(&g_bml_runebound_live_active_effect, 0, sizeof(g_bml_runebound_live_active_effect));
@@ -5245,8 +5409,10 @@ static void bml_reset_runebound_live_state(void) {
     g_bml_runebound_use_item_original = NULL;
     g_bml_runebound_consume_item = NULL;
     g_bml_runebound_item_get_name_original = NULL;
+    g_bml_runebound_item_description_original = NULL;
     g_bml_runebound_stat_get_str_original = NULL;
     g_bml_runebound_stat_get_dex_original = NULL;
+    g_bml_runebound_act_hud_weapon_original = NULL;
     g_bml_runebound_use_item_replacement_calls = 0;
     g_bml_runebound_use_item_recognized_calls = 0;
     g_bml_runebound_use_item_original_delegations = 0;
@@ -5255,25 +5421,68 @@ static void bml_reset_runebound_live_state(void) {
     g_bml_runebound_item_get_name_replacement_calls = 0;
     g_bml_runebound_item_get_name_iron_vow_returns = 0;
     g_bml_runebound_item_get_name_original_delegations = 0;
+    g_bml_runebound_item_description_replacement_calls = 0;
+    g_bml_runebound_item_description_iron_vow_returns = 0;
+    g_bml_runebound_item_description_original_delegations = 0;
     g_bml_runebound_stat_get_str_replacement_calls = 0;
     g_bml_runebound_stat_get_str_bonus_applications = 0;
     g_bml_runebound_stat_get_dex_replacement_calls = 0;
     g_bml_runebound_stat_get_dex_penalty_applications = 0;
+    g_bml_runebound_act_hud_weapon_replacement_calls = 0;
+    g_bml_runebound_held_empty_flask_hint_conversions = 0;
+    g_bml_runebound_held_elixir_consumptions = 0;
+    g_bml_runebound_held_weapon_slot_cleared = 0;
+    g_bml_runebound_current_hud_weapon_player = -1;
     g_bml_runebound_live_last_str_result = 0;
     g_bml_runebound_live_last_dex_result = 0;
     g_bml_runebound_live_last_display[0] = '\0';
     bml_runebound_elixir_make_fixture_definition(&g_bml_runebound_live_definition);
     bml_runebound_elixir_make_fixture_carrier(&g_bml_runebound_live_definition, &g_bml_runebound_live_carrier);
     if (bml_runebound_elixir_render_carrier_display(&g_bml_runebound_live_carrier, g_bml_runebound_live_display, sizeof(g_bml_runebound_live_display)) != 0) {
-        bml_copy_string(g_bml_runebound_live_display, sizeof(g_bml_runebound_live_display), "Elixir of the Iron Vow (+2 STR, -1 DEX)");
+        bml_copy_string(g_bml_runebound_live_display, sizeof(g_bml_runebound_live_display), "Elixir of the Iron Vow");
+    }
+    if (bml_runebound_elixir_render_carrier_description(&g_bml_runebound_live_carrier, g_bml_runebound_live_description, sizeof(g_bml_runebound_live_description)) != 0) {
+        bml_copy_string(g_bml_runebound_live_description, sizeof(g_bml_runebound_live_description), "Bargain: +2 STR, -1 DEX for the rest of the run.");
     }
 }
 
 static bool bml_runebound_item_is_iron_vow_carrier(void *item) {
     const BmlBaronyItem *barony_item = (const BmlBaronyItem *)item;
     return barony_item != NULL &&
-           barony_item->type == BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_EMPTY &&
+           barony_item->type == BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH &&
            barony_item->appearance == g_bml_runebound_live_carrier.instance_id;
+}
+
+static void bml_runebound_write_use_debug_event(void *item, int player, bool recognized) {
+    const char *path = getenv("BML_RUNEBOUND_ELIXIRS_USE_DEBUG_LOG");
+    const BmlBaronyItem *barony_item = (const BmlBaronyItem *)item;
+    FILE *file;
+    if (!bml_has_value(path)) {
+        return;
+    }
+    file = fopen(path, "a");
+    if (file == NULL) {
+        return;
+    }
+    fprintf(file,
+            "{\"event\":\"useItem\",\"call\":%d,\"player\":%d,\"recognized\":%s,\"itemPresent\":%s",
+            g_bml_runebound_use_item_replacement_calls,
+            player,
+            recognized ? "true" : "false",
+            barony_item != NULL ? "true" : "false");
+    if (barony_item != NULL) {
+        fprintf(file,
+                ",\"type\":%d,\"status\":%d,\"beatitude\":%d,\"count\":%d,\"appearance\":%u,\"identified\":%s,\"uid\":%u",
+                barony_item->type,
+                barony_item->status,
+                (int)barony_item->beatitude,
+                (int)barony_item->count,
+                barony_item->appearance,
+                barony_item->identified ? "true" : "false",
+                barony_item->uid);
+    }
+    fputs("}\n", file);
+    (void)fclose(file);
 }
 
 static void *bml_runebound_live_player_stat(int player) {
@@ -5284,6 +5493,24 @@ static void *bml_runebound_live_player_stat(int player) {
     }
     memcpy(&player_stat, (const unsigned char *)stats_symbol + ((size_t)player * sizeof(player_stat)), sizeof(player_stat));
     return player_stat;
+}
+
+static void **bml_runebound_live_player_weapon_slot(int player) {
+    void *player_stat = bml_runebound_live_player_stat(player);
+    if (player_stat == NULL) {
+        return NULL;
+    }
+    return (void **)((unsigned char *)player_stat + BML_RUNES_ELIXIR_STAT_WEAPON_OFFSET);
+}
+
+static void *bml_runebound_live_player_weapon(int player) {
+    void **weapon_slot = bml_runebound_live_player_weapon_slot(player);
+    void *weapon = NULL;
+    if (weapon_slot == NULL) {
+        return NULL;
+    }
+    memcpy(&weapon, weapon_slot, sizeof(weapon));
+    return weapon;
 }
 
 static bool bml_runebound_live_stat_matches_active_player(void *stat, void *entity) {
@@ -5316,9 +5543,65 @@ static bool bml_runebound_live_create_iron_vow_effect(int player) {
     return true;
 }
 
+static const char *bml_runebound_try_handle_empty_flask_hint(void) {
+    int player = g_bml_runebound_current_hud_weapon_player;
+    void *weapon;
+    if (player < 0 || player >= 4) {
+        return NULL;
+    }
+    weapon = bml_runebound_live_player_weapon(player);
+    if (!bml_runebound_item_is_iron_vow_carrier(weapon)) {
+        return NULL;
+    }
+    ++g_bml_runebound_held_empty_flask_hint_conversions;
+    return "The Iron Vow settles into your bones.";
+}
+
+static void bml_runebound_act_hud_weapon_replacement(void *entity) {
+    int player = -1;
+    int prior_player = g_bml_runebound_current_hud_weapon_player;
+    void *weapon = NULL;
+    void **weapon_slot = NULL;
+    bool recognized = false;
+    ++g_bml_runebound_act_hud_weapon_replacement_calls;
+    if (entity != NULL) {
+        player = bml_entity_get_s32(entity, BML_STASH_ENTITY_OFFSET_SKILL + (uintptr_t)BML_RUNES_ELIXIR_HUDWEAPON_PLAYERNUM_SKILL_INDEX * sizeof(int32_t));
+        if (player >= 0 && player < 4) {
+            weapon_slot = bml_runebound_live_player_weapon_slot(player);
+            if (weapon_slot != NULL) {
+                memcpy(&weapon, weapon_slot, sizeof(weapon));
+            }
+            recognized = bml_runebound_item_is_iron_vow_carrier(weapon);
+        }
+    }
+    if (recognized) {
+        (void)bml_runebound_live_create_iron_vow_effect(player);
+        if (g_bml_runebound_consume_item != NULL && weapon_slot != NULL) {
+            void *post_consume_weapon = NULL;
+            ++g_bml_runebound_consume_item_delegations;
+            g_bml_runebound_consume_item(weapon_slot, player);
+            memcpy(&post_consume_weapon, weapon_slot, sizeof(post_consume_weapon));
+            if (post_consume_weapon != weapon) {
+                ++g_bml_runebound_held_weapon_slot_cleared;
+            }
+        }
+        ++g_bml_runebound_held_elixir_consumptions;
+        g_bml_runebound_current_hud_weapon_player = prior_player;
+        return;
+    }
+    g_bml_runebound_current_hud_weapon_player = -1;
+    if (g_bml_runebound_act_hud_weapon_original != NULL) {
+        g_bml_runebound_act_hud_weapon_original(entity);
+    }
+    g_bml_runebound_current_hud_weapon_player = prior_player;
+}
+
 static void bml_runebound_use_item_replacement(void *item, int player, void *entity, bool arg4, bool arg5) {
+    bool recognized;
     ++g_bml_runebound_use_item_replacement_calls;
-    if (bml_runebound_item_is_iron_vow_carrier(item)) {
+    recognized = bml_runebound_item_is_iron_vow_carrier(item);
+    bml_runebound_write_use_debug_event(item, player, recognized);
+    if (recognized) {
         ++g_bml_runebound_use_item_recognized_calls;
         (void)bml_runebound_live_create_iron_vow_effect(player);
         if (g_bml_runebound_consume_item != NULL) {
@@ -5353,6 +5636,20 @@ static char *bml_runebound_item_get_name_replacement(void *item) {
     return (char *)"Unknown item";
 }
 
+static char *bml_runebound_item_description_replacement(void *item) {
+    ++g_bml_runebound_item_description_replacement_calls;
+    if (bml_runebound_item_is_iron_vow_carrier(item)) {
+        ++g_bml_runebound_item_description_iron_vow_returns;
+        bml_copy_string(g_bml_runebound_live_last_display, sizeof(g_bml_runebound_live_last_display), g_bml_runebound_live_description);
+        return g_bml_runebound_live_description;
+    }
+    if (g_bml_runebound_item_description_original != NULL) {
+        ++g_bml_runebound_item_description_original_delegations;
+        return g_bml_runebound_item_description_original(item);
+    }
+    return (char *)"Unknown item";
+}
+
 static int bml_runebound_stat_get_str_replacement(void *stat, void *entity) {
     int value = g_bml_runebound_stat_get_str_original != NULL ? g_bml_runebound_stat_get_str_original(stat, entity) : 0;
     ++g_bml_runebound_stat_get_str_replacement_calls;
@@ -5380,10 +5677,14 @@ static void bml_bind_runebound_live_original(const BmlStashCoreDetourInstall *ta
         g_bml_runebound_use_item_original = bml_runebound_use_item_function_from_address(target->install.trampoline);
     } else if (strcmp(target->target_symbol, "_ZNK4Item7getNameEv") == 0) {
         g_bml_runebound_item_get_name_original = bml_runebound_item_get_name_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_ZNK4Item11descriptionEv") == 0) {
+        g_bml_runebound_item_description_original = bml_runebound_item_description_function_from_address(target->install.trampoline);
     } else if (strcmp(target->target_symbol, "_Z10statGetSTRP4StatP6Entity") == 0) {
         g_bml_runebound_stat_get_str_original = bml_runebound_stat_get_function_from_address(target->install.trampoline);
     } else if (strcmp(target->target_symbol, "_Z10statGetDEXP4StatP6Entity") == 0) {
         g_bml_runebound_stat_get_dex_original = bml_runebound_stat_get_function_from_address(target->install.trampoline);
+    } else if (strcmp(target->target_symbol, "_Z12actHudWeaponP6Entity") == 0) {
+        g_bml_runebound_act_hud_weapon_original = bml_runebound_hud_weapon_function_from_address(target->install.trampoline);
     }
 }
 
@@ -5394,11 +5695,17 @@ static int bml_runebound_live_replacement_calls_for_symbol(const char *symbol) {
     if (strcmp(symbol, "_ZNK4Item7getNameEv") == 0) {
         return g_bml_runebound_item_get_name_replacement_calls;
     }
+    if (strcmp(symbol, "_ZNK4Item11descriptionEv") == 0) {
+        return g_bml_runebound_item_description_replacement_calls;
+    }
     if (strcmp(symbol, "_Z10statGetSTRP4StatP6Entity") == 0) {
         return g_bml_runebound_stat_get_str_replacement_calls;
     }
     if (strcmp(symbol, "_Z10statGetDEXP4StatP6Entity") == 0) {
         return g_bml_runebound_stat_get_dex_replacement_calls;
+    }
+    if (strcmp(symbol, "_Z12actHudWeaponP6Entity") == 0) {
+        return g_bml_runebound_act_hud_weapon_replacement_calls;
     }
     return 0;
 }
@@ -5471,8 +5778,10 @@ static void bml_rollback_runebound_live_detour_targets(BmlStashCoreDetourInstall
     }
     g_bml_runebound_use_item_original = NULL;
     g_bml_runebound_item_get_name_original = NULL;
+    g_bml_runebound_item_description_original = NULL;
     g_bml_runebound_stat_get_str_original = NULL;
     g_bml_runebound_stat_get_dex_original = NULL;
+    g_bml_runebound_act_hud_weapon_original = NULL;
     g_bml_runebound_live_hooks_installed = false;
 }
 
@@ -5488,16 +5797,22 @@ static int bml_install_runebound_live_detour_group(BmlStashCoreDetourInstall *ta
 
 static bool bml_runebound_live_fake_provider_available(void) {
     return dlsym(RTLD_DEFAULT, "bml_fake_item_get_name_calls") != NULL &&
+           dlsym(RTLD_DEFAULT, "bml_fake_item_description_calls") != NULL &&
            dlsym(RTLD_DEFAULT, "bml_fake_stat_get_str_calls") != NULL &&
-           dlsym(RTLD_DEFAULT, "bml_fake_use_item_calls") != NULL;
+           dlsym(RTLD_DEFAULT, "bml_fake_use_item_calls") != NULL &&
+           dlsym(RTLD_DEFAULT, "bml_fake_act_hud_weapon_calls") != NULL;
 }
 
 static void bml_runebound_live_run_fake_provider_self_probe(void) {
     BmlBaronyItem item;
     BmlRuneboundUseItemFunction use_item = bml_runebound_use_item_function_from_address(dlsym(RTLD_DEFAULT, "_Z7useItemP4ItemiP6Entitybb"));
     BmlRuneboundItemGetNameFunction get_name = bml_runebound_item_get_name_function_from_address(dlsym(RTLD_DEFAULT, "_ZNK4Item7getNameEv"));
+    BmlRuneboundItemDescriptionFunction description = bml_runebound_item_description_function_from_address(dlsym(RTLD_DEFAULT, "_ZNK4Item11descriptionEv"));
     BmlRuneboundStatGetFunction get_str = bml_runebound_stat_get_function_from_address(dlsym(RTLD_DEFAULT, "_Z10statGetSTRP4StatP6Entity"));
     BmlRuneboundStatGetFunction get_dex = bml_runebound_stat_get_function_from_address(dlsym(RTLD_DEFAULT, "_Z10statGetDEXP4StatP6Entity"));
+    BmlRuneboundHudWeaponFunction act_hud_weapon = bml_runebound_hud_weapon_function_from_address(dlsym(RTLD_DEFAULT, "_Z12actHudWeaponP6Entity"));
+    void *prior_weapon = NULL;
+    unsigned char fake_hud_entity[BML_STASH_ENTITY_OFFSET_SKILL + (BML_RUNES_ELIXIR_HUDWEAPON_PLAYERNUM_SKILL_INDEX + 1U) * sizeof(int32_t)];
     void *probe_stat = bml_runebound_live_player_stat(0);
 
     if (!bml_runebound_live_fake_provider_available()) {
@@ -5505,7 +5820,7 @@ static void bml_runebound_live_run_fake_provider_self_probe(void) {
     }
 
     memset(&item, 0, sizeof(item));
-    item.type = BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_EMPTY;
+    item.type = BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH;
     item.count = 1;
     item.appearance = g_bml_runebound_live_carrier.instance_id;
     item.identified = true;
@@ -5519,6 +5834,22 @@ static void bml_runebound_live_run_fake_provider_self_probe(void) {
         if (display != NULL) {
             bml_copy_string(g_bml_runebound_live_last_display, sizeof(g_bml_runebound_live_last_display), display);
         }
+    }
+    if (description != NULL) {
+        const char *display = description(&item);
+        if (display != NULL) {
+            bml_copy_string(g_bml_runebound_live_last_display, sizeof(g_bml_runebound_live_last_display), display);
+        }
+    }
+    if (act_hud_weapon != NULL && probe_stat != NULL) {
+        void *probe_weapon = &item;
+        int32_t player_zero = 0;
+        memcpy(&prior_weapon, (const unsigned char *)probe_stat + BML_RUNES_ELIXIR_STAT_WEAPON_OFFSET, sizeof(prior_weapon));
+        memcpy((unsigned char *)probe_stat + BML_RUNES_ELIXIR_STAT_WEAPON_OFFSET, &probe_weapon, sizeof(probe_weapon));
+        memset(fake_hud_entity, 0, sizeof(fake_hud_entity));
+        memcpy(fake_hud_entity + BML_STASH_ENTITY_OFFSET_SKILL + (BML_RUNES_ELIXIR_HUDWEAPON_PLAYERNUM_SKILL_INDEX * sizeof(int32_t)), &player_zero, sizeof(player_zero));
+        act_hud_weapon(fake_hud_entity);
+        memcpy((unsigned char *)probe_stat + BML_RUNES_ELIXIR_STAT_WEAPON_OFFSET, &prior_weapon, sizeof(prior_weapon));
     }
     if (get_str != NULL) {
         g_bml_runebound_live_last_str_result = get_str(probe_stat, NULL);
@@ -5549,6 +5880,362 @@ static void bml_write_runebound_live_target(FILE *file, const BmlStashCoreDetour
         fputs("\n      }", file);
     }
     fputs("\n    }", file);
+}
+
+typedef struct BmlRuneboundElixirProductionDisplayProbe {
+    const char *status;
+    const char *reason;
+    uint32_t carrier_instance_id;
+    int carrier_item_type;
+    int name_replacement_calls_before;
+    int name_replacement_calls_after;
+    int name_iron_vow_returns_before;
+    int name_iron_vow_returns_after;
+    int description_replacement_calls_before;
+    int description_replacement_calls_after;
+    int description_iron_vow_returns_before;
+    int description_iron_vow_returns_after;
+    char returned_name[BML_MAX_TEXT];
+    char returned_description[BML_MAX_TEXT];
+    bool name_symbol_resolved;
+    bool description_symbol_resolved;
+    bool name_detoured_replacement_invoked;
+    bool description_detoured_replacement_invoked;
+    bool name_display_matched;
+    bool description_display_matched;
+    bool passed;
+} BmlRuneboundElixirProductionDisplayProbe;
+
+static const char *const BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS[] = {
+    "bml_fake_use_item_calls",
+    "bml_fake_consume_item_calls",
+    "bml_fake_item_get_name_calls",
+    "bml_fake_item_description_calls",
+    "bml_fake_stat_get_str_calls",
+    "bml_fake_stat_get_dex_calls",
+    "bml_fake_act_hud_weapon_calls"
+};
+
+static size_t bml_runebound_live_installed_hook_count(void) {
+    size_t installed_count = 0U;
+    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+        if (strcmp(g_bml_runebound_live_targets[index].status, "installed") == 0) {
+            ++installed_count;
+        }
+    }
+    return installed_count;
+}
+
+static bool bml_runebound_live_required_symbols_resolved(void) {
+    if (g_bml_runebound_live_target_count != BML_RUNES_ELIXIR_LIVE_HOOK_COUNT) {
+        return false;
+    }
+    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+        if (g_bml_runebound_live_targets[index].target_address == NULL) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool bml_runebound_live_fake_provider_detected(void) {
+    for (size_t index = 0U; index < (sizeof(BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS) / sizeof(BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS[0])); ++index) {
+        if (dlsym(RTLD_DEFAULT, BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS[index]) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void bml_runebound_elixir_run_production_display_probe(BmlRuneboundElixirProductionDisplayProbe *probe) {
+    BmlBaronyItem item;
+    BmlRuneboundItemGetNameFunction get_name = bml_runebound_item_get_name_function_from_address(dlsym(RTLD_DEFAULT, "_ZNK4Item7getNameEv"));
+    BmlRuneboundItemDescriptionFunction description = bml_runebound_item_description_function_from_address(dlsym(RTLD_DEFAULT, "_ZNK4Item11descriptionEv"));
+    const char *display;
+
+    memset(probe, 0, sizeof(*probe));
+    probe->status = "failed";
+    probe->reason = "not_run";
+    probe->carrier_instance_id = g_bml_runebound_live_carrier.instance_id;
+    probe->carrier_item_type = BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH;
+    probe->name_replacement_calls_before = g_bml_runebound_item_get_name_replacement_calls;
+    probe->name_iron_vow_returns_before = g_bml_runebound_item_get_name_iron_vow_returns;
+    probe->description_replacement_calls_before = g_bml_runebound_item_description_replacement_calls;
+    probe->description_iron_vow_returns_before = g_bml_runebound_item_description_iron_vow_returns;
+    probe->name_symbol_resolved = get_name != NULL;
+    probe->description_symbol_resolved = description != NULL;
+
+    if (!g_bml_runebound_live_hooks_installed || bml_runebound_live_installed_hook_count() != BML_RUNES_ELIXIR_LIVE_HOOK_COUNT) {
+        probe->reason = "live_hooks_not_installed";
+        probe->name_replacement_calls_after = g_bml_runebound_item_get_name_replacement_calls;
+        probe->name_iron_vow_returns_after = g_bml_runebound_item_get_name_iron_vow_returns;
+        probe->description_replacement_calls_after = g_bml_runebound_item_description_replacement_calls;
+        probe->description_iron_vow_returns_after = g_bml_runebound_item_description_iron_vow_returns;
+        return;
+    }
+    if (get_name == NULL) {
+        probe->reason = "item_get_name_symbol_missing";
+        probe->name_replacement_calls_after = g_bml_runebound_item_get_name_replacement_calls;
+        probe->name_iron_vow_returns_after = g_bml_runebound_item_get_name_iron_vow_returns;
+        probe->description_replacement_calls_after = g_bml_runebound_item_description_replacement_calls;
+        probe->description_iron_vow_returns_after = g_bml_runebound_item_description_iron_vow_returns;
+        return;
+    }
+    if (description == NULL) {
+        probe->reason = "item_description_symbol_missing";
+        probe->name_replacement_calls_after = g_bml_runebound_item_get_name_replacement_calls;
+        probe->name_iron_vow_returns_after = g_bml_runebound_item_get_name_iron_vow_returns;
+        probe->description_replacement_calls_after = g_bml_runebound_item_description_replacement_calls;
+        probe->description_iron_vow_returns_after = g_bml_runebound_item_description_iron_vow_returns;
+        return;
+    }
+
+    memset(&item, 0, sizeof(item));
+    item.type = BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH;
+    item.count = 1;
+    item.appearance = g_bml_runebound_live_carrier.instance_id;
+    item.identified = true;
+
+    display = get_name(&item);
+    if (display != NULL) {
+        bml_copy_string(probe->returned_name, sizeof(probe->returned_name), display);
+    }
+    display = description(&item);
+    if (display != NULL) {
+        bml_copy_string(probe->returned_description, sizeof(probe->returned_description), display);
+    }
+
+    probe->name_replacement_calls_after = g_bml_runebound_item_get_name_replacement_calls;
+    probe->name_iron_vow_returns_after = g_bml_runebound_item_get_name_iron_vow_returns;
+    probe->description_replacement_calls_after = g_bml_runebound_item_description_replacement_calls;
+    probe->description_iron_vow_returns_after = g_bml_runebound_item_description_iron_vow_returns;
+    probe->name_detoured_replacement_invoked = probe->name_replacement_calls_after > probe->name_replacement_calls_before &&
+                                               probe->name_iron_vow_returns_after > probe->name_iron_vow_returns_before;
+    probe->description_detoured_replacement_invoked = probe->description_replacement_calls_after > probe->description_replacement_calls_before &&
+                                                      probe->description_iron_vow_returns_after > probe->description_iron_vow_returns_before;
+    probe->name_display_matched = strcmp(probe->returned_name, g_bml_runebound_live_display) == 0;
+    probe->description_display_matched = strcmp(probe->returned_description, g_bml_runebound_live_description) == 0;
+    probe->passed = probe->name_detoured_replacement_invoked &&
+                    probe->description_detoured_replacement_invoked &&
+                    probe->name_display_matched &&
+                    probe->description_display_matched;
+    probe->status = probe->passed ? "passed" : "failed";
+    probe->reason = probe->passed ? "detoured_item_name_and_description_returned_iron_vow_text" : "detoured_item_display_or_description_mismatch";
+}
+
+static void bml_write_runebound_production_skipped_check(FILE *file, const char *name, const char *description) {
+    fputs("{\"name\": ", file);
+    bml_json_write_escaped(file, name);
+    fputs(", \"status\": \"skipped\", \"reason\": \"requires_live_player_state\", \"description\": ", file);
+    bml_json_write_escaped(file, description);
+    fputs("}", file);
+}
+
+static int bml_write_runebound_elixir_production_validation_report(const char *report_path,
+                                                                   const BmlReportInfo *info,
+                                                                   bool fake_provider,
+                                                                   const BmlRuneboundElixirProductionDisplayProbe *display_probe,
+                                                                   const char *status,
+                                                                   const char *error_code,
+                                                                   const char *error_message) {
+    const size_t installed_count = bml_runebound_live_installed_hook_count();
+    const bool required_symbols_resolved = bml_runebound_live_required_symbols_resolved();
+    char process_executable[PATH_MAX];
+    ssize_t process_executable_length;
+    FILE *file;
+
+    process_executable[0] = '\0';
+    process_executable_length = readlink("/proc/self/exe", process_executable, sizeof(process_executable) - 1U);
+    if (process_executable_length >= 0) {
+        process_executable[process_executable_length] = '\0';
+    }
+
+    file = fopen(report_path, "wb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    fputs("{\n  \"schemaVersion\": \"0.1.0\",\n  \"test\": \"runebound-elixir-production-validation\",\n  \"status\": ", file);
+    bml_json_write_escaped(file, status);
+    fputs(",\n  \"mod\": {\n    \"id\": ", file);
+    bml_json_write_escaped(file, BML_RUNES_ELIXIR_PACKAGE_ID);
+    fputs(",\n    \"version\": ", file);
+    bml_json_write_escaped(file, info != NULL ? info->runebound_elixirs_version : "0.1.0");
+    fputs(",\n    \"manifestDetected\": ", file);
+    fputs(info != NULL && info->has_runebound_elixirs ? "true" : "false", file);
+    fputs("\n  },\n  \"claimBoundary\": \"production-live-hook-display-and-description-probe-only\",\n  \"playableBehaviorClaimed\": false,\n  \"processExecutable\": ", file);
+    bml_json_write_escaped(file, process_executable);
+    fputs(",\n  \"baronyExecutable\": ", file);
+    bml_json_write_escaped(file, process_executable);
+    fputs(",\n  \"fakeProvider\": ", file);
+    fputs(fake_provider ? "true" : "false", file);
+    fputs(",\n  \"fakeProviderSymbols\": [", file);
+    for (size_t index = 0U; index < (sizeof(BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS) / sizeof(BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS[0])); ++index) {
+        fputs(index == 0U ? "\n    " : ",\n    ", file);
+        fputs("{\"name\": ", file);
+        bml_json_write_escaped(file, BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS[index]);
+        fputs(", \"resolved\": ", file);
+        fputs(dlsym(RTLD_DEFAULT, BML_RUNES_ELIXIR_FAKE_PROVIDER_SYMBOLS[index]) != NULL ? "true" : "false", file);
+        fputs("}", file);
+    }
+    fputs("\n  ],\n  \"hookInstallSummary\": {\n    \"installedHooks\": ", file);
+    fprintf(file, "%zu", installed_count);
+    fputs(",\n    \"installedHookCount\": ", file);
+    fprintf(file, "%zu", installed_count);
+    fputs(",\n    \"targetSymbolCount\": ", file);
+    fprintf(file, "%zu", g_bml_runebound_live_target_count);
+    fputs(",\n    \"expectedHookCount\": ", file);
+    fprintf(file, "%u", (unsigned int)BML_RUNES_ELIXIR_LIVE_HOOK_COUNT);
+    fputs(",\n    \"allHooksInstalled\": ", file);
+    fputs(g_bml_runebound_live_hooks_installed && installed_count == BML_RUNES_ELIXIR_LIVE_HOOK_COUNT ? "true" : "false", file);
+    fputs(",\n    \"requiredSymbolsResolved\": ", file);
+    fputs(required_symbols_resolved ? "true" : "false", file);
+    fputs(",\n    \"useHookInstalled\": ", file);
+    fputs(g_bml_runebound_use_item_original != NULL ? "true" : "false", file);
+    fputs(",\n    \"displayHookInstalled\": ", file);
+    fputs(g_bml_runebound_item_get_name_original != NULL ? "true" : "false", file);
+    fputs(",\n    \"descriptionHookInstalled\": ", file);
+    fputs(g_bml_runebound_item_description_original != NULL ? "true" : "false", file);
+    fputs(",\n    \"statHooksInstalled\": ", file);
+    fputs((g_bml_runebound_stat_get_str_original != NULL && g_bml_runebound_stat_get_dex_original != NULL) ? "true" : "false", file);
+    fputs(",\n    \"targets\": [", file);
+    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+        fputs(index == 0U ? "\n      " : ",\n      ", file);
+        bml_write_runebound_live_target(file, &g_bml_runebound_live_targets[index]);
+    }
+    if (g_bml_runebound_live_target_count > 0U) {
+        fputs("\n    ", file);
+    }
+    fputs("]\n  },\n  \"displayCarrierProbe\": {\n    \"status\": ", file);
+    bml_json_write_escaped(file, display_probe != NULL ? display_probe->status : "failed");
+    fputs(",\n    \"reason\": ", file);
+    bml_json_write_escaped(file, display_probe != NULL ? display_probe->reason : "not_run");
+    fputs(",\n    \"calledSymbol\": \"_ZNK4Item7getNameEv\",\n    \"calledDescriptionSymbol\": \"_ZNK4Item11descriptionEv\",\n    \"calledThroughInstalledHookPath\": ", file);
+    fputs(display_probe != NULL && display_probe->name_detoured_replacement_invoked ? "true" : "false", file);
+    fputs(",\n    \"calledDescriptionThroughInstalledHookPath\": ", file);
+    fputs(display_probe != NULL && display_probe->description_detoured_replacement_invoked ? "true" : "false", file);
+    fputs(",\n    \"symbolResolved\": ", file);
+    fputs(display_probe != NULL && display_probe->name_symbol_resolved ? "true" : "false", file);
+    fputs(",\n    \"descriptionSymbolResolved\": ", file);
+    fputs(display_probe != NULL && display_probe->description_symbol_resolved ? "true" : "false", file);
+    fputs(",\n    \"carrierItemType\": \"POTION_STRENGTH\",\n    \"carrierItemTypeValue\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->carrier_item_type : BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH);
+    fputs(",\n    \"catalogId\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_definition.catalog_id);
+    fputs(",\n    \"carrierInstanceId\": ", file);
+    fprintf(file, "%" PRIu32, display_probe != NULL ? display_probe->carrier_instance_id : g_bml_runebound_live_carrier.instance_id);
+    fputs(",\n    \"expectedDisplay\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_display);
+    fputs(",\n    \"expectedDescription\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_description);
+    fputs(",\n    \"returnedDisplay\": ", file);
+    bml_json_write_escaped(file, display_probe != NULL ? display_probe->returned_name : "");
+    fputs(",\n    \"actualDisplay\": ", file);
+    bml_json_write_escaped(file, display_probe != NULL ? display_probe->returned_name : "");
+    fputs(",\n    \"returnedDescription\": ", file);
+    bml_json_write_escaped(file, display_probe != NULL ? display_probe->returned_description : "");
+    fputs(",\n    \"actualDescription\": ", file);
+    bml_json_write_escaped(file, display_probe != NULL ? display_probe->returned_description : "");
+    fputs(",\n    \"displayMatched\": ", file);
+    fputs(display_probe != NULL && display_probe->name_display_matched ? "true" : "false", file);
+    fputs(",\n    \"descriptionMatched\": ", file);
+    fputs(display_probe != NULL && display_probe->description_display_matched ? "true" : "false", file);
+    fputs(",\n    \"replacementCallsBefore\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->name_replacement_calls_before : 0);
+    fputs(",\n    \"replacementCallsAfter\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->name_replacement_calls_after : 0);
+    fputs(",\n    \"replacementCallsDelta\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->name_replacement_calls_after - display_probe->name_replacement_calls_before : 0);
+    fputs(",\n    \"descriptionReplacementCallsBefore\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->description_replacement_calls_before : 0);
+    fputs(",\n    \"descriptionReplacementCallsAfter\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->description_replacement_calls_after : 0);
+    fputs(",\n    \"descriptionReplacementCallsDelta\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->description_replacement_calls_after - display_probe->description_replacement_calls_before : 0);
+    fputs(",\n    \"ironVowReturnsBefore\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->name_iron_vow_returns_before : 0);
+    fputs(",\n    \"ironVowReturnsAfter\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->name_iron_vow_returns_after : 0);
+    fputs(",\n    \"ironVowReturnsDelta\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->name_iron_vow_returns_after - display_probe->name_iron_vow_returns_before : 0);
+    fputs(",\n    \"descriptionIronVowReturnsBefore\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->description_iron_vow_returns_before : 0);
+    fputs(",\n    \"descriptionIronVowReturnsAfter\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->description_iron_vow_returns_after : 0);
+    fputs(",\n    \"descriptionIronVowReturnsDelta\": ", file);
+    fprintf(file, "%d", display_probe != NULL ? display_probe->description_iron_vow_returns_after - display_probe->description_iron_vow_returns_before : 0);
+    fputs("\n  },\n  \"gameplayChecks\": {\n    \"useItem\": {\"status\": \"not_run\", \"reason\": \"requires_live_player_state\"},\n    \"actHudWeapon\": {\"status\": \"not_run\", \"reason\": \"requires_live_player_hud_weapon_entity_and_equipped_slot\"},\n    \"heldEmptyFlaskHint\": {\"status\": \"not_run\", \"reason\": \"requires_live_player_hud_weapon_entity_and_equipped_slot\"},\n    \"consumeItem\": {\"status\": \"not_run\", \"reason\": \"requires_live_player_state\"},\n    \"statGetSTR\": {\"status\": \"not_run\", \"reason\": \"requires_live_player_state\"},\n    \"statGetDEX\": {\"status\": \"not_run\", \"reason\": \"requires_live_player_state\"}\n  },\n  \"liveGameplayGates\": [\n    ", file);
+    bml_write_runebound_production_skipped_check(file, "solo_drop_use_save", "Requires a real player inventory/stat/save path in the running Barony executable.");
+    fputs(",\n    ", file);
+    bml_write_runebound_production_skipped_check(file, "present_class_pool", "Requires live party class state from connected players.");
+    fputs(",\n    ", file);
+    bml_write_runebound_production_skipped_check(file, "party_size_gating", "Requires live party membership state from the current run.");
+    fputs(",\n    ", file);
+    bml_write_runebound_production_skipped_check(file, "mismatch_rejection", "Requires live multiplayer package/runtime metadata exchange evidence.");
+    fputs("\n  ],\n  \"playableValidation\": {\n    \"status\": \"incomplete\",\n    \"reason\": \"requires_live_player_state\",\n    \"playableBehaviorClaimed\": false\n  },\n  \"assertions\": {\n    \"fakeProviderAbsent\": ", file);
+    fputs(!fake_provider ? "true" : "false", file);
+    fputs(",\n    \"hookCountExpectedInstalled\": ", file);
+    fputs(installed_count == BML_RUNES_ELIXIR_LIVE_HOOK_COUNT ? "true" : "false", file);
+    fputs(",\n    \"requiredSymbolsResolved\": ", file);
+    fputs(required_symbols_resolved ? "true" : "false", file);
+    fputs(",\n    \"displayProbePassed\": ", file);
+    fputs(display_probe != NULL && display_probe->passed ? "true" : "false", file);
+    fputs(",\n    \"playerFacingGameplayChecksSkippedSafely\": true,\n    \"playableBehaviorNotClaimed\": true\n  },\n  \"error\": ", file);
+    if (bml_has_value(error_code) || bml_has_value(error_message)) {
+        fputs("{\"code\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_code) ? error_code : "BML_RUNEBOUND_ELIXIR_PRODUCTION_VALIDATION_FAILED");
+        fputs(", \"message\": ", file);
+        bml_json_write_escaped(file, bml_has_value(error_message) ? error_message : "Runebound: Elixirs production validation failed.");
+        fputc('}', file);
+    } else {
+        fputs("null", file);
+    }
+    fputs(",\n  \"reportedAt\": ", file);
+    bml_write_reported_at(file);
+    fputs("\n}\n", file);
+
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int bml_run_runebound_elixir_production_validation(const char *report_path, const BmlReportInfo *info) {
+    BmlRuneboundElixirProductionDisplayProbe display_probe;
+    const bool fake_provider = bml_runebound_live_fake_provider_detected();
+    const size_t installed_count = bml_runebound_live_installed_hook_count();
+    const bool hooks_ready = g_bml_runebound_live_hooks_installed &&
+                             installed_count == BML_RUNES_ELIXIR_LIVE_HOOK_COUNT &&
+                             bml_runebound_live_required_symbols_resolved();
+    const char *error_code = NULL;
+    const char *error_message = NULL;
+    bool passed;
+
+    bml_runebound_elixir_run_production_display_probe(&display_probe);
+    passed = !fake_provider && hooks_ready && display_probe.passed;
+    if (!passed) {
+        if (fake_provider) {
+            error_code = "BML_RUNEBOUND_ELIXIR_PRODUCTION_FAKE_PROVIDER";
+            error_message = "Production validation detected fake-provider symbols; fake-provider smoke is not accepted as production proof.";
+        } else if (!hooks_ready) {
+            error_code = "BML_RUNEBOUND_ELIXIR_PRODUCTION_HOOKS_NOT_READY";
+            error_message = "Production validation requires all six Runebound live hooks installed with required symbols resolved.";
+        } else {
+            error_code = "BML_RUNEBOUND_ELIXIR_PRODUCTION_DISPLAY_PROBE_FAILED";
+            error_message = "Production validation could not prove the detoured Item::getName and Item::description carrier display paths.";
+        }
+    }
+
+    if (bml_write_runebound_elixir_production_validation_report(report_path,
+                                                                info,
+                                                                fake_provider,
+                                                                &display_probe,
+                                                                passed ? "passed" : "failed",
+                                                                error_code,
+                                                                error_message) != 0) {
+        return -1;
+    }
+    return passed ? 0 : -1;
 }
 
 static int bml_write_runebound_elixir_live_install_report(const char *report_path, const BmlReportInfo *info, const char *status, const char *error_code, const char *error_message) {
@@ -5585,6 +6272,8 @@ static int bml_write_runebound_elixir_live_install_report(const char *report_pat
     fputs(g_bml_runebound_use_item_original != NULL ? "true" : "false", file);
     fputs(",\n    \"displayHookInstalled\": ", file);
     fputs(g_bml_runebound_item_get_name_original != NULL ? "true" : "false", file);
+    fputs(",\n    \"descriptionHookInstalled\": ", file);
+    fputs(g_bml_runebound_item_description_original != NULL ? "true" : "false", file);
     fputs(",\n    \"statHooksInstalled\": ", file);
     fputs((g_bml_runebound_stat_get_str_original != NULL && g_bml_runebound_stat_get_dex_original != NULL) ? "true" : "false", file);
     fputs(",\n    \"installedHookCount\": ", file);
@@ -5617,6 +6306,8 @@ static int bml_write_runebound_elixir_live_install_report(const char *report_pat
     fprintf(file, "%d", g_bml_runebound_use_item_replacement_calls);
     fputs(",\n    \"getName\": ", file);
     fprintf(file, "%d", g_bml_runebound_item_get_name_replacement_calls);
+    fputs(",\n    \"description\": ", file);
+    fprintf(file, "%d", g_bml_runebound_item_description_replacement_calls);
     fputs(",\n    \"statGetSTR\": ", file);
     fprintf(file, "%d", g_bml_runebound_stat_get_str_replacement_calls);
     fputs(",\n    \"statGetDEX\": ", file);
@@ -5629,10 +6320,24 @@ static int bml_write_runebound_elixir_live_install_report(const char *report_pat
     fprintf(file, "%d", g_bml_runebound_consume_item_delegations);
     fputs(",\n    \"activeEffectsCreated\": ", file);
     fprintf(file, "%d", g_bml_runebound_active_effects_created);
+    fputs(",\n    \"actHudWeaponReplacementCalls\": ", file);
+    fprintf(file, "%d", g_bml_runebound_act_hud_weapon_replacement_calls);
+    fputs(",\n    \"heldEmptyFlaskHintConversions\": ", file);
+    fprintf(file, "%d", g_bml_runebound_held_empty_flask_hint_conversions);
+    fputs(",\n    \"heldElixirConsumptions\": ", file);
+    fprintf(file, "%d", g_bml_runebound_held_elixir_consumptions);
+    fputs(",\n    \"heldWeaponSlotCleared\": ", file);
+    fprintf(file, "%d", g_bml_runebound_held_weapon_slot_cleared);
+    fputs(",\n    \"consumeItemResolved\": ", file);
+    fputs(g_bml_runebound_consume_item != NULL ? "true" : "false", file);
     fputs(",\n    \"itemGetNameReplacementCalls\": ", file);
     fprintf(file, "%d", g_bml_runebound_item_get_name_replacement_calls);
     fputs(",\n    \"itemGetNameIronVowReturns\": ", file);
     fprintf(file, "%d", g_bml_runebound_item_get_name_iron_vow_returns);
+    fputs(",\n    \"itemDescriptionReplacementCalls\": ", file);
+    fprintf(file, "%d", g_bml_runebound_item_description_replacement_calls);
+    fputs(",\n    \"itemDescriptionIronVowReturns\": ", file);
+    fprintf(file, "%d", g_bml_runebound_item_description_iron_vow_returns);
     fputs(",\n    \"statGetSTRReplacementCalls\": ", file);
     fprintf(file, "%d", g_bml_runebound_stat_get_str_replacement_calls);
     fputs(",\n    \"statGetSTRBonusApplications\": ", file);
@@ -5649,6 +6354,8 @@ static int bml_write_runebound_elixir_live_install_report(const char *report_pat
     bml_json_write_escaped(file, g_bml_runebound_live_carrier.carrier_item_type);
     fputs(",\n    \"display\": ", file);
     bml_json_write_escaped(file, g_bml_runebound_live_display);
+    fputs(",\n    \"description\": ", file);
+    bml_json_write_escaped(file, g_bml_runebound_live_description);
     fputs("\n  },\n  \"activeEffect\": {\n    \"active\": ", file);
     fputs(g_bml_runebound_live_active_effect.active ? "true" : "false", file);
     fputs(",\n    \"catalogId\": ", file);
@@ -5690,15 +6397,25 @@ static int bml_run_runebound_elixir_live_install(const char *report_path, const 
     g_bml_runebound_consume_item = bml_runebound_consume_item_function_from_address(dlsym(RTLD_DEFAULT, "_Z11consumeItemRP4Itemi"));
     bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[0], "useItem", "_Z7useItemP4ItemiP6Entitybb", bml_runebound_use_item_function_address(bml_runebound_use_item_replacement));
     bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[1], "Item::getName", "_ZNK4Item7getNameEv", bml_runebound_item_get_name_function_address(bml_runebound_item_get_name_replacement));
-    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[2], "statGetSTR", "_Z10statGetSTRP4StatP6Entity", bml_runebound_stat_get_function_address(bml_runebound_stat_get_str_replacement));
-    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[3], "statGetDEX", "_Z10statGetDEXP4StatP6Entity", bml_runebound_stat_get_function_address(bml_runebound_stat_get_dex_replacement));
-    g_bml_runebound_live_target_count = 4U;
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[2], "Item::description", "_ZNK4Item11descriptionEv", bml_runebound_item_description_function_address(bml_runebound_item_description_replacement));
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[3], "statGetSTR", "_Z10statGetSTRP4StatP6Entity", bml_runebound_stat_get_function_address(bml_runebound_stat_get_str_replacement));
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[4], "statGetDEX", "_Z10statGetDEXP4StatP6Entity", bml_runebound_stat_get_function_address(bml_runebound_stat_get_dex_replacement));
+    bml_init_runebound_live_detour_target(&g_bml_runebound_live_targets[5], "actHudWeapon", "_Z12actHudWeaponP6Entity", bml_runebound_hud_weapon_function_address(bml_runebound_act_hud_weapon_replacement));
+    g_bml_runebound_live_target_count = BML_RUNES_ELIXIR_LIVE_HOOK_COUNT;
+    if (g_bml_runebound_consume_item == NULL) {
+        error_code = "BML_RUNEBOUND_ELIXIR_CONSUME_ITEM_SYMBOL_MISSING";
+        error_message = "Runebound: Elixirs held-item activation requires consumeItem(Item*&, int) to remove the equipped carrier.";
+        result = -1;
+    }
 
-    for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
-        if (bml_prepare_runebound_live_detour_target(&g_bml_runebound_live_targets[index]) != 0) {
-            error_code = g_bml_runebound_live_targets[index].error_code;
-            error_message = g_bml_runebound_live_targets[index].error_message;
-            result = -1;
+
+    if (result == 0) {
+        for (size_t index = 0U; index < g_bml_runebound_live_target_count; ++index) {
+            if (bml_prepare_runebound_live_detour_target(&g_bml_runebound_live_targets[index]) != 0) {
+                error_code = g_bml_runebound_live_targets[index].error_code;
+                error_message = g_bml_runebound_live_targets[index].error_message;
+                result = -1;
+            }
         }
     }
 
@@ -6591,6 +7308,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     const char *hook_library;
     const char *detour_self_test;
     const char *runebound_elixirs_self_test;
+    const char *runebound_elixirs_production_validation;
+    const char *runebound_elixirs_production_validation_report;
     const char *stash_detour_self_test;
     const char *stash_install_add_item_passthrough;
     const char *stash_install_core_passthrough;
@@ -6609,6 +7328,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     bool stash_hooks_installed;
     bool stash_detour_self_test_requested;
     bool runebound_elixirs_self_test_requested;
+    bool runebound_elixirs_production_validation_requested;
     bool stash_install_add_item_passthrough_requested;
     bool stash_install_core_passthrough_requested;
     bool stash_install_access_placement_passthrough_requested;
@@ -6626,6 +7346,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     char detour_self_test_report_path[PATH_MAX];
     char runebound_elixirs_self_test_report_path[PATH_MAX];
     char runebound_elixirs_live_install_report_path[PATH_MAX];
+    char runebound_elixirs_production_validation_report_path[PATH_MAX];
     char stash_detour_self_test_report_path[PATH_MAX];
     char stash_detour_install_report_path[PATH_MAX];
     char stash_core_detour_install_report_path[PATH_MAX];
@@ -6654,6 +7375,8 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     hook_library = getenv("BML_HOOK_LIBRARY");
     detour_self_test = getenv("BML_DETOUR_SELF_TEST");
     runebound_elixirs_self_test = getenv("BML_RUNEBOUND_ELIXIRS_SELF_TEST");
+    runebound_elixirs_production_validation = getenv("BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION");
+    runebound_elixirs_production_validation_report = getenv("BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION_REPORT");
     stash_detour_self_test = getenv("BML_STASH_DETOUR_SELF_TEST");
     stash_install_add_item_passthrough = getenv("BML_STASH_INSTALL_ADD_ITEM_PASSTHROUGH");
     stash_install_core_passthrough = getenv("BML_STASH_INSTALL_CORE_PASSTHROUGH");
@@ -6663,6 +7386,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
     stash_enable_core_behavior = getenv("BML_STASH_ENABLE_EXPERIMENTAL_CORE_BEHAVIOR");
     stash_core_behavior_self_test = getenv("BML_STASH_CORE_BEHAVIOR_SELF_TEST");
     runebound_elixirs_self_test_requested = strcmp(runebound_elixirs_self_test != NULL ? runebound_elixirs_self_test : "", "1") == 0;
+    runebound_elixirs_production_validation_requested = strcmp(runebound_elixirs_production_validation != NULL ? runebound_elixirs_production_validation : "", "1") == 0;
     stash_detour_self_test_requested = strcmp(stash_detour_self_test != NULL ? stash_detour_self_test : "", "1") == 0;
     stash_install_add_item_passthrough_requested = strcmp(stash_install_add_item_passthrough != NULL ? stash_install_add_item_passthrough : "", "1") == 0;
     stash_install_core_passthrough_requested = strcmp(stash_install_core_passthrough != NULL ? stash_install_core_passthrough : "", "1") == 0;
@@ -6704,6 +7428,7 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_join_path(detour_self_test_report_path, sizeof(detour_self_test_report_path), profile_dir, BML_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(runebound_elixirs_self_test_report_path, sizeof(runebound_elixirs_self_test_report_path), profile_dir, BML_RUNES_ELIXIR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(runebound_elixirs_live_install_report_path, sizeof(runebound_elixirs_live_install_report_path), profile_dir, BML_RUNES_ELIXIR_LIVE_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
+        bml_join_path(runebound_elixirs_production_validation_report_path, sizeof(runebound_elixirs_production_validation_report_path), profile_dir, BML_RUNES_ELIXIR_PRODUCTION_VALIDATION_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_self_test_report_path, sizeof(stash_detour_self_test_report_path), profile_dir, BML_STASH_DETOUR_SELF_TEST_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_detour_install_report_path, sizeof(stash_detour_install_report_path), profile_dir, BML_STASH_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
         bml_join_path(stash_core_detour_install_report_path, sizeof(stash_core_detour_install_report_path), profile_dir, BML_STASH_CORE_DETOUR_INSTALL_REPORT_RELATIVE_PATH) != 0 ||
@@ -6715,6 +7440,20 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         free(runtime_json);
         g_bml_init_result = 1;
         return g_bml_init_result;
+    }
+    if (bml_has_value(runebound_elixirs_production_validation_report)) {
+        if (strlen(runebound_elixirs_production_validation_report) >= sizeof(runebound_elixirs_production_validation_report_path)) {
+            bml_add_error(errors,
+                          &error_count,
+                          "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION_REPORT_TOO_LONG",
+                          "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION_REPORT exceeds PATH_MAX and cannot be used.",
+                          "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION_REPORT",
+                          NULL);
+        } else {
+            bml_copy_string(runebound_elixirs_production_validation_report_path,
+                            sizeof(runebound_elixirs_production_validation_report_path),
+                            runebound_elixirs_production_validation_report);
+        }
     }
 
     bml_probe_required_symbols(&symbol_probe);
@@ -6740,9 +7479,19 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         bml_add_error(errors, &error_count, "BML_RUNES_ELIXIR_SELF_TEST_FAILED", "BML_RUNEBOUND_ELIXIRS_SELF_TEST=1 was requested, but the Runebound: Elixirs fake-provider data-path self-test failed.", "BML_RUNEBOUND_ELIXIRS_SELF_TEST", runebound_elixirs_self_test_report_path);
     }
 
-    if (info.has_runebound_elixirs &&
-        bml_run_runebound_elixir_live_install(runebound_elixirs_live_install_report_path, &info) != 0) {
-        bml_add_error(errors, &error_count, "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED", "Runebound: Elixirs is present in the runtime manifest, but native live gameplay hook installation failed closed.", "BML_RUNTIME_MANIFEST", runebound_elixirs_live_install_report_path);
+    if (info.has_runebound_elixirs) {
+        if (bml_run_runebound_elixir_live_install(runebound_elixirs_live_install_report_path, &info) != 0) {
+            bml_add_error(errors, &error_count, "BML_RUNEBOUND_ELIXIR_LIVE_INSTALL_FAILED", "Runebound: Elixirs is present in the runtime manifest, but native live gameplay hook installation failed closed.", "BML_RUNTIME_MANIFEST", runebound_elixirs_live_install_report_path);
+        }
+        if (runebound_elixirs_production_validation_requested &&
+            bml_run_runebound_elixir_production_validation(runebound_elixirs_production_validation_report_path, &info) != 0) {
+            bml_add_error(errors, &error_count, "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION_FAILED", "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION=1 was requested, but the real-executable Runebound: Elixirs validation probe failed or detected fake-provider symbols.", "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION", runebound_elixirs_production_validation_report_path);
+        }
+    } else if (runebound_elixirs_production_validation_requested) {
+        bml_reset_runebound_live_state();
+        if (bml_run_runebound_elixir_production_validation(runebound_elixirs_production_validation_report_path, &info) != 0) {
+            bml_add_error(errors, &error_count, "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION_WITHOUT_MOD", "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION=1 requires the Runebound: Elixirs package in the runtime manifest.", "BML_RUNEBOUND_ELIXIRS_PRODUCTION_VALIDATION", runebound_elixirs_production_validation_report_path);
+        }
     }
 
     if (stash_placement_discovery_requested && !stash_install_access_placement_passthrough_requested) {
@@ -6790,6 +7539,16 @@ __attribute__((visibility("default"))) int bml_hook_init(void) {
         if (stash_detour_self_test_requested &&
             bml_run_stash_detour_self_test(stash_detour_self_test_report_path) != 0) {
             bml_add_error(errors, &error_count, "BML_STASH_DETOUR_SELF_TEST_FAILED", "BML_STASH_DETOUR_SELF_TEST=1 was requested, but the Entity::addItemToVoidChestServer detour self-test failed.", "BML_STASH_DETOUR_SELF_TEST", stash_detour_self_test_report_path);
+        }
+    }
+
+    if (info.has_runebound_elixirs &&
+        g_bml_runebound_live_hooks_installed &&
+        bml_runebound_live_fake_provider_available() &&
+        g_bml_language_get_original != NULL) {
+        bml_runebound_live_run_fake_provider_self_probe();
+        if (bml_write_runebound_elixir_live_install_report(runebound_elixirs_live_install_report_path, &info, "loaded", NULL, NULL) != 0) {
+            bml_add_error(errors, &error_count, "BML_RUNEBOUND_ELIXIR_LIVE_REPORT_UPDATE_FAILED", "Runebound: Elixirs live install report could not be updated after the shared Language::get detour became available.", "BML_RUNTIME_MANIFEST", runebound_elixirs_live_install_report_path);
         }
     }
 

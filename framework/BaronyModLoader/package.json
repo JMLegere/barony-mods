@@ -1,0 +1,26 @@
+{
+  "name": "barony-modloader-bdd",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BDD harness for BaronyModLoader app-core contracts via Cucumber.js",
+  "scripts": {
+    "test": "PATH=/usr/bin:$PATH cucumber-js",
+    "test:features": "PATH=/usr/bin:$PATH cucumber-js --format summary",
+    "cucumber": "PATH=/usr/bin:$PATH cucumber-js"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^11.3.0"
+  },
+  "cucumber": {
+    "paths": [
+      "features"
+    ],
+    "require": [
+      "features/steps/**/*.js"
+    ],
+    "format": [
+      "progress"
+    ],
+    "worldParameters": {}
+  }
+}
