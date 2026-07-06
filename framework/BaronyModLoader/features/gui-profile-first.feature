@@ -1,7 +1,7 @@
 Feature: Profile-first GUI Mods list
   As a BaronyModLoader user,
   I need the main body to put the Mods list first and group rows by provenance,
-  so I can select local, profile-enabled, and Workshop mods without losing environment context.
+  so I can select local and Workshop mods while still seeing active profile state on local rows.
 
   Background:
     Given a completed profile-first GUI smoke report
@@ -31,9 +31,9 @@ Feature: Profile-first GUI Mods list
   Scenario: Mods are sectioned by provenance
     When the user scans the Mods list
     Then the smoke report exposes detectedModSections
-    And the rendered provenance section labels include local repo, enabled profile, and Workshop groups
+    And the rendered provenance section labels include local repo and Workshop groups without enabled profile duplicates
     And Runebound: Elixirs appears under local repo provenance
-    And enabled profile mods appear in their own provenance section when active
+    And active profile state is represented on the local repo row
 
 
   @gui-profile-first @mods-list @state-prefixes

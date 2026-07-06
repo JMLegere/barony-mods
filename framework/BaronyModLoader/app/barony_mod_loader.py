@@ -3257,7 +3257,6 @@ GUI_CONCEPT_LABELS = {
 MAJOR_ENTITY_ICONOGRAPHY = {
     "mods-list": {"icon": "🧩", "label": "Mods", "source": "emoji"},
     "local-repo": {"icon": "📁", "label": "Local repo mods", "source": "emoji"},
-    "profile-enabled": {"icon": "👤", "label": "Enabled in profile", "source": "emoji"},
     "steam-workshop": {"icon": "🛠️", "label": "Steam Workshop subscriptions", "source": "emoji-fallback"},
     "mod-package": {"icon": "📦", "label": "Mod package", "source": "emoji"},
     "selected-mod-detail": {"icon": "🔎", "label": "Selected Mod", "source": "emoji"},
@@ -3279,7 +3278,6 @@ GUI_CONCEPT_ENTITY_TYPES = {
 
 GUI_PROVENANCE_ENTITY_TYPES = {
     "local_repo": "local-repo",
-    "profile_enabled": "profile-enabled",
     "steam_workshop": "steam-workshop",
 }
 
@@ -3292,7 +3290,6 @@ GUI_ENVIRONMENT_ROW_ENTITY_TYPES = {
 GUI_ENTITY_ICON_RENDER_ORDER = (
     "mods-list",
     "local-repo",
-    "profile-enabled",
     "steam-workshop",
     "mod-package",
     "selected-mod-detail",
@@ -3567,7 +3564,7 @@ def _gui_summary_selector_values(summary: dict[str, Any] | None) -> list[str]:
             values.append(str(value))
     package_id = summary.get("packageId") or summary.get("id")
     if package_id:
-        values.extend([f"local-repo:{package_id}", f"profile-enabled:{package_id}"])
+        values.append(f"local-repo:{package_id}")
     published_file_id = summary.get("publishedFileId")
     if published_file_id:
         values.append(f"steam-workshop:{published_file_id}")
@@ -3640,7 +3637,7 @@ def _gui_state_selected_mod_selector(gui_state: dict[str, Any]) -> str | None:
                     return str(nested)
         elif value:
             text = str(value)
-            for prefix in ("local-repo:", "profile-enabled:", "steam-workshop:"):
+            for prefix in ("local-repo:", "steam-workshop:"):
                 if text.startswith(prefix) and text[len(prefix):]:
                     return text[len(prefix):]
             return text
@@ -3890,7 +3887,7 @@ def _gui_selected_mod_dto(
     has_bml_package = selected.get("hasBmlPackage")
     if has_bml_package is None:
         has_bml_package = bool(selected.get("manifestPath") or selected.get("packageId"))
-    is_local_package = provenance in {"local-repo", "profile-enabled"}
+    is_local_package = provenance == "local-repo"
     enable_reason: str | None = None
     disable_reason: str | None = None
     if not selectable:
@@ -3980,7 +3977,6 @@ def _gui_entity_iconography_records(
     visible_by_type = {
         "mods-list": True,
         "local-repo": "local-repo" in section_entity_types,
-        "profile-enabled": "profile-enabled" in section_entity_types,
         "steam-workshop": "steam-workshop" in section_entity_types,
         "mod-package": has_mod_rows,
         "environment": True,
@@ -4424,7 +4420,6 @@ def _gui_detected_mod_inventory(
         if isinstance(mod, dict) and (mod.get("id") or mod.get("packageId") or mod.get("package", {}).get("id"))
     }
     local_entries: list[dict[str, Any]] = []
-    local_by_id: dict[str, dict[str, Any]] = {}
     for summary in packages:
         if not isinstance(summary, dict):
             continue
@@ -4455,37 +4450,6 @@ def _gui_detected_mod_inventory(
             },
         )
         local_entries.append(entry)
-        if package_id:
-            local_by_id[str(package_id)] = entry
-
-    profile_entries: list[dict[str, Any]] = []
-    for index, mod in enumerate(active_mods):
-        if not isinstance(mod, dict):
-            continue
-        package_id = mod.get("id") or mod.get("packageId") or mod.get("package", {}).get("id")
-        local_entry = local_by_id.get(str(package_id)) if package_id is not None else None
-        entry_path = mod.get("packagePath") or (local_entry or {}).get("path")
-        entry = _gui_detected_mod_entry(
-            provenance_key="profile_enabled",
-            provenance_label="Enabled in profile",
-            entry_id=f"profile-enabled:{package_id or index}",
-            name=mod.get("name") or (local_entry or {}).get("name") or package_id or f"Profile mod {index + 1}",
-            package_id=package_id,
-            version=mod.get("version") or (local_entry or {}).get("version"),
-            path=entry_path,
-            manifest_path=mod.get("manifestPath") or (local_entry or {}).get("manifestPath"),
-            status="enabled",
-            active=True,
-            selected=False,
-            extra={
-                "checksumSet": mod.get("checksumSet"),
-                "enabledAt": mod.get("enabledAt"),
-                "localRepoMatch": bool(local_entry),
-                "enabled": True,
-                "selectable": True,
-            },
-        )
-        profile_entries.append(entry)
 
     workshop_entries = _gui_workshop_subscription_entries()
     for entry in workshop_entries:
@@ -4496,7 +4460,6 @@ def _gui_detected_mod_inventory(
     sections = []
     for section_id, label, source, entries in (
         ("local_repo", "Local repo mods", "scan_package_catalog(_gui_mods_root())", local_entries),
-        ("profile_enabled", "Enabled in profile", "active_mods", profile_entries),
         ("steam_workshop", "Steam Workshop subscriptions", str(_gui_steam_workshop_content_root()), workshop_entries),
     ):
         entity_type = _gui_provenance_entity_type(section_id)
@@ -4535,7 +4498,7 @@ def _gui_detected_mod_inventory(
     if selected is None:
         selected = next((entry for entry in detected_mods if entry.get("active") or entry.get("enabledInProfile")), None)
         if selected is not None:
-            selection_reason = "defaulted to enabled profile mod"
+            selection_reason = "defaulted to enabled mod"
     if selected is None and detected_mods:
         selected = detected_mods[0]
         selection_reason = "defaulted to first detected mod"
@@ -4858,7 +4821,7 @@ def _gui_build_concepts(
         _gui_evidence("Version", selected.get("version") or selected_package.get("version")),
         _gui_evidence("Carrier item", selected_package.get("carrierItemType") or selected_package.get("carrier")),
         _gui_evidence("Capabilities", selected_package.get("capabilityIds") or selected_package.get("capabilities")),
-        _gui_evidence("Enabled in profile", selected_active),
+        _gui_evidence("Profile enabled state", selected_active),
         _gui_evidence("Enable action", enable_eligibility.get("reason") or enable_eligibility.get("status"), enable_eligibility.get("status")),
         _gui_evidence("Disable action", disable_eligibility.get("reason") or disable_eligibility.get("status"), disable_eligibility.get("status")),
     ]

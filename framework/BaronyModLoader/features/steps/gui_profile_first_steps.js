@@ -555,7 +555,7 @@ function labelText(value) {
 function provenanceDescriptor(section) {
   if (!section || typeof section !== "object") return String(section || "");
   const parts = [];
-  for (const key of ["id", "key", "type", "kind", "source", "sourceType", "provenance", "provenanceKey", "provenanceLabel", "label", "title", "name"]) {
+  for (const key of ["id", "key", "type", "kind", "source", "sourceType", "provenance", "provenanceKey", "provenanceLabel", "label", "displayLabel", "title", "name"]) {
     if (section[key] !== undefined && section[key] !== null) parts.push(String(section[key]));
   }
   return parts.join(" ");
@@ -563,7 +563,6 @@ function provenanceDescriptor(section) {
 
 function provenancePatterns(kind) {
   if (kind === "local") return [/local/i, /repo|repository/i];
-  if (kind === "enabled") return [/enabled|active/i, /profile/i];
   if (kind === "workshop") return [/workshop/i];
   throw new Error(`unknown provenance kind: ${kind}`);
 }
@@ -587,6 +586,27 @@ function renderedProvenanceSectionLabels(world) {
     contractGap(world, "renderedProvenanceSectionLabels is present but empty; expected rendered provenance headings");
   }
   return labels.map((label) => String(label));
+}
+
+function containsEnabledProfileProvenance(value) {
+  return /enabled\s+in\s+profile|profile[_-]enabled/i.test(String(value));
+}
+
+function assertNoEnabledProfileProvenanceSections(world) {
+  const labels = renderedProvenanceSectionLabels(world);
+  const forbiddenLabels = labels.filter(containsEnabledProfileProvenance);
+  const sections = detectedModSections(world);
+  const forbiddenSections = sections.filter((section) => containsEnabledProfileProvenance(provenanceDescriptor(section)));
+  if (forbiddenLabels.length || forbiddenSections.length) {
+    contractGap(
+      world,
+      "profile-first Mods list still exposes the removed Enabled in profile provenance section",
+      [
+        `FORBIDDEN RENDERED LABELS:\n${forbiddenLabels.join("\n") || "<none>"}`,
+        `FORBIDDEN DETECTED SECTIONS:\n${forbiddenSections.map((section) => provenanceDescriptor(section) || objectText(section)).join("\n---\n") || "<none>"}`,
+      ].join("\n\n")
+    );
+  }
 }
 
 function requireProvenanceSection(world, kind) {
@@ -2109,7 +2129,6 @@ function platformSteamLogoEvidence(world) {
 const REQUIRED_ENTITY_ICON_TYPES = [
   "mods-list",
   "local-repo",
-  "profile-enabled",
   "steam-workshop",
   "mod-package",
   "environment",
@@ -2127,7 +2146,6 @@ function canonicalEntityIconType(value, entryText = "") {
   if (!text.trim()) return "";
   if (/mods?-?list|mods?-?panel|detected-mods?-?sidebar/.test(text)) return "mods-list";
   if (/local-?repo|local-repository|repo-mods?|local-mods?|local/.test(text)) return "local-repo";
-  if (/profile-?enabled|enabled-profile|enabled-in-profile|active-profile/.test(text)) return "profile-enabled";
   if (/steam-?workshop|workshop-subscriptions?|workshop-provenance/.test(text)) return "steam-workshop";
   if (/mod-?package|package-row|mod-row|individual-mod|bml-package/.test(text)) return "mod-package";
   if (/environment|runtime-environment/.test(text)) return "environment";
@@ -3072,11 +3090,11 @@ Then("Enable selected mod targets Stash and does not reuse Runebound state", fun
 });
 
 
-Then("the rendered provenance section labels include local repo, enabled profile, and Workshop groups", function () {
+Then("the rendered provenance section labels include local repo and Workshop groups without enabled profile duplicates", function () {
+  assertNoEnabledProfileProvenanceSections(this);
   const labels = renderedProvenanceSectionLabels(this);
   const checks = [
     ["local repo", /local[\s\S]{0,40}(repo|repository)|(repo|repository)[\s\S]{0,40}local/i],
-    ["enabled profile", /(enabled|active)[\s\S]{0,40}profile|profile[\s\S]{0,40}(enabled|active)/i],
     ["Workshop", /workshop/i],
   ];
   const combined = labels.join("\n");
@@ -3088,6 +3106,8 @@ Then("the rendered provenance section labels include local repo, enabled profile
       `FOUND LABELS:\n${labels.join("\n") || "<none>"}`
     );
   }
+  requireProvenanceSection(this, "local");
+  requireProvenanceSection(this, "workshop");
 });
 
 Then("Runebound: Elixirs appears under local repo provenance", function () {
@@ -3100,18 +3120,37 @@ Then("Runebound: Elixirs appears under local repo provenance", function () {
   );
 });
 
-Then("enabled profile mods appear in their own provenance section when active", function () {
-  const enabled = requireProvenanceSection(this, "enabled");
-  const items = sectionItemObjects(enabled);
-  if (!items.length) {
-    contractGap(this, "enabled profile provenance section is present but has no mod entries", `SECTION EVIDENCE:\n${objectText(enabled) || "<none>"}`);
+Then("active profile state is represented on the local repo row", function () {
+  assertNoEnabledProfileProvenanceSections(this);
+  const local = requireProvenanceSection(this, "local");
+  const localItems = sectionItemObjects(local);
+  const localRunebound = localItems.find((item) => objectMatchesPackage(item, RUNEBOUND_ID, RUNEBOUND_NAME));
+  if (!localRunebound) {
+    contractGap(
+      this,
+      "local repo provenance section does not include the active Runebound: Elixirs mod entry",
+      `LOCAL SECTION:\n${objectText(local) || "<none>"}`
+    );
   }
-  requireSectionText(
-    this,
-    enabled,
-    /Runebound: Elixirs|jml\.runebound-elixirs/i,
-    "enabled profile provenance section does not include the active Runebound: Elixirs mod"
-  );
+  const activeFlags = trueBooleanFlags(localRunebound, /^(enabled|active|isEnabled|isActive|enabledInProfile|profileEnabled)$/i);
+  if (!activeFlags.length && !/\b(enabled|active)\b/i.test(objectText(localRunebound))) {
+    contractGap(
+      this,
+      "Runebound: Elixirs local repo entry does not expose enabled active profile state",
+      `LOCAL RUNEBOUND ENTRY:\n${objectText(localRunebound) || "<none>"}`
+    );
+  }
+  const row = runeboundRow(renderedDetectedModRows(this));
+  if (!row) {
+    contractGap(this, "renderedDetectedModRows does not include Runebound: Elixirs", reportPreview(this));
+  }
+  if (!isEnabledModRow(row) || !hasGreenCheckPrefix(row)) {
+    contractGap(
+      this,
+      "Runebound: Elixirs local Mods row does not preserve enabled state with a green check prefix",
+      `RUNEBOUND ROW:\n${objectText(row) || "<none>"}`
+    );
+  }
 });
 
 Then("Steam Workshop subscriptions appear under Workshop provenance when detected", function () {
