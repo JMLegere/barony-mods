@@ -132,8 +132,8 @@ class StashBackendParityTests(unittest.TestCase):
 
         self.assertIn("double x_pos = BML_STASH_LOBBY_PLACEMENT_X;", linux)
         self.assertIn("double y_pos = BML_STASH_LOBBY_PLACEMENT_Y;", linux)
-        self.assertIn("bml_stash_find_nearest_clean_walkable_tile(map_argument, map_prefix, x_pos, y_pos, &x_pos, &y_pos)", linux)
-        self.assertIn("place_chest_and_lid_at(map_argument, x_pos, y_pos, BML_STASH_LOBBY_PLACEMENT_YAW", linux)
+        self.assertIn("bml_stash_find_nearest_clean_walkable_tile(map_argument, map_prefix, x_pos, y_pos, &x_pos, &y_pos, &chest_yaw)", linux)
+        self.assertIn("place_chest_and_lid_at(map_argument, x_pos, y_pos, chest_yaw", linux)
         self.assertIn("stash_access_point_created", linux)
 
     def test_linux_stash_lobby_placement_keeps_clear_of_assist_shrine(self) -> None:
@@ -161,22 +161,28 @@ class StashBackendParityTests(unittest.TestCase):
             with self.subTest(offset=safer_offset):
                 assert_offset_present(self, chooser, *safer_offset)
 
-    def test_linux_stash_lobby_placement_requires_floor_wall_and_entity_clearance(self) -> None:
+    def test_linux_stash_lobby_placement_requires_back_wall_open_front_and_entity_clearance(self) -> None:
         linux = read_source(LINUX_HOOK)
         chooser = c_static_function_body(linux, "bml_stash_playable_choose_lobby_tile_near_assist_shrine")
-        wall_or_floor_clearance = c_static_function_body(
+        back_wall_open_front = c_static_function_body(
             linux,
-            "bml_stash_playable_tile_has_wall_or_open_floor_clearance",
+            "bml_stash_playable_tile_has_back_wall_and_open_front",
         )
+        clean_fallback = c_static_function_body(linux, "bml_stash_find_nearest_clean_walkable_tile")
         entity_clearance = c_static_function_body(linux, "bml_stash_playable_tile_has_entity_clearance")
 
-        self.assertRegex(chooser, r"!\s*bml_stash_playable_tile_has_wall_or_open_floor_clearance\s*\(")
+        self.assertRegex(chooser, r"!\s*bml_stash_playable_tile_has_back_wall_and_open_front\s*\(")
         self.assertRegex(chooser, r"!\s*bml_stash_playable_tile_has_entity_clearance\s*\(")
+        self.assertIn("bml_stash_playable_tile_has_back_wall_and_open_front(map_prefix, x, y", clean_fallback)
         self.assertNotRegex(
             chooser,
             r"bml_stash_playable_tile_is_occupied\s*\(\s*map_argument\s*,\s*\(unsigned int\)candidate_x\s*,\s*\(unsigned int\)candidate_y",
         )
-        self.assertIn("bml_stash_map_tile_is_walkable", wall_or_floor_clearance)
+        self.assertIn("bml_stash_map_tile_is_wall_or_blocked", back_wall_open_front)
+        self.assertIn("BML_STASH_YAW_SOUTH", back_wall_open_front)
+        self.assertIn("BML_STASH_YAW_NORTH", back_wall_open_front)
+        self.assertIn("BML_STASH_YAW_EAST", back_wall_open_front)
+        self.assertIn("BML_STASH_YAW_WEST", back_wall_open_front)
         self.assertIn("BML_STASH_ENTITY_OFFSET_X", entity_clearance)
         self.assertIn("BML_STASH_ENTITY_OFFSET_Y", entity_clearance)
 
@@ -189,17 +195,20 @@ class StashBackendParityTests(unittest.TestCase):
 
         self.assertEqual(define_value(linux, "BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH"), "225")
         self.assertEqual(define_value(linux, "BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE"), "1380736049U")
+        self.assertEqual(define_value(linux, "BML_RUNES_ELIXIR_STASH_SEED_APPEARANCE"), "0U")
         self.assertIn("metadata->instance_id = BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE;", make_carrier)
         self.assertIn("bml_stash_seed_runebound_iron_vow_elixir_if_missing(inventory", load_inventory)
         self.assertIn("BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH", seed_elixir)
-        self.assertIn("BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE", seed_elixir)
+        self.assertIn("BML_RUNES_ELIXIR_STASH_SEED_APPEARANCE", seed_elixir)
         self.assertIn("bml_stash_inventory_has_runebound_iron_vow_carrier(inventory)", seed_elixir)
         self.assertLess(
             index_of(seed_elixir, "bml_stash_inventory_has_runebound_iron_vow_carrier(inventory)"),
             index_of(seed_elixir, "g_bml_stash_new_item("),
         )
         self.assertRegex(duplicate_guard, r"->type\s*==\s*BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH")
-        self.assertRegex(duplicate_guard, r"->appearance\s*==\s*BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE")
+        self.assertIn("BML_RUNES_ELIXIR_STASH_SEED_APPEARANCE", duplicate_guard)
+        self.assertIn("itemSpecialShopConsumable", duplicate_guard)
+        self.assertIn("item->itemSpecialShopConsumable = true;", seed_elixir)
         self.assertIn("bml_mark_stash_inventory_dirty();", seed_elixir)
         self.assertIn('bml_append_stash_diagnostic_event("stash_runebound_iron_vow_seeded"', seed_elixir)
 
