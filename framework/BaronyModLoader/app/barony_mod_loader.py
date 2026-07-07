@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """BaronyModLoader standalone app skeleton.
 
-This first executable slice intentionally stays narrow: it validates package
+This executable slice intentionally stays narrow: it validates package
 metadata, validates engine runtime capability metadata, creates profile-local
-app state, and writes a launch-time runtime manifest. It does not execute
-Barony or load arbitrary plugin code.
+app state, writes launch-time runtime artifacts, and starts Barony only through
+explicit launch commands or GUI launch actions.
 """
 
 from __future__ import annotations
@@ -3309,7 +3309,8 @@ GUI_ACTION_LABELS = {
     "enable-package": "Enable selected mod",
     "disable-package": "Disable selected mod",
     "refresh-readiness": "Refresh readiness",
-    "dry-run-launch": "Dry-run launch",
+    "launch-bml": "Launch BaronyModLoader",
+    "launch-vanilla": "Launch Vanilla Barony",
     "open-diagnostics": "Open diagnostics",
     "workshop-preview": "Preview Workshop dry-run",
 }
@@ -3518,6 +3519,7 @@ def _gui_button_action_snapshot(gui_state: dict[str, Any]) -> list[dict[str, Any
                 "selectedModPath",
                 "actionEligibility",
                 "disabledReason",
+                "disabledReasons",
                 "reason",
                 "contextual",
                 "placement",
@@ -4567,18 +4569,307 @@ def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, packa
         }
     runtime_info = _gui_runtime_info_for_package(package)
     plan = plan_runtime_manifest(profile, profile_dir, package, runtime_info, bml_profile_root(profile_dir) / "manifests" / "runtime-manifest.json")
+    combined = ValidationResult("GUI BaronyModLoader launch readiness")
+    combined.extend(validate_package(package))
+    combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
+    registry_path = runtime_registry_path(None)
+    registry, registry_result = load_runtime_registry(registry_path, missing_ok=False)
+    combined.extend(registry_result)
+    combined.extend(validate_profile_steam_install(profile))
+    if registry_result.ok:
+        _selected_runtime, _selected_runtime_info, _runtime_info_path, _runtime_executable, selection_result = select_registered_runtime(
+            registry,
+            profile,
+            package,
+            None,
+        )
+        combined.extend(selection_result)
+    disabled_reasons = [*plan.get("disabledReasons", []), *(_validation_disabled_reasons(combined) if not combined.ok else [])]
     return {
-        "status": "ready" if not plan.get("disabledReasons") else "blocked",
+        "status": "ready" if not disabled_reasons else "blocked",
         "dryRun": True,
         "processStarted": False,
         "processLaunched": False,
         "wouldStartBarony": False,
+        "registry": str(registry_path),
         "runtimeManifestPath": plan.get("runtimeManifestPath"),
         "manifestPath": plan.get("manifestPath"),
         "manifest": plan.get("manifest"),
         "sideEffects": plan.get("sideEffects"),
-        "disabledReasons": plan.get("disabledReasons", []),
+        "disabledReasons": disabled_reasons,
+        "problems": _validation_problems(combined),
     }
+
+GUI_LAUNCH_MODE_ENV = "BML_GUI_LAUNCH_MODE"
+GUI_LAUNCH_MOCK_VALUES = {"1", "true", "yes", "mock", "smoke", "smoke-mock"}
+GUI_LAUNCH_ENV_KEYS = (
+    "SteamAppId",
+    "SteamGameId",
+    "BML_PROFILE_DIR",
+    "BML_RUNTIME_MANIFEST",
+    "BML_RUNTIME_STRATEGY",
+    "BML_LAUNCH_ADAPTER",
+    "BML_TARGET_EXECUTABLE",
+    "BML_LAUNCHER_EXECUTABLE",
+    "BML_HOOK_MANIFEST",
+    "BML_HOOK_LIBRARY",
+    "LD_PRELOAD",
+    "DYLD_INSERT_LIBRARIES",
+    "LD_LIBRARY_PATH",
+)
+
+
+def _gui_launch_mocked() -> bool:
+    return os.environ.get(GUI_LAUNCH_MODE_ENV, "").strip().casefold() in GUI_LAUNCH_MOCK_VALUES
+
+
+def _validation_problems(result: ValidationResult) -> list[dict[str, Any]]:
+    return [problem_to_dict(problem) for problem in result.problems]
+
+
+def _validation_disabled_reasons(result: ValidationResult) -> list[str]:
+    return [problem.message for problem in result.problems if problem.is_error] or [problem.message for problem in result.problems]
+
+
+def _gui_launch_blocked(mode: str, result: ValidationResult, **metadata: Any) -> dict[str, Any]:
+    payload = {
+        "mode": mode,
+        "status": "blocked",
+        "processStarted": False,
+        "processLaunched": False,
+        "mocked": _gui_launch_mocked(),
+        "pid": None,
+        "disabledReasons": _validation_disabled_reasons(result),
+        "problems": _validation_problems(result),
+    }
+    payload.update({key: value for key, value in metadata.items() if value is not None})
+    return payload
+
+
+def _gui_launch_environment_snapshot(env: dict[str, str], *, include_bml: bool) -> dict[str, str]:
+    if include_bml:
+        return {key: env[key] for key in GUI_LAUNCH_ENV_KEYS if key in env}
+    return {key: env[key] for key in ("SteamAppId", "SteamGameId") if key in env}
+
+
+def _gui_vanilla_launch_environment(steam: dict[str, Any] | None) -> dict[str, str]:
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith("BML_") or key in STEAM_LAUNCH_ENV_KEYS or key in DYNAMIC_LOADER_ENV_KEYS or key.startswith(DYNAMIC_LOADER_ENV_PREFIXES):
+            env.pop(key, None)
+    app_id = str((steam or {}).get("appId") or STEAM_BARONY_APP_ID)
+    env["SteamAppId"] = app_id
+    env["SteamGameId"] = app_id
+    return env
+
+
+def _gui_popen_detached(command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Popen[Any]:
+    kwargs: dict[str, Any] = {
+        "cwd": str(cwd),
+        "env": env,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(command, **kwargs)
+
+
+def _gui_start_launch_process(
+    *,
+    mode: str,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    launch_log: Path,
+    include_bml_env: bool,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    mocked = _gui_launch_mocked()
+    environment = _gui_launch_environment_snapshot(env, include_bml=include_bml_env)
+    payload: dict[str, Any] = {
+        "mode": mode,
+        "status": "mocked" if mocked else "launched",
+        "processStarted": True,
+        "processLaunched": True,
+        "mocked": mocked,
+        "pid": None,
+        "command": list(command),
+        "cwd": str(cwd),
+        "environment": environment,
+        "launchLog": str(launch_log),
+    }
+    payload.update({key: value for key, value in metadata.items() if value is not None})
+    launch_log.parent.mkdir(parents=True, exist_ok=True)
+    write_json_file(
+        launch_log,
+        {
+            "createdAt": utc_now(),
+            "mode": mode,
+            "mocked": mocked,
+            "command": command,
+            "cwd": str(cwd),
+            "environment": environment,
+            "metadata": {key: value for key, value in metadata.items() if key not in {"manifest"}},
+        },
+    )
+    if mocked:
+        return payload
+    try:
+        process = _gui_popen_detached(command, cwd, env)
+    except OSError as exc:
+        failure = ValidationResult(f"GUI {mode} launch execution")
+        failure.add("BML_GUI_LAUNCH_EXEC_FAILED", "fatal", f"Could not start Barony: {exc}")
+        return _gui_launch_blocked(mode, failure, command=list(command), cwd=str(cwd), environment=environment, launchLog=str(launch_log), **metadata)
+    payload["pid"] = process.pid
+    return payload
+
+
+def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: LoadedPackage | None) -> dict[str, Any]:
+    combined = ValidationResult("GUI BaronyModLoader launch validation")
+    mocked = _gui_launch_mocked()
+    if profile is None:
+        combined.add("BML_GUI_PROFILE_MISSING", "fatal", "Create or select a profile before launching BaronyModLoader.")
+    if package is None:
+        combined.add("BML_GUI_PACKAGE_MISSING", "fatal", "Select a local BML package before launching BaronyModLoader.")
+    if package is not None:
+        combined.extend(validate_package(package))
+    if profile is not None and package is not None:
+        combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
+    registry_path = runtime_registry_path(None)
+    registry: dict[str, Any] = {}
+    registry_result = ValidationResult("runtime registry")
+    if not mocked:
+        registry, registry_result = load_runtime_registry(registry_path, missing_ok=False)
+        combined.extend(registry_result)
+    if profile is not None:
+        combined.extend(validate_profile_steam_install(profile))
+        if not mocked:
+            combined.extend(validate_steam_client_ready_for_launch(profile))
+
+    selected_runtime: dict[str, Any] | None = None
+    runtime_info: dict[str, Any] | None = None
+    runtime_info_path: Path | None = None
+    runtime_executable: Path | None = None
+    if mocked and profile is not None and package is not None:
+        steam = profile_steam_install(profile) or {}
+        executable_value = steam.get("executable") or _gui_default_barony_executable()
+        runtime_executable = Path(str(executable_value)).expanduser().resolve(strict=False)
+        runtime_info = _gui_runtime_info_for_package(package)
+        runtime_info_path = bml_profile_root(profile_dir) / "mock-runtime-info.json"
+        target = current_platform_target()
+        mock_hook_name = WINDOWS_HOOK_LIBRARY_NAME if sys.platform == "win32" else "libbarony_bml.so"
+        selected_runtime = {
+            "id": "mock-gui-bml-runtime",
+            "runtimeStrategy": RUNTIME_STRATEGY_INSTALLED_HOOK,
+            "launchAdapter": target.launch_adapter,
+            "steamExecutable": str(runtime_executable),
+            "hookLibrary": str(bml_profile_root(profile_dir) / "mock" / mock_hook_name),
+        }
+    elif profile is not None and package is not None and registry_result.ok:
+        selected_runtime, runtime_info, runtime_info_path, runtime_executable, selection_result = select_registered_runtime(
+            registry,
+            profile,
+            package,
+            None,
+        )
+        combined.extend(selection_result)
+
+    out_path = bml_profile_root(profile_dir) / "runtime-manifest.json"
+    if not combined.ok:
+        return _gui_launch_blocked("bml", combined, registry=str(registry_path), runtimeManifestPath=str(out_path))
+
+    assert profile is not None
+    assert package is not None
+    assert selected_runtime is not None
+    assert runtime_info is not None
+    assert runtime_info_path is not None
+    assert runtime_executable is not None
+
+    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, package, runtime_info, out_path, runtime_executable, selected_runtime)
+    command = [str(runtime_executable)]
+    cwd = launch_working_directory(profile, runtime_executable)
+    env = launch_environment(profile, profile_dir, out_path, selected_runtime)
+    return _gui_start_launch_process(
+        mode="bml",
+        command=command,
+        cwd=cwd,
+        env=env,
+        launch_log=bml_profile_root(profile_dir) / "logs" / "gui-launch-bml.log",
+        include_bml_env=True,
+        metadata={
+            "registry": str(registry_path),
+            "runtime": selected_runtime.get("id"),
+            "runtimeInfo": str(runtime_info_path),
+            "runtimeManifestPath": str(out_path),
+            "runtimeManifest": str(out_path),
+            "activeMods": str(active_mods_path),
+            "createdAt": manifest["launch"]["createdAt"],
+        },
+    )
+
+
+def _gui_profile_or_detected_steam_install(profile: dict[str, Any] | None, install: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    steam = profile_steam_install(profile) if profile is not None else None
+    if isinstance(steam, dict) and steam.get("executable"):
+        return dict(steam), "profile"
+    if isinstance(install, dict) and install.get("executable"):
+        return dict(install), "gui-detected-install"
+    runtime = profile.get("runtime") if isinstance(profile, dict) else None
+    if isinstance(runtime, dict) and runtime.get("baronyExecutable"):
+        return {"executable": runtime.get("baronyExecutable"), "installPath": str(Path(str(runtime.get("baronyExecutable"))).expanduser().parent), "appId": STEAM_BARONY_APP_ID}, "profile-runtime"
+    return None, "missing"
+
+
+def _gui_launch_vanilla(profile: dict[str, Any] | None, profile_dir: Path, install: dict[str, Any]) -> dict[str, Any]:
+    combined = ValidationResult("GUI Vanilla Barony launch validation")
+    steam, source = _gui_profile_or_detected_steam_install(profile, install)
+    if profile is not None and profile_steam_install(profile) is not None:
+        combined.extend(validate_profile_steam_install(profile))
+        if not _gui_launch_mocked():
+            combined.extend(validate_steam_client_ready_for_launch(profile))
+    elif isinstance(install, dict) and install.get("disabledReasons"):
+        for reason in _gui_compact_texts([install.get("disabledReasons")]):
+            combined.add("BML_GUI_VANILLA_INSTALL_BLOCKED", "fatal", reason)
+    if steam is None:
+        combined.add("BML_GUI_VANILLA_INSTALL_MISSING", "fatal", "No Steam Barony executable is available for Vanilla launch.")
+
+    executable: Path | None = None
+    if steam is not None:
+        executable_value = steam.get("executable")
+        if not isinstance(executable_value, str) or not executable_value.strip():
+            combined.add("BML_GUI_VANILLA_EXECUTABLE_MISSING", "fatal", "Steam Barony executable path is missing.")
+        else:
+            executable = Path(executable_value).expanduser().resolve(strict=False)
+            if not executable.exists():
+                combined.add("BML_GUI_VANILLA_EXECUTABLE_MISSING", "fatal", "Steam Barony executable was not found.", path=str(executable))
+
+    if not combined.ok:
+        return _gui_launch_blocked("vanilla", combined, installSource=source, command=[str(executable)] if executable is not None else None, cwd=str(executable.parent) if executable is not None else None)
+
+    assert steam is not None
+    assert executable is not None
+    install_path = steam.get("installPath")
+    cwd = Path(str(install_path)).expanduser().resolve(strict=False) if isinstance(install_path, str) and install_path else executable.parent
+    command = [str(executable)]
+    env = _gui_vanilla_launch_environment(steam)
+    return _gui_start_launch_process(
+        mode="vanilla",
+        command=command,
+        cwd=cwd,
+        env=env,
+        launch_log=bml_profile_root(profile_dir) / "logs" / "gui-launch-vanilla.log",
+        include_bml_env=False,
+        metadata={
+            "installSource": source,
+            "steamAppId": str(steam.get("appId") or STEAM_BARONY_APP_ID),
+            "runtimeManifestPath": None,
+        },
+    )
 
 
 def _gui_report_summary(path: Path) -> dict[str, Any]:
@@ -4775,11 +5066,15 @@ def _gui_build_concepts(
             launch_dry_run.get("disabledReasons"),
         ]
     )
+    vanilla_blockers = _gui_compact_texts([install.get("disabledReasons")])
+    bml_launch_status = "blocked" if environment_blockers else (launch_dry_run.get("status") or "ready")
+    vanilla_launch_status = "blocked" if vanilla_blockers else (install.get("status") or "ready")
     environment_warnings = _gui_compact_texts([windows_status.get("disabledReasons")])
     environment_evidence = [
         _gui_evidence("Linux Steam Barony install", install.get("installPath") or install.get("path"), install.get("status")),
         _gui_evidence("Runtime readiness", "Blocked" if readiness_state.get("disabledReasons") else readiness_state.get("status")),
-        _gui_evidence("Launch dry-run", launch_dry_run.get("runtimeManifestPath") or launch_dry_run.get("status"), launch_dry_run.get("status")),
+        _gui_evidence("BML launch readiness", launch_dry_run.get("runtimeManifestPath") or launch_dry_run.get("status"), launch_dry_run.get("status")),
+        _gui_evidence("Vanilla launch readiness", install.get("executable") or install.get("status"), vanilla_launch_status),
         _gui_evidence("Diagnostics evidence", diagnostics.get("label"), diagnostics.get("status")),
         _gui_evidence("Diagnostics reports checked", len(diagnostics_items)),
         _gui_evidence("Production validation evidence", "Available" if production_items else "Not found"),
@@ -4792,7 +5087,7 @@ def _gui_build_concepts(
     environment_summary = (
         "Linux launch path is blocked; review readiness evidence before starting Barony."
         if environment_blockers
-        else "Linux launch path has dry-run metadata; Windows remains fail-closed until verified."
+        else "Linux launch path is ready for BML or vanilla launch; Windows remains fail-closed until verified."
     )
 
     profile_id_value = profile_state.get("id") or (profile_state.get("profile") if isinstance(profile_state.get("profile"), dict) else {}).get("id")
@@ -4866,8 +5161,9 @@ def _gui_build_concepts(
             "statusSummary": environment_summary,
             "environmentSummaryItems": environment_summary_items,
             "evidence": environment_evidence,
-            "primaryAction": _gui_action("dry-run-launch", launch_dry_run.get("status"), enabled=True),
+            "primaryAction": _gui_action("launch-bml", bml_launch_status, enabled=True, disabledReasons=environment_blockers),
             "secondaryActions": [
+                _gui_action("launch-vanilla", vanilla_launch_status, enabled=True, disabledReasons=vanilla_blockers),
                 _gui_action("detect-install", install.get("status")),
                 _gui_action("refresh-readiness", readiness_state.get("status") or "available"),
                 _gui_action("open-diagnostics", diagnostics.get("status")),
@@ -5130,6 +5426,7 @@ def build_profile_first_gui_state(
             package_catalog, selected_package, selected_summary = _gui_scan_packages(_gui_selected_package_path(requested_package_summary))
     actions = [{"id": action_id, "label": label, "status": "available"} for action_id, label in GUI_ACTIONS]
     active_result: dict[str, Any] | None = None
+    launch_result: dict[str, Any] | None = None
     active_mods = profile_authoritative_mods(profile, profile_dir) if profile is not None else []
     detected_inventory = _gui_detected_mod_inventory(
         package_catalog,
@@ -5178,6 +5475,10 @@ def build_profile_first_gui_state(
         )
     readiness = _gui_refresh_readiness(install, profile, selected_package, profile_dir)
     launch_dry_run = _gui_launch_dry_run(profile, profile_dir, selected_package)
+    if action == "launch-bml":
+        launch_result = _gui_launch_bml(profile, profile_dir, selected_package)
+    elif action == "launch-vanilla":
+        launch_result = _gui_launch_vanilla(profile, profile_dir, install)
     diagnostics = _gui_diagnostics_evidence(profile_dir)
     windows_status = _gui_windows_status()
     workshop = _gui_workshop_state(profile_dir, selected_summary)
@@ -5207,16 +5508,29 @@ def build_profile_first_gui_state(
                 visibleSummary="Readiness refreshed",
             )
         )
-    elif action == "dry-run-launch":
+    elif action in {"launch-bml", "launch-vanilla"}:
+        result = launch_result or {"status": "blocked", "processStarted": False, "processLaunched": False, "disabledReasons": ["Launch action did not run."]}
+        mode_label = "BaronyModLoader" if action == "launch-bml" else "Vanilla Barony"
+        blocked = result.get("status") == "blocked" or bool(result.get("disabledReasons"))
+        visible = f"Launch {mode_label} blocked" if blocked else f"Launch {mode_label} started"
         action_log.append(
             _gui_action_log_entry(
                 action,
-                launch_dry_run.get("status"),
-                f"Launch dry-run refreshed; processStarted={bool(launch_dry_run.get('processStarted'))}.",
-                processStarted=bool(launch_dry_run.get("processStarted")),
-                processLaunched=bool(launch_dry_run.get("processLaunched")),
-                runtimeManifestPath=launch_dry_run.get("runtimeManifestPath") or launch_dry_run.get("manifestPath"),
-                visibleSummary="Launch dry-run refreshed",
+                result.get("status"),
+                f"{mode_label} launch {'blocked' if blocked else 'started'}; processStarted={bool(result.get('processStarted'))}, mocked={bool(result.get('mocked'))}.",
+                mode=result.get("mode"),
+                processStarted=bool(result.get("processStarted")),
+                processLaunched=bool(result.get("processLaunched")),
+                mocked=bool(result.get("mocked")),
+                pid=result.get("pid"),
+                command=result.get("command"),
+                cwd=result.get("cwd"),
+                environment=result.get("environment"),
+                runtimeManifestPath=result.get("runtimeManifestPath") or result.get("manifestPath"),
+                disabledReasons=result.get("disabledReasons"),
+                problems=result.get("problems"),
+                launchLog=result.get("launchLog"),
+                visibleSummary=visible,
             )
         )
     elif action == "open-diagnostics":
@@ -5424,6 +5738,8 @@ def build_profile_first_gui_state(
         "recentActivity": visible_activity,
         "readiness": readiness,
         "launchDryRun": launch_dry_run,
+        "lastLaunch": launch_result,
+        "launchResult": launch_result,
         "diagnosticsEvidence": diagnostics,
         "diagnosticDetails": diagnostic_details,
         "diagnosticsDetails": diagnostic_details,
@@ -5665,7 +5981,7 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
 
     mod_selection_registry["select"] = select_detected_mod
 
-    def render_action_button(parent: Any, action: dict[str, Any], *, row: int, column: int, primary: bool = False) -> None:
+    def render_action_button(parent: Any, action: dict[str, Any], *, row: int, column: int, primary: bool = False, columnspan: int = 1) -> None:
         action_id = str(action.get("id") or "action")
         button = ttk.Button(
             parent,
@@ -5674,7 +5990,7 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             style="Primary.TButton" if primary else "TButton",
             state="normal" if action.get("enabled", True) else "disabled",
         )
-        button.grid(row=row, column=column, sticky="ew", padx=3, pady=3)
+        button.grid(row=row, column=column, columnspan=columnspan, sticky="ew", padx=3, pady=3)
         button_registry.setdefault(action_id, []).append(button)
 
     def render_mods_header(parent: Any, row_cursor: int) -> int:
@@ -5910,6 +6226,7 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
                 style="Section.TLabelframe",
             )
             frame.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 6, 0 if index == 2 else 6))
+            frame.columnconfigure(0, weight=1)
             frame.columnconfigure(1, weight=1)
             row_cursor = 0
             status_text = _humanize_enum_label(_gui_text(card.get("status") or "not_selected"))
@@ -5926,9 +6243,9 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
                 ttk.Label(frame, text=summary, wraplength=250, justify="left").grid(row=row_cursor, column=0, columnspan=2, sticky="ew", pady=(5, 4))
                 row_cursor += 1
             actions = card.get("actions") if isinstance(card.get("actions"), list) else []
-            for action in actions[:4]:
+            for action in actions[:5]:
                 if isinstance(action, dict):
-                    render_action_button(frame, action, row=row_cursor, column=0, primary=action.get("id") == (actions[0] or {}).get("id"))
+                    render_action_button(frame, action, row=row_cursor, column=0, primary=action.get("id") == (actions[0] or {}).get("id"), columnspan=2)
                     row_cursor += 1
 
     def render_sections(reason: str = "full-dashboard") -> None:
@@ -6064,6 +6381,8 @@ def _write_gui_smoke_report(
             "afterActions": after_actions if after_actions is not None else _gui_button_action_snapshot(gui_state),
             "readiness": gui_state.get("readiness"),
             "launchDryRun": gui_state.get("launchDryRun"),
+            "lastLaunch": gui_state.get("lastLaunch") or gui_state.get("launchResult"),
+            "launchResult": gui_state.get("launchResult"),
             "diagnosticsEvidence": gui_state.get("diagnosticsEvidence"),
             "diagnosticDetails": gui_state.get("diagnosticDetails"),
             "diagnosticsDetails": gui_state.get("diagnosticsDetails"),
@@ -6080,7 +6399,6 @@ def _write_gui_smoke_report(
 SMOKE_CLICK_ALL_ACTIONS = (
     "detect-install",
     "refresh-readiness",
-    "dry-run-launch",
     "open-diagnostics",
     "create-select-profile",
     "scan-packages",

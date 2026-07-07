@@ -100,8 +100,8 @@ Feature: Profile-first GUI Mods list
     And the Platform row value is Steam storefront instead of linux-x86_64
     And the Environment smoke report proves the Steam logo is rendered
     And Environment summary rows render compact badge-like labels with text
-    And the Environment card still proves launch dry-run does not start Barony
-    And the smoke report includes full Environment action labels and Workshop warning text
+    And Environment compact status actions expose Launch BaronyModLoader and Launch Vanilla Barony
+    And the smoke report includes full Environment launch action labels and Workshop warning text
     And hidden smoke window metadata proves no widget was auto-focused
     And important labels, buttons, and warnings expose no-clipping metadata
 

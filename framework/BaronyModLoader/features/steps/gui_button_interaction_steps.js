@@ -13,16 +13,19 @@ const BML_BIN = path.join(REPO_ROOT, "framework/BaronyModLoader/bin/barony-mod-l
 const BUTTON_CONTRACT = path.join(REPO_ROOT, ".tmp/profile-first-button-interaction-contract.json");
 const RUNEBOUND_ID = "jml.runebound-elixirs";
 const RUNEBOUND_NAME = "Runebound: Elixirs";
-const EXPECTED_ACTIONS = [
+const EXPECTED_SAFE_ALL_ACTIONS = [
   "detect-install",
   "refresh-readiness",
-  "dry-run-launch",
   "open-diagnostics",
   "create-select-profile",
   "scan-packages",
   "enable-package",
   "disable-package",
   "workshop-preview",
+];
+const LAUNCH_ACTIONS = [
+  { id: "launch-bml", label: "Launch BaronyModLoader" },
+  { id: "launch-vanilla", label: "Launch Vanilla Barony" },
 ];
 
 function loadContract() {
@@ -78,12 +81,15 @@ function structuralText(value) {
 }
 
 function normalizeActionId(value) {
-  return String(value || "")
+  const normalized = String(value || "")
     .trim()
     .toLowerCase()
     .replace(/runebound:\s*elixirs/g, "runebound-elixirs")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+  if (/^(launch-bml|launch-baronymodloader|launch-barony-mod-loader)$/.test(normalized)) return "launch-bml";
+  if (/^(launch-vanilla|launch-vanilla-barony)$/.test(normalized)) return "launch-vanilla";
+  return normalized;
 }
 
 function actionIdForEntry(entry) {
@@ -220,6 +226,70 @@ function valuesForKey(value, keyPattern) {
     if (keyPattern.test(key)) matches.push({ value: node, pathParts });
   });
   return matches;
+}
+
+function actionNeedles(actionId) {
+  const normalized = normalizeActionId(actionId);
+  const launch = LAUNCH_ACTIONS.find((entry) => entry.id === normalized);
+  return [normalized, launch && normalizeActionId(launch.label)].filter(Boolean);
+}
+
+function actionLogEntries(report, actionId) {
+  const candidates = [];
+  for (const key of ["actionLog", "actions", "visibleActivityLog", "activityLog", "recentActivity", "feedback"]) {
+    const value = directField(report, key);
+    if (Array.isArray(value)) candidates.push(...value);
+    else if (value && typeof value === "object") candidates.push(value);
+  }
+  const needles = actionNeedles(actionId);
+  return candidates.filter((entry) => {
+    const entryId = actionIdForEntry(entry);
+    const text = normalizeActionId(textForEntry(entry));
+    return needles.some((needle) => entryId === needle || text.includes(needle));
+  });
+}
+
+function actionEvidenceEntries(report, actionId) {
+  return [...actionEntries(report, actionId), ...actionLogEntries(report, actionId)];
+}
+
+function actionEvidenceText(report, actionId) {
+  return actionEvidenceEntries(report, actionId).map(textForEntry).join("\n");
+}
+
+function requireActionBooleanEvidence(world, actionId, keyPattern, expected, description) {
+  const report = ensureReport(world);
+  const evidence = actionEvidenceEntries(report, actionId);
+  const matches = evidence.flatMap((entry) => booleanFieldEvidence(entry, keyPattern, expected));
+  if (matches.length === 0) {
+    contractGap(
+      world,
+      `${actionId} does not report ${description}=${expected}.`,
+      `ACTION EVIDENCE:\n${evidence.map(textForEntry).join("\n---\n") || "<none>"}`
+    );
+  }
+}
+
+function requireLaunchTkInvocation(world, actionId) {
+  const report = ensureReport(world);
+  const entries = actionEvidenceEntries(report, actionId);
+  const localEvidence = entries.some(
+    (entry) =>
+      booleanFieldEvidence(entry, /^(actualTkButtonInvoked|tkButtonInvoked|smokeClickInvokedTkButton|buttonWidgetInvoked|buttonInvoked)$/i, true).length > 0 ||
+      /actual\s+tk\s+button|tk\s+button|ttk\.button|button\.invoke|widget\s+invoke|invoked\s+.*button/i.test(textForEntry(entry))
+  );
+  if (!localEvidence && !reportHasTkButtonInvocation(report)) {
+    contractGap(world, `${actionId} lacks evidence that a real Tk Button widget was invoked.`);
+  }
+}
+
+function requireVisibleLaunchFeedback(world, actionId, label) {
+  const report = ensureReport(world);
+  const activity = visibleActivityText(report);
+  const labelPattern = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|${actionId}`, "i");
+  if (!labelPattern.test(activity) || !/mock|started|launched|process|pid|vanilla|baronymodloader/i.test(activity)) {
+    contractGap(world, `${actionId} lacks concise visible launch feedback in Recent Activity/Action Log.`);
+  }
 }
 
 function collectPathStrings(value) {
@@ -372,22 +442,71 @@ When("I run the BaronyModLoader GUI with all smoke button clicks", function () {
   }
 });
 
-Then("the button smoke invoked the Environment button actions", function () {
-  ["detect-install", "refresh-readiness", "dry-run-launch", "open-diagnostics"].forEach((actionId) => requireClickedAction(this, actionId));
+When("I run the BaronyModLoader GUI with mocked launch button clicks", function () {
+  const args = ["gui", "--smoke-clicks", "launch-bml,launch-vanilla", "--smoke-report", this.guiButtonInteractionReportPath];
+  this.guiButtonInteractionCommandLine = `BML_GUI_LAUNCH_MODE=mock ${BML_BIN} ${args.join(" ")}`;
+  this.guiButtonInteractionCommand = spawnSync(BML_BIN, args, {
+    cwd: REPO_ROOT,
+    env: { ...process.env, PATH: `/usr/bin:${process.env.PATH || ""}`, BML_GUI_LAUNCH_MODE: "mock" },
+    encoding: "utf8",
+    timeout: 90000,
+  });
+  if (this.guiButtonInteractionCommand.error && this.guiButtonInteractionCommand.error.code === "ETIMEDOUT") {
+    this.guiButtonInteractionCommand.status = 124;
+  }
 });
 
-Then("Environment button feedback updates readiness, diagnostics, and launch dry-run activity without starting Barony", function () {
+Then("the button smoke invoked the safe Environment button actions", function () {
+  ["detect-install", "refresh-readiness", "open-diagnostics"].forEach((actionId) => requireClickedAction(this, actionId));
+});
+
+Then("Environment button feedback updates readiness and diagnostics without starting Barony", function () {
   const report = ensureReport(this);
   const activity = visibleActivityText(report);
-  for (const expected of [/readiness|ready|blocked/, /diagnostic|evidence/, /dry[- ]run|processstarted=false|process started false/]) {
+  for (const expected of [/readiness|ready|blocked/, /diagnostic|evidence/]) {
     if (!expected.test(activity)) {
       contractGap(this, `Recent Activity/Action Log does not show Environment feedback matching ${expected}.`);
     }
   }
-  if (!hasDirectFalse(report, /^processStarted$/i)) {
-    contractGap(this, "Expected smoke report to include processStarted:false for launch dry-run.");
+  assertNoTrueSideEffect(this, /^processStarted$|^processLaunched$|baronyStarted|gameStarted|startedProcess/i, "Barony process start");
+});
+
+Then("unsafe all-click smoke does not include GUI launch actions", function () {
+  const report = ensureReport(this);
+  for (const { id, label } of LAUNCH_ACTIONS) {
+    if (actionEntries(report, id).length > 0) {
+      contractGap(this, `Unsafe all-click smoke invoked ${label}; launch actions must require explicit mock launch smoke.`);
+    }
   }
-  assertNoTrueSideEffect(this, /^processStarted$|baronyStarted|gameStarted|startedProcess/i, "Barony process start");
+  assertNoTrueSideEffect(this, /^processStarted$|^processLaunched$|baronyStarted|gameStarted|startedProcess/i, "Barony process start");
+});
+
+Then("the mocked launch smoke invoked both GUI launch buttons through Tk", function () {
+  for (const { id } of LAUNCH_ACTIONS) {
+    requireClickedAction(this, id);
+    requireLaunchTkInvocation(this, id);
+  }
+});
+
+Then("mocked launch feedback reports BML and Vanilla process launch metadata without starting Barony", function () {
+  const report = ensureReport(this);
+  for (const { id, label } of LAUNCH_ACTIONS) {
+    requireActionBooleanEvidence(this, id, /^processStarted$/i, true, "processStarted");
+    requireActionBooleanEvidence(this, id, /^processLaunched$/i, true, "processLaunched");
+    requireActionBooleanEvidence(this, id, /^mocked$/i, true, "mocked");
+    requireVisibleLaunchFeedback(this, id, label);
+  }
+  const bmlText = actionEvidenceText(report, "launch-bml");
+  if (!/runtimeManifestPath|runtimeManifest|runtime[-_ ]manifest|BML_RUNTIME_MANIFEST/i.test(bmlText)) {
+    contractGap(this, "launch-bml lacks runtime manifest evidence.", `ACTION EVIDENCE:\n${bmlText || "<none>"}`);
+  }
+  if (!/\bBML_[A-Z0-9_]+\b|LD_PRELOAD/i.test(bmlText)) {
+    contractGap(this, "launch-bml lacks BML launch environment evidence.", `ACTION EVIDENCE:\n${bmlText || "<none>"}`);
+  }
+  const vanillaText = actionEvidenceText(report, "launch-vanilla");
+  if (/\bBML_[A-Z0-9_]+\b|LD_PRELOAD/i.test(vanillaText)) {
+    contractGap(this, "launch-vanilla includes BML-specific environment or LD_PRELOAD evidence.", `ACTION EVIDENCE:\n${vanillaText}`);
+  }
 });
 
 Then("the Profiles create-select-profile action creates and selects a stable profile outside .tmp", function () {
@@ -482,7 +601,7 @@ Then("the smoke report includes clickedActions and a visible activity log for ev
   if (!Array.isArray(activityEntries) || activityEntries.length === 0) {
     contractGap(this, "Expected non-empty visibleActivityLog in button smoke report.");
   }
-  EXPECTED_ACTIONS.forEach((actionId) => {
+  EXPECTED_SAFE_ALL_ACTIONS.forEach((actionId) => {
     const entries = requireClickedAction(this, actionId);
     const activity = visibleActivityText(report);
     const labelNeedles = entries

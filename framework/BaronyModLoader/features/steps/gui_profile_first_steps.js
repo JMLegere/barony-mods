@@ -23,8 +23,8 @@ const CONCEPT_LABELS = ["Environment", "Profiles", "Mods", "Workshop"];
 const FORBIDDEN_TOP_LEVEL_LABELS = ["Actions", "Views", "Diagnostics", "Windows Status", "Launch Dry Run"];
 const CONCEPT_EXPECTED_ACTIONS = {
   Environment: {
-    primary: /dry[- ]?run[\s\S]{0,80}launch|launch[\s\S]{0,80}dry[- ]?run/i,
-    secondary: [/detect[\s\S]{0,40}install|install[\s\S]{0,40}detect/i, /refresh[\s\S]{0,40}readiness|readiness[\s\S]{0,40}refresh/i, /open[\s\S]{0,40}diagnostics|diagnostics[\s\S]{0,40}open/i],
+    primary: /launch[\s\S]{0,80}(baronymodloader|barony mod loader|bml)|launch-bml/i,
+    secondary: [/launch[\s\S]{0,80}vanilla[\s\S]{0,40}barony|launch-vanilla/i, /detect[\s\S]{0,40}install|install[\s\S]{0,40}detect/i, /refresh[\s\S]{0,40}readiness|readiness[\s\S]{0,40}refresh/i, /open[\s\S]{0,40}diagnostics|diagnostics[\s\S]{0,40}open/i],
   },
   Profiles: {
     primary: /create[\s\S]{0,80}profile|select[\s\S]{0,80}profile|profile[\s\S]{0,80}(create|select)/i,
@@ -1630,7 +1630,8 @@ function requireImportantNoClippingMetadata(world) {
     ["Recent Activity label", /\bRecent Activity\b/i],
     ["Enable selected mod button", /\bEnable selected mod\b/i],
     ["Disable selected mod button", /\bDisable selected mod\b/i],
-    ["Dry-run launch button", /\bDry-run launch\b/i],
+    ["Launch BaronyModLoader button", /\bLaunch BaronyModLoader\b/i],
+    ["Launch Vanilla Barony button", /\bLaunch Vanilla Barony\b/i],
     ["Refresh readiness button", /\bRefresh readiness\b/i],
     ["Open diagnostics button", /\bOpen diagnostics\b/i],
     ["Workshop no-publish warning", /Steam publish(?:ing)? (?:remains )?disabled|Workshop preparation is dry-run only|No-publish guard/i],
@@ -2621,7 +2622,7 @@ Given("a completed profile-first GUI smoke report", function () {
     "scan-packages",
     "enable-package",
     "refresh-readiness",
-    "dry-run-launch",
+    "open-diagnostics",
     "workshop-preview",
   ].join(",");
   const args = ["--auto-close-ms", "750", "--smoke-clicks", smokeClicks, "--smoke-select-mod", SMOKE_SELECT_MOD, "--smoke-report", this.profileFirstGuiReportPath];
@@ -3263,27 +3264,40 @@ Then("Environment summary rows render compact badge-like labels with text", func
   }
 });
 
-Then("the Environment card still proves launch dry-run does not start Barony", function () {
+Then("Environment compact status actions expose Launch BaronyModLoader and Launch Vanilla Barony", function () {
   const environment = requireEnvironmentNode(this);
+  const actionTexts = [
+    ...conceptPrimaryActionTexts(environment),
+    ...conceptSecondaryActionTexts(environment),
+    ...conceptActionArrays(environment).flatMap((entry) => entry.value.map((action) => JSON.stringify(action))),
+  ].join("\n");
+  const missing = [
+    ["Launch BaronyModLoader", /Launch BaronyModLoader|launch-bml/i],
+    ["Launch Vanilla Barony", /Launch Vanilla Barony|launch-vanilla/i],
+  ].filter(([, pattern]) => !pattern.test(actionTexts)).map(([label]) => label);
+  if (missing.length) {
+    contractGap(
+      this,
+      `Environment launch action controls are missing: ${missing.join(", ")}`,
+      `ENVIRONMENT ACTIONS:\n${actionTexts || "<none>"}`
+    );
+  }
+  if (/Dry-run launch|dry-run-launch/i.test(actionTexts)) {
+    contractGap(this, "Environment still exposes Dry-run launch as a user-facing action.", `ENVIRONMENT ACTIONS:\n${actionTexts}`);
+  }
   const badTrueFlags = trueBooleanFlags(environment, /(processLaunched|processStarted|startedProcess|baronyStarted|startedBarony|launchedBarony|gameProcessStarted)$/i);
   if (badTrueFlags.length) {
-    contractGap(this, `Environment says a Barony/game process started: ${badTrueFlags.join(", ")}`);
-  }
-  const text = objectText(environment);
-  const noStartEvidence =
-    booleanFlag(environment, /(processLaunched|processStarted|startedProcess|baronyStarted|startedBarony|launchedBarony|gameProcessStarted)$/i, false) ||
-    /no process (?:starts|started)|without starting Barony|Barony process start: no|process(?:Started|Launched)[\s\S]{0,40}false/i.test(text);
-  if (!noStartEvidence) {
-    contractGap(this, "Environment launch dry-run lacks explicit evidence that no Barony process was started", `ENVIRONMENT EVIDENCE:\n${text || "<none>"}`);
+    contractGap(this, `Environment says a Barony/game process started without explicit launch mock mode: ${badTrueFlags.join(", ")}`);
   }
 });
 
-Then("the smoke report includes full Environment action labels and Workshop warning text", function () {
+Then("the smoke report includes full Environment launch action labels and Workshop warning text", function () {
   const environment = requireEnvironmentNode(this);
   const workshop = requireConceptEntry(this, "Workshop").node;
-  const environmentText = objectText(environment);
+  const environmentText = JSON.stringify(environment, null, 2);
   const missingEnvironmentLabels = [
-    "Dry-run launch",
+    "Launch BaronyModLoader",
+    "Launch Vanilla Barony",
     "Detect install",
     "Refresh readiness",
     "Open diagnostics",
@@ -3351,28 +3365,21 @@ Then("the concept cards expose visual hierarchy instead of a flat action strip",
   for (const conceptLabel of CONCEPT_LABELS) assertConceptHierarchy(this, conceptLabel);
 });
 
-Then("the Environment concept contains readiness, runtime, diagnostics, Windows fail-closed, and launch dry-run evidence", function () {
+Then("the Environment concept contains readiness, runtime, diagnostics, Windows fail-closed, and GUI launch controls", function () {
   const text = requireConceptPatterns(this, "Environment", [
     ["readiness status", /readiness|ready|blocked/i],
     ["runtime evidence", /runtime|manifest|BML_RUNTIME_MANIFEST|Steam Barony|linux/i],
     ["diagnostics evidence", /diagnostics?|evidence|production|validation/i],
     ["Windows fail-closed status", /windows[\s\S]{0,160}(fail[- ]?closed|blocked|unsupported|unverified|not supported)|(?:fail[- ]?closed|blocked|unsupported|unverified|not supported)[\s\S]{0,160}windows/i],
-    ["launch dry-run action/evidence", /launch[\s\S]{0,120}dry[- ]?run|dry[- ]?run[\s\S]{0,120}launch/i],
+    ["BML launch control", /Launch BaronyModLoader|launch-bml/i],
+    ["Vanilla launch control", /Launch Vanilla Barony|launch-vanilla/i],
   ]);
-  const badTrueFlags = trueBooleanFlags(requireConceptEntry(this, "Environment").node, /(processLaunched|processStarted|startedProcess|baronyStarted|startedBarony|launchedBarony|gameProcessStarted)$/i);
-  if (badTrueFlags.length) {
-    contractGap(this, `Environment says a Barony/game process started: ${badTrueFlags.join(", ")}`);
-  }
-  const noStartEvidence = booleanFlag(requireConceptEntry(this, "Environment").node, /(processLaunched|processStarted|startedProcess|baronyStarted|startedBarony|launchedBarony|gameProcessStarted)$/i, false) || /no process (?:starts|started)|without starting Barony|Barony process start: no|processLaunched[\s\S]{0,40}false/i.test(text);
-  if (!noStartEvidence) {
-    contractGap(this, "Environment launch dry-run lacks explicit evidence that no Barony process was started", `ENVIRONMENT EVIDENCE:\n${text || "<none>"}`);
-  }
   if (/windows[\s\S]{0,120}(playable|ready|supported)[\s\S]{0,80}(true|yes|available)|windows[\s\S]{0,120}(true|yes|available)[\s\S]{0,80}(playable|ready|supported)/i.test(text)) {
     contractGap(this, "Environment appears to claim Windows playable/ready support", `ENVIRONMENT EVIDENCE:\n${text}`);
   }
 });
 
-Then("Environment keeps diagnostics, Windows status, readiness, and launch dry-run inside the concept card", function () {
+Then("Environment keeps diagnostics, Windows status, readiness, and GUI launch controls inside the concept card", function () {
   const forbidden = topLevelForbiddenLabels(this.profileFirstGuiReport);
   if (forbidden.length) {
     contractGap(this, `Environment-only details leaked into top-level sections: ${forbidden.join(", ")}`);
@@ -3381,7 +3388,8 @@ Then("Environment keeps diagnostics, Windows status, readiness, and launch dry-r
     ["diagnostics", /diagnostics?/i],
     ["Windows", /windows/i],
     ["readiness", /readiness|ready|blocked/i],
-    ["launch dry-run", /launch[\s\S]{0,120}dry[- ]?run|dry[- ]?run[\s\S]{0,120}launch/i],
+    ["BML launch control", /Launch BaronyModLoader|launch-bml/i],
+    ["Vanilla launch control", /Launch Vanilla Barony|launch-vanilla/i],
   ]);
 });
 
