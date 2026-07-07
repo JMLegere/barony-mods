@@ -23,7 +23,7 @@ const CONCEPT_LABELS = ["Environment", "Profiles", "Mods", "Workshop"];
 const FORBIDDEN_TOP_LEVEL_LABELS = ["Actions", "Views", "Diagnostics", "Windows Status", "Launch Dry Run"];
 const CONCEPT_EXPECTED_ACTIONS = {
   Environment: {
-    primary: /launch[\s\S]{0,80}(baronymodloader|barony mod loader|bml)|launch-bml/i,
+    primary: /Launch BML Barony|launch-bml/i,
     secondary: [/launch[\s\S]{0,80}vanilla[\s\S]{0,40}barony|launch-vanilla/i, /detect[\s\S]{0,40}install|install[\s\S]{0,40}detect/i, /refresh[\s\S]{0,40}readiness|readiness[\s\S]{0,40}refresh/i, /open[\s\S]{0,40}diagnostics|diagnostics[\s\S]{0,40}open/i],
   },
   Profiles: {
@@ -259,6 +259,87 @@ function actionText(action) {
 function actionScope(action) {
   if (!action || typeof action !== "object") return "";
   return String(action.concept || action.conceptKey || action.card || action.section || action.parentConcept || "");
+}
+
+function normalizeActionIdForProfile(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function copyForAiActionLike(value) {
+  const text = typeof value === "string" ? value : objectText(value);
+  return normalizeActionIdForProfile(text) === "copy-for-ai" || /\bCopy\s+for\s+AI\b/i.test(text);
+}
+
+function copyForAiControlEvidence(report) {
+  const evidence = [];
+  const seen = new Set();
+  const push = (node, pathParts) => {
+    const pathText = pathParts.join(".");
+    const text = typeof node === "string" ? node : objectText(node);
+    const keyText = node && typeof node === "object" ? Object.keys(node).join(" ") : "";
+    const looksLikeControl = /(action|button|control|command|cta|click|invoke|controlType)/i.test(`${pathText} ${keyText}`);
+    if (!looksLikeControl || !copyForAiActionLike(node)) return;
+    const key = `${pathText}\u0000${text}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    evidence.push({ node, pathParts, text });
+  };
+  walk(report, (node, pathParts) => {
+    if (typeof node === "string") {
+      push(node, pathParts);
+      return;
+    }
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    const direct = [
+      node.id,
+      node.actionId,
+      node.action,
+      node.command,
+      node.label,
+      node.text,
+      node.fullText,
+      node.renderedText,
+      node.accessibleText,
+    ].filter(Boolean).join(" ");
+    if (copyForAiActionLike(direct)) push(node, pathParts);
+  });
+  return evidence;
+}
+
+function copyForAiActivityControlEvidence(report) {
+  return copyForAiControlEvidence(report).filter((entry) => {
+    const pathText = entry.pathParts.join(".");
+    const text = `${entry.text} ${entry.node && typeof entry.node === "object" ? Object.values(entry.node).join(" ") : ""}`;
+    return /(activity|recent|actionLog|activityLog)/i.test(pathText) || /\b(Recent Activity|Action Log)\b/i.test(text);
+  });
+}
+
+function compactStatusCopyForAiActionEvidence(world) {
+  const statusCards = requireCompactRightStatusCards(world);
+  const evidence = [];
+  for (const [label, node] of [
+    ["Environment", statusCards.environment],
+    ["Profile", statusCards.profile],
+    ["Workshop", statusCards.workshop],
+  ]) {
+    for (const arrayEntry of conceptActionArrays(node)) {
+      for (const action of arrayEntry.value) {
+        if (copyForAiActionLike(action)) {
+          evidence.push(`${label} ${arrayEntry.pathParts.join(".")}: ${actionText(action)}`);
+        }
+      }
+    }
+    for (const entry of valuesForKey(node, /^(primaryAction|primaryButton|primaryCta|secondaryActions|secondaryButtons|secondaryCtas|actions|buttons|controls)$/i)) {
+      if (copyForAiActionLike(entry.value)) {
+        evidence.push(`${label} ${entry.pathParts.join(".")}: ${actionText(entry.value)}`);
+      }
+    }
+  }
+  return evidence;
 }
 
 function actionRank(action) {
@@ -1630,10 +1711,11 @@ function requireImportantNoClippingMetadata(world) {
     ["Recent Activity label", /\bRecent Activity\b/i],
     ["Enable selected mod button", /\bEnable selected mod\b/i],
     ["Disable selected mod button", /\bDisable selected mod\b/i],
-    ["Launch BaronyModLoader button", /\bLaunch BaronyModLoader\b/i],
+    ["Launch BML Barony button", /\bLaunch BML Barony\b/i],
     ["Launch Vanilla Barony button", /\bLaunch Vanilla Barony\b/i],
     ["Refresh readiness button", /\bRefresh readiness\b/i],
     ["Open diagnostics button", /\bOpen diagnostics\b/i],
+    ["Copy for AI button", /\bCopy for AI\b/i],
     ["Workshop no-publish warning", /Steam publish(?:ing)? (?:remains )?disabled|Workshop preparation is dry-run only|No-publish guard/i],
   ];
   const missing = important.filter(([, pattern]) => !entries.some((entry) => pattern.test(entry.text) && visualEntryHasNoClippingEvidence(entry)));
@@ -2125,6 +2207,91 @@ function platformSteamLogoEvidence(world) {
     flags: renderedFlags,
     ok: logoPaths.length > 0 && renderedFlags.length > 0,
   };
+}
+
+function summaryRowExplicitLabel(row) {
+  if (!row || typeof row !== "object") return "";
+  return ["label", "title", "name", "displayLabel", "visibleLabel", "fieldLabel", "renderedLabel"]
+    .map((key) => row[key])
+    .filter((value) => typeof value === "string" && value.trim())
+    .join(" ");
+}
+
+function summaryRowValueText(row) {
+  if (!row || typeof row !== "object") return String(row || "");
+  const direct = ["value", "displayValue", "textValue", "summary", "status", "statusText"]
+    .map((key) => row[key])
+    .filter((value) => value !== undefined && value !== null && String(value).trim())
+    .join(" ");
+  return direct || rowText(row);
+}
+
+function assertPlatformRowLabelValue(world) {
+  const rows = environmentSummaryRows(world);
+  const row = summaryRowFor(rows, "platform");
+  if (!row) {
+    contractGap(world, "Environment summary rows/items are missing Platform row");
+  }
+  const label = summaryRowExplicitLabel(row);
+  const value = summaryRowValueText(row);
+  const text = rowText(row);
+  if (!/\bPlatform\b/i.test(label)) {
+    contractGap(
+      world,
+      "Platform row visible label must be Platform, not Steam",
+      `LABEL: ${label || "<none>"}\nVALUE: ${value || "<none>"}\nROW:\n${text || "<none>"}`
+    );
+  }
+  if (!/\bSteam\b/i.test(value) && !/\bSteam\b/i.test(text)) {
+    contractGap(world, "Platform row value is not Steam", `LABEL: ${label || "<none>"}\nVALUE: ${value || "<none>"}\nROW:\n${text || "<none>"}`);
+  }
+  if (/^\s*Steam\s*$/i.test(label) || /\bSteam\s*:\s*Steam\b/i.test(`${label}: ${value}\n${text}`)) {
+    contractGap(world, "Platform row must render as Platform: Steam, not Steam: Steam", `LABEL: ${label || "<none>"}\nVALUE: ${value || "<none>"}\nROW:\n${text || "<none>"}`);
+  }
+}
+
+function environmentSummaryRowIconOk(row, type) {
+  if (!row) return false;
+  if (type === "platform-steam") return steamIconHasLogoOrFallback(row) && hasTextLabelEvidence(row);
+  return hasIconEvidence(row) && hasTextLabelEvidence(row);
+}
+
+function entityIconPairOk(byType, type) {
+  const entries = byType.get(type) || [];
+  if (type === "platform-steam") {
+    return entries.some((entry) => steamIconHasLogoOrFallback(entry.node) && hasTextLabelEvidence(entry.node) && falseRenderedIconFlags(entry.node).length === 0);
+  }
+  return entries.some((entry) => hasIconEvidence(entry.node) && hasTextLabelEvidence(entry.node) && falseRenderedIconFlags(entry.node).length === 0);
+}
+
+function assertEnvironmentSummaryIconPairs(world) {
+  const rows = environmentSummaryRows(world);
+  const { entries, byType } = indexedEntityIconography(world);
+  const checks = [
+    ["OS", "os", "os"],
+    ["Platform", "platform", "platform-steam"],
+    ["Game version", "version", "game-version"],
+  ];
+  const missing = [];
+  for (const [label, rowKind, iconType] of checks) {
+    const row = summaryRowFor(rows, rowKind);
+    if (!row) {
+      missing.push(`${label} row`);
+      continue;
+    }
+    const rowOk = environmentSummaryRowIconOk(row, iconType);
+    const entityOk = entityIconPairOk(byType, iconType);
+    if (!rowOk && !entityOk) {
+      missing.push(`${label} ${iconType} icon/logo paired with accessible text`);
+    }
+  }
+  if (missing.length) {
+    contractGap(
+      world,
+      `Environment summary icon metadata is missing: ${missing.join(", ")}`,
+      `ROWS:\n${rows.map(rowText).join("\n---\n") || "<none>"}\nENTITY ICONS:\n${entries.map(entityEntryDebug).join("\n") || "<none>"}`
+    );
+  }
 }
 
 const REQUIRED_ENTITY_ICON_TYPES = [
@@ -2784,6 +2951,29 @@ Then("visible Recent Activity entries are concise, target-named, and keep verbos
   assertVisibleActivityLogConcise(this);
 });
 
+Then("the Recent Activity area exposes a Copy for AI button", function () {
+  requireRightSide(this);
+  const evidence = copyForAiActivityControlEvidence(this.profileFirstGuiReport || {});
+  if (!evidence.length) {
+    contractGap(
+      this,
+      "Recent Activity/Action Log area does not expose a Copy for AI button/action",
+      `COPY FOR AI CONTROLS:\n${copyForAiControlEvidence(this.profileFirstGuiReport || {}).map((entry) => `${entry.pathParts.join(".")}: ${entry.text}`).join("\n") || "<none>"}`
+    );
+  }
+});
+
+Then("Copy for AI is not exposed as an Environment, Profile, or Workshop compact status card action", function () {
+  const compactEvidence = compactStatusCopyForAiActionEvidence(this);
+  if (compactEvidence.length) {
+    contractGap(
+      this,
+      "Copy for AI must live with Recent Activity/Action Log, not as an Environment/Profile/Workshop compact status card action",
+      `COMPACT STATUS ACTIONS:\n${compactEvidence.join("\n")}`
+    );
+  }
+});
+
 Then("the right side does not keep a separate Mods card", function () {
   requireNoSeparateRightSideModsCard(this);
 });
@@ -3214,6 +3404,10 @@ Then("the Platform row value is Steam storefront instead of linux-x86_64", funct
   }
 });
 
+Then("the Platform row renders as Platform: Steam, not Steam: Steam", function () {
+  assertPlatformRowLabelValue(this);
+});
+
 Then("the Environment smoke report proves the Steam logo is rendered", function () {
   const evidence = platformSteamLogoEvidence(this);
   if (!evidence.ok) {
@@ -3224,6 +3418,10 @@ Then("the Environment smoke report proves the Steam logo is rendered", function 
       `steamLogoRendered candidates:\n${evidence.flags.map((entry) => entry.pathParts.join(".")).join("\n") || "<none>"}`
     );
   }
+});
+
+Then("Environment summary rows pair Platform, OS, and Game version values with logo or icon metadata", function () {
+  assertEnvironmentSummaryIconPairs(this);
 });
 
 Then("the smoke report exposes rendered entity iconography for every major entity", function () {
@@ -3264,7 +3462,7 @@ Then("Environment summary rows render compact badge-like labels with text", func
   }
 });
 
-Then("Environment compact status actions expose Launch BaronyModLoader and Launch Vanilla Barony", function () {
+Then("Environment compact status actions expose Launch BML Barony and Launch Vanilla Barony", function () {
   const environment = requireEnvironmentNode(this);
   const actionTexts = [
     ...conceptPrimaryActionTexts(environment),
@@ -3272,7 +3470,7 @@ Then("Environment compact status actions expose Launch BaronyModLoader and Launc
     ...conceptActionArrays(environment).flatMap((entry) => entry.value.map((action) => JSON.stringify(action))),
   ].join("\n");
   const missing = [
-    ["Launch BaronyModLoader", /Launch BaronyModLoader|launch-bml/i],
+    ["Launch BML Barony", /Launch BML Barony|launch-bml/i],
     ["Launch Vanilla Barony", /Launch Vanilla Barony|launch-vanilla/i],
   ].filter(([, pattern]) => !pattern.test(actionTexts)).map(([label]) => label);
   if (missing.length) {
@@ -3296,7 +3494,7 @@ Then("the smoke report includes full Environment launch action labels and Worksh
   const workshop = requireConceptEntry(this, "Workshop").node;
   const environmentText = JSON.stringify(environment, null, 2);
   const missingEnvironmentLabels = [
-    "Launch BaronyModLoader",
+    "Launch BML Barony",
     "Launch Vanilla Barony",
     "Detect install",
     "Refresh readiness",
@@ -3371,7 +3569,7 @@ Then("the Environment concept contains readiness, runtime, diagnostics, Windows 
     ["runtime evidence", /runtime|manifest|BML_RUNTIME_MANIFEST|Steam Barony|linux/i],
     ["diagnostics evidence", /diagnostics?|evidence|production|validation/i],
     ["Windows fail-closed status", /windows[\s\S]{0,160}(fail[- ]?closed|blocked|unsupported|unverified|not supported)|(?:fail[- ]?closed|blocked|unsupported|unverified|not supported)[\s\S]{0,160}windows/i],
-    ["BML launch control", /Launch BaronyModLoader|launch-bml/i],
+    ["BML launch control", /Launch BML Barony|launch-bml/i],
     ["Vanilla launch control", /Launch Vanilla Barony|launch-vanilla/i],
   ]);
   if (/windows[\s\S]{0,120}(playable|ready|supported)[\s\S]{0,80}(true|yes|available)|windows[\s\S]{0,120}(true|yes|available)[\s\S]{0,80}(playable|ready|supported)/i.test(text)) {
@@ -3388,7 +3586,7 @@ Then("Environment keeps diagnostics, Windows status, readiness, and GUI launch c
     ["diagnostics", /diagnostics?/i],
     ["Windows", /windows/i],
     ["readiness", /readiness|ready|blocked/i],
-    ["BML launch control", /Launch BaronyModLoader|launch-bml/i],
+    ["BML launch control", /Launch BML Barony|launch-bml/i],
     ["Vanilla launch control", /Launch Vanilla Barony|launch-vanilla/i],
   ]);
 });

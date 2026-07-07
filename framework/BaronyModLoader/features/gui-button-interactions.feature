@@ -13,6 +13,15 @@ Feature: Profile-first GUI button interactions
     And Environment button feedback updates readiness and diagnostics without starting Barony
     And unsafe all-click smoke does not include GUI launch actions
 
+
+  @gui-button-interactions @copy-for-ai @safe-specific
+  Scenario: Copy for AI smoke click invokes Tk button and reports pasteable issue-fix context without launching
+    When I run the BaronyModLoader GUI with Copy for AI smoke button click
+    Then the Copy for AI smoke invoked the Tk button without launching Barony
+    And the Copy for AI smoke report exposes non-empty copied AI issue context metadata
+    And the Copy for AI smoke report proves backend clipboard persistence when available
+    And copied AI issue context includes issue-fix essentials and rejects useless payloads
+
   @gui-button-interactions @environment @mocked-launch
   Scenario: Environment launch buttons start mocked BML and vanilla launches through Tk buttons
     When I run the BaronyModLoader GUI with mocked launch button clicks

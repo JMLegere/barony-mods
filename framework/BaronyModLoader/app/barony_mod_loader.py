@@ -3309,10 +3309,11 @@ GUI_ACTION_LABELS = {
     "enable-package": "Enable selected mod",
     "disable-package": "Disable selected mod",
     "refresh-readiness": "Refresh readiness",
-    "launch-bml": "Launch BaronyModLoader",
+    "launch-bml": "Launch BML Barony",
     "launch-vanilla": "Launch Vanilla Barony",
     "open-diagnostics": "Open diagnostics",
     "workshop-preview": "Preview Workshop dry-run",
+    "copy-for-ai": "Copy for AI",
 }
 
 GUI_ACTIONS = tuple(GUI_ACTION_LABELS.items())
@@ -3498,7 +3499,261 @@ def _gui_activity_log_details(action_log: list[dict[str, Any]]) -> list[dict[str
         payload.update(entry_details)
         details.append({key: value for key, value in payload.items() if value is not None})
     return details
+def _gui_copy_for_ai_context(gui_state: dict[str, Any]) -> dict[str, Any]:
+    """Build a compact AI-support context bundle for clipboard copy."""
+    included_sections: list[str] = []
+    sections: dict[str, Any] = {}
 
+    # App identity
+    sections["app"] = {
+        "id": APP_ID,
+        "version": APP_VERSION,
+        "schemaVersion": gui_state.get("schemaVersion") or SCHEMA_VERSION,
+    }
+    included_sections.append("app")
+
+    # Generated timestamp
+    sections["generatedAt"] = gui_state.get("generatedAt") or utc_now()
+    sections["generatedTimestamp"] = sections["generatedAt"]
+
+    # Profile path and state
+    profile = gui_state.get("profile") if isinstance(gui_state.get("profile"), dict) else {}
+    profile_path = gui_state.get("profilePath") or profile.get("path") or ""
+    sections["profile"] = {
+        "profilePath": str(profile_path),
+        "path": str(profile_path),
+        "id": profile.get("id") or profile.get("profileId") or "",
+        "status": profile.get("status") or "unknown",
+    }
+    included_sections.append("profile")
+
+    # Selected mod/package
+    selected_package = gui_state.get("selectedPackage") if isinstance(gui_state.get("selectedPackage"), dict) else {}
+    selected_mod = gui_state.get("selectedMod") if isinstance(gui_state.get("selectedMod"), dict) else {}
+    sections["selectedPackage"] = {
+        "id": selected_package.get("id") or selected_package.get("packageId") or "",
+        "name": selected_package.get("name") or selected_mod.get("name") or "",
+        "path": selected_package.get("path") or selected_mod.get("path") or "",
+        "status": selected_package.get("status") or selected_mod.get("status") or "",
+        "validationStatus": selected_package.get("validationStatus") or "",
+    }
+    included_sections.append("selectedPackage")
+
+    # Active mods
+    active_mods = gui_state.get("activeMods") if isinstance(gui_state.get("activeMods"), list) else []
+    sections["activeMods"] = [
+        {
+            "id": str(mod.get("id") or mod.get("packageId") or ""),
+            "name": str(mod.get("name") or ""),
+            "enabled": bool(mod.get("enabled") or mod.get("enabledInProfile")),
+        }
+        for mod in active_mods
+        if isinstance(mod, dict)
+    ]
+    included_sections.append("activeMods")
+
+    # Environment/install summary
+    install = gui_state.get("install") if isinstance(gui_state.get("install"), dict) else {}
+    sections["environment"] = {
+        "installPath": install.get("installPath") or install.get("path") or "",
+        "executable": install.get("executable") or "",
+        "status": install.get("status") or "unknown",
+        "reason": install.get("reason") or "",
+        "platform": "Steam",
+        "gameVersion": install.get("gameVersionString") or install.get("executableBuildId") or "",
+    }
+    included_sections.append("environment")
+
+    # Readiness
+    readiness = gui_state.get("readiness") if isinstance(gui_state.get("readiness"), dict) else {}
+    readiness_state = readiness.get("readiness", readiness) if isinstance(readiness, dict) else readiness
+    sections["readiness"] = {
+        "status": readiness_state.get("status") or readiness.get("status") or "unknown",
+        "disabledReasons": readiness_state.get("disabledReasons") or readiness.get("disabledReasons") or [],
+        "readinessCheckCount": len(readiness_state.get("rows", []) if isinstance(readiness_state, dict) else []),
+    }
+    included_sections.append("readiness")
+
+    # Diagnostics
+    diagnostics = gui_state.get("diagnosticsEvidence") or gui_state.get("diagnostics") or {}
+    diagnostic_items = diagnostics.get("items") if isinstance(diagnostics.get("items"), list) else []
+    sections["diagnostics"] = {
+        "status": diagnostics.get("status") or "unknown",
+        "reportCount": len(diagnostic_items),
+        "productionEvidenceAvailable": bool(diagnostics.get("productionEvidenceAvailable")),
+    }
+    included_sections.append("diagnostics")
+
+    # Workshop
+    workshop = gui_state.get("workshop") if isinstance(gui_state.get("workshop"), dict) else {}
+    sections["workshop"] = {
+        "status": workshop.get("status") or "unknown",
+        "publishEnabled": bool(workshop.get("publishEnabled")),
+        "noPublish": bool(workshop.get("noPublish")),
+        "mode": workshop.get("mode") or "dry-run",
+    }
+    included_sections.append("workshop")
+
+    # Last launch result
+    last_launch = gui_state.get("lastLaunch") or gui_state.get("launchResult") or {}
+    launch_dry_run = gui_state.get("launchDryRun") if isinstance(gui_state.get("launchDryRun"), dict) else {}
+    sections["lastLaunch"] = {
+        "status": last_launch.get("status") or launch_dry_run.get("status") or "not_run",
+        "processStarted": bool(last_launch.get("processStarted")),
+        "processLaunched": bool(last_launch.get("processLaunched")),
+        "mocked": bool(last_launch.get("mocked")),
+        "pid": last_launch.get("pid"),
+        "runtimeManifestPath": last_launch.get("runtimeManifestPath") or launch_dry_run.get("runtimeManifestPath") or "",
+        "command": last_launch.get("command") or "",
+        "disabledReasons": last_launch.get("disabledReasons") or launch_dry_run.get("disabledReasons") or [],
+    }
+    included_sections.append("lastLaunch")
+
+    # Visible Recent Activity (concise)
+    visible_activity = gui_state.get("visibleActivityLog") if isinstance(gui_state.get("visibleActivityLog"), list) else []
+    sections["recentActivity"] = list(visible_activity)
+    included_sections.append("recentActivity")
+
+    # Full action log details
+    action_log = gui_state.get("actionLog") if isinstance(gui_state.get("actionLog"), list) else []
+    activity_log_details = gui_state.get("activityLogDetails") if isinstance(gui_state.get("activityLogDetails"), list) else []
+    sections["actionLog"] = list(action_log)
+    sections["activityLogDetails"] = list(activity_log_details)
+    included_sections.append("actionLog")
+    included_sections.append("activityLogDetails")
+
+    # Bundle text: pretty JSON with a short heading
+    heading = (
+        f"## {APP_ID} {APP_VERSION} / Schema {SCHEMA_VERSION}\n"
+        f"Support context generated {sections['generatedAt']}\n"
+        f"Sections: {', '.join(included_sections)}\n"
+    )
+    bundle = {
+        "app": sections["app"],
+        "generatedAt": sections["generatedAt"],
+        "includedSections": included_sections,
+        "sectionNames": included_sections,
+        "profile": sections["profile"],
+        "selectedPackage": sections["selectedPackage"],
+        "activeMods": sections["activeMods"],
+        "environment": sections["environment"],
+        "readiness": sections["readiness"],
+        "diagnostics": sections["diagnostics"],
+        "workshop": sections["workshop"],
+        "lastLaunch": sections["lastLaunch"],
+        "recentActivity": sections["recentActivity"],
+        "actionLog": sections["actionLog"],
+        "activityLogDetails": sections["activityLogDetails"],
+    }
+    bundle_json = json.dumps(bundle, indent=2, sort_keys=False, default=str)
+    text = heading + bundle_json
+    char_count = len(text)
+    byte_count = len(text.encode("utf-8"))
+
+    return {
+        "text": text,
+        "bundle": bundle,
+        "includedSections": included_sections,
+        "sectionNames": included_sections,
+        "charCount": char_count,
+        "byteCount": byte_count,
+        "status": "ok",
+    }
+
+
+
+def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, Any]:
+    """Copy text through a user-visible system clipboard tool when available."""
+    candidates: list[tuple[str, list[str], bool]] = []
+    wayland_display = bool(os.environ.get("WAYLAND_DISPLAY"))
+    x11_display = bool(os.environ.get("DISPLAY"))
+
+    wl_copy = shutil.which("wl-copy")
+    if wayland_display and wl_copy:
+        sh = shutil.which("sh")
+        wl_copy_command = (
+            [
+                sh,
+                "-c",
+                'exec "$1" --type "$2" >/dev/null 2>/dev/null',
+                "sh",
+                wl_copy,
+                "text/plain;charset=utf-8",
+            ]
+            if sh
+            else [wl_copy, "--type", "text/plain;charset=utf-8"]
+        )
+        candidates.append(("wl-copy", wl_copy_command, True))
+
+    xclip = shutil.which("xclip")
+    if x11_display and xclip:
+        candidates.append(("xclip", [xclip, "-selection", "clipboard", "-in"], True))
+
+    xsel = shutil.which("xsel")
+    if x11_display and xsel:
+        candidates.append(("xsel", [xsel, "--clipboard", "--input"], True))
+
+    backends: list[dict[str, Any]] = []
+    if not candidates:
+        status = "unavailable: no system clipboard tool found"
+        return {
+            "status": status,
+            "used": None,
+            "succeeded": False,
+            "clipboardBackends": backends,
+        }
+
+    for name, command, preferred in candidates:
+        backend: dict[str, Any] = {"name": name, "preferred": preferred, "available": True}
+        try:
+            result = subprocess.run(
+                command,
+                input=text,
+                text=True,
+                timeout=timeout,
+                capture_output=True,
+            )
+        except subprocess.TimeoutExpired:
+            if name == "wl-copy":
+                backend.update({"status": "ok", "succeeded": True, "note": "persistent clipboard owner"})
+                backends.append(backend)
+                return {
+                    "status": "ok: wl-copy",
+                    "used": name,
+                    "succeeded": True,
+                    "clipboardBackends": backends,
+                }
+            backend.update({"status": "timeout", "succeeded": False})
+        except OSError as exc:
+            backend.update({"status": f"error: {exc}", "succeeded": False})
+        else:
+            if result.returncode == 0:
+                backend.update({"status": "ok", "succeeded": True})
+                backends.append(backend)
+                return {
+                    "status": f"ok: {name}",
+                    "used": name,
+                    "succeeded": True,
+                    "clipboardBackends": backends,
+                }
+            stderr = " ".join((result.stderr or result.stdout or "").split())
+            if stderr:
+                stderr = textwrap.shorten(stderr, width=160, placeholder="…")
+            backend.update(
+                {
+                    "status": f"error: exit {result.returncode}" + (f": {stderr}" if stderr else ""),
+                    "succeeded": False,
+                }
+            )
+        backends.append(backend)
+
+    status = backends[-1]["status"] if backends else "unavailable: no system clipboard tool found"
+    return {
+        "status": status,
+        "used": None,
+        "succeeded": False,
+        "clipboardBackends": backends,
+    }
 
 def _gui_button_action_snapshot(gui_state: dict[str, Any]) -> list[dict[str, Any]]:
     snapshot: list[dict[str, Any]] = []
@@ -3753,6 +4008,7 @@ def _gui_rendered_text_completeness(gui_state: dict[str, Any]) -> list[dict[str,
 
     add("modsList", "title", "Mods", wrap_length_px=320)
     add("activityLog", "title", "Recent Activity", wrap_length_px=660)
+    add("activityLog", "copy-for-ai", GUI_ACTION_LABELS["copy-for-ai"], control_type="button", min_width_px=120)
 
     concepts = gui_state.get("conceptMap") if isinstance(gui_state.get("conceptMap"), dict) else {}
     environment = concepts.get("environment") if isinstance(concepts.get("environment"), dict) else {}
@@ -4020,6 +4276,44 @@ def _gui_steam_icon_path() -> str | None:
     candidates = sorted(hicolor.glob("*/apps/steam.png"))
     return str(candidates[0]) if candidates else None
 
+def _gui_os_icon_path() -> str | None:
+    candidates = [
+        Path("/usr/share/icons/hicolor/48x48/apps/cachyos-pi.png"),
+        Path("/usr/share/icons/hicolor/32x32/apps/cachyos-pi.png"),
+        Path("/usr/share/pixmaps/cachyos-logo.png"),
+        Path("/usr/share/pixmaps/archlinux-logo.png"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    for pattern in (
+        "/usr/share/icons/hicolor/*/apps/cachyos*.png",
+        "/usr/share/icons/hicolor/*/apps/*linux*.png",
+        "/usr/share/pixmaps/*linux*.png",
+    ):
+        matches = sorted(Path("/").glob(pattern.lstrip("/")))
+        if matches:
+            return str(matches[0])
+    return None
+
+
+def _gui_barony_game_logo_path() -> str | None:
+    candidates = [
+        Path.home() / ".local/share/Steam/appcache/librarycache" / STEAM_BARONY_APP_ID / "logo.png",
+        Path.home() / ".local/share/Steam/appcache/librarycache" / STEAM_BARONY_APP_ID / "icon.jpg",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    artwork_root = Path.home() / ".local/share/Steam/appcache/librarycache" / STEAM_BARONY_APP_ID
+    if artwork_root.exists():
+        for pattern in ("**/logo.png", "**/*logo*.png", "**/*icon*.png", "*.png", "*.jpg"):
+            matches = sorted(artwork_root.glob(pattern))
+            if matches:
+                return str(matches[0])
+    return None
+
+
 
 def _gui_evidence(label: str, value: Any, status: Any = None) -> dict[str, Any]:
     item: dict[str, Any] = {"label": label, "value": _gui_text(value)}
@@ -4147,6 +4441,7 @@ def _gui_create_profile(profile_dir: Path, install: dict[str, Any]) -> dict[str,
         "app": {
             "id": APP_ID,
             "version": APP_VERSION,
+            "schemaVersion": SCHEMA_VERSION,
         },
         "paths": {
             "profileRoot": str(profile_dir),
@@ -4250,6 +4545,8 @@ def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, An
     os_parts = [platform.system() or platform_os_name(), platform.release()]
     os_value = " ".join(part for part in os_parts if part).strip() or "unknown"
     steam_icon_path = _gui_steam_icon_path()
+    os_logo_path = _gui_os_icon_path()
+    game_logo_path = _gui_barony_game_logo_path()
     version_value = "Unknown"
     version_source = "unknown"
     for key in ("gameVersionString", "executableBuildId", "LastBuildID", "lastBuildId", "buildId"):
@@ -4258,9 +4555,9 @@ def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, An
             version_value = value.strip()
             version_source = key
             break
-    os_icon = _gui_entity_icon_descriptor("os", "OS")
+    os_icon = _gui_entity_icon_descriptor("os", "OS", logo_path=os_logo_path)
     platform_icon = _gui_entity_icon_descriptor("platform-steam", "Platform", logo_path=steam_icon_path)
-    version_icon = _gui_entity_icon_descriptor("game-version", "Game version")
+    version_icon = _gui_entity_icon_descriptor("game-version", "Game version", logo_path=game_logo_path)
     rows = [
         {
             "id": "os",
@@ -4272,8 +4569,10 @@ def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, An
             "iconSource": os_icon["source"],
             "badge": "[OS]",
             "value": os_value,
-            "text": f"{os_icon['displayText']} {os_value}",
+            "text": f"{os_icon['icon']} {os_value}",
             "source": "platform.system/release",
+            "osLogoPath": os_logo_path,
+            "osLogoAvailable": os_logo_path is not None,
         },
         {
             "id": "platform",
@@ -4287,10 +4586,11 @@ def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, An
             "value": "Steam",
             "storefront": "Steam",
             "platform": "Steam",
-            "text": f"{platform_icon['displayText']} Steam",
+            "text": f"{platform_icon['icon']} Steam",
             "source": "Steam storefront",
             "steamLogoPath": steam_icon_path,
             "steamLogoAvailable": steam_icon_path is not None,
+            "logoPath": steam_icon_path,
         },
         {
             "id": "game-version",
@@ -4302,19 +4602,19 @@ def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, An
             "iconSource": version_icon["source"],
             "badge": "[VERSION]",
             "value": version_value,
-            "text": f"{version_icon['displayText']} {version_value}",
+            "text": f"{version_icon['icon']} {version_value}",
             "source": version_source,
+            "gameLogoPath": game_logo_path,
+            "gameLogoAvailable": game_logo_path is not None,
         },
     ]
     return rows
-
-
 def _gui_detected_mod_entry(
     *,
     provenance_key: str,
     provenance_label: str,
     entry_id: str,
-    name: Any,
+    name: Any = None,
     package_id: Any = None,
     version: Any = None,
     path: Any = None,
@@ -5342,7 +5642,7 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
     cards: list[dict[str, Any]] = []
     environment = concept_map.get("environment") if isinstance(concept_map.get("environment"), dict) else {}
     if environment:
-        env_rows: list[dict[str, str]] = []
+        env_rows: list[dict[str, Any]] = []
         summary_items = environment.get("environmentSummaryItems")
         if not isinstance(summary_items, list):
             state = environment.get("state") if isinstance(environment.get("state"), dict) else {}
@@ -5350,8 +5650,15 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
         for item in summary_items[:3]:
             if not isinstance(item, dict):
                 continue
-            label = "Steam" if item.get("id") == "platform" else _gui_text(item.get("label") or item.get("displayLabel"))
-            env_rows.append({"label": label, "value": _gui_text(item.get("value")), "status": _gui_text(item.get("source"))})
+            label = "Platform" if item.get("id") == "platform" else _gui_text(item.get("label") or item.get("displayLabel"))
+            env_rows.append({
+                "label": label,
+                "value": _gui_text(item.get("value")),
+                "status": _gui_text(item.get("source")),
+                "logoPath": item.get("logoPath") or item.get("steamLogoPath") or item.get("osLogoPath") or item.get("gameLogoPath"),
+                "logoKind": item.get("entityType") or item.get("id"),
+                "icon": item.get("icon"),
+            })
         cards.append(
             {
                 "key": "environment",
@@ -5510,7 +5817,7 @@ def build_profile_first_gui_state(
         )
     elif action in {"launch-bml", "launch-vanilla"}:
         result = launch_result or {"status": "blocked", "processStarted": False, "processLaunched": False, "disabledReasons": ["Launch action did not run."]}
-        mode_label = "BaronyModLoader" if action == "launch-bml" else "Vanilla Barony"
+        mode_label = "BML Barony" if action == "launch-bml" else "Vanilla Barony"
         blocked = result.get("status") == "blocked" or bool(result.get("disabledReasons"))
         visible = f"Launch {mode_label} blocked" if blocked else f"Launch {mode_label} started"
         action_log.append(
@@ -5636,6 +5943,11 @@ def build_profile_first_gui_state(
                 dryRunVdfReport=workshop.get("dryRunVdfReport"),
             )
         )
+    elif action == "copy-for-ai":
+        # copy-for-ai is handled entirely in the GUI event loop via clipboard APIs.
+        # This branch intentionally produces no action-log entry — the GUI handler
+        # appends one directly to state_ref["value"]["actionLog"] after clipboard ops.
+        pass
 
     concepts = _gui_build_concepts(
         install=install,
@@ -5722,6 +6034,7 @@ def build_profile_first_gui_state(
             "cards": compact_status_cards,
             "recentActivity": visible_activity,
             "activityLogDetails": activity_details,
+            "activityLogActions": [_gui_action("copy-for-ai", "available", enabled=True, placement="Recent Activity / Action Log")],
         },
         "selectedDetectedMod": detected_inventory.get("selectedDetectedMod"),
         "selectedDetectedModId": detected_inventory.get("selectedDetectedModId"),
@@ -5736,6 +6049,7 @@ def build_profile_first_gui_state(
         "visibleActivityLog": visible_activity,
         "activityLogDetails": activity_details,
         "recentActivity": visible_activity,
+        "activityLogActions": [_gui_action("copy-for-ai", "available", enabled=True, placement="Recent Activity / Action Log")],
         "readiness": readiness,
         "launchDryRun": launch_dry_run,
         "lastLaunch": launch_result,
@@ -5834,6 +6148,26 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
     state_ref = {"value": gui_state}
     button_registry: dict[str, list[Any]] = {}
     mod_selection_registry: dict[str, Any] = {}
+    image_registry: list[Any] = []
+
+    def load_row_logo(path_value: Any) -> Any | None:
+        path_text = _gui_text(path_value)
+        if path_text == "Not set":
+            return None
+        path = Path(path_text)
+        if not path.is_file() or path.suffix.lower() not in {".png", ".gif"}:
+            return None
+        try:
+            image = tk.PhotoImage(file=str(path))
+            max_side = max(int(image.width()), int(image.height()), 1)
+            if max_side > 24:
+                factor = max(1, int((max_side + 23) // 24))
+                image = image.subsample(factor, factor)
+            image_registry.append(image)
+            return image
+        except tk.TclError:
+            return None
+
     def ensure_redraw_instrumentation() -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
         state = state_ref["value"]
         redraw_events = state.get("redrawEvents")
@@ -5884,6 +6218,7 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
         wraplength=1040,
     ).grid(row=1, column=0, sticky="ew", pady=(4, 12))
 
+
     body = ttk.Frame(container)
     body.grid(row=2, column=0, sticky="nsew")
     body.columnconfigure(0, weight=0, minsize=350)
@@ -5913,8 +6248,72 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
     activity_frame = ttk.LabelFrame(right_side, text=_gui_icon_label("activity-log", "Recent Activity / Action Log"), style="Section.TLabelframe")
     activity_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
     activity_frame.columnconfigure(0, weight=1)
+    activity_header = ttk.Frame(activity_frame)
+    activity_header.grid(row=0, column=0, sticky="ew", padx=(0, 0), pady=(0, 4))
+    activity_header.columnconfigure(0, weight=1)
+    copy_for_ai_btn = ttk.Button(activity_header, text="Copy for AI", style="TButton")
+    copy_for_ai_btn.grid(row=0, column=0, sticky="ew")
+
+    def copy_for_ai_action() -> None:
+        ctx = _gui_copy_for_ai_context(state_ref["value"])
+        copy_text = ctx["text"]
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(copy_text)
+            root.update()
+            tk_clipboard_status = "ok"
+            tk_succeeded = True
+        except Exception as exc:
+            tk_clipboard_status = f"error: {exc}"
+            tk_succeeded = False
+
+        system_clipboard = _gui_system_clipboard_copy(copy_text)
+        system_clipboard_status = system_clipboard.get("status") or "unavailable"
+        system_succeeded = bool(system_clipboard.get("succeeded"))
+        clipboard_backends = [
+            {"name": "tk", "status": tk_clipboard_status, "succeeded": tk_succeeded, "available": True},
+            *system_clipboard.get("clipboardBackends", []),
+        ]
+        copied = tk_succeeded or system_succeeded
+        clipboard_status = "ok" if copied else f"error: tk={tk_clipboard_status}; system={system_clipboard_status}"
+        visible_summary = "Copied AI issue context" if copied else "Copy AI issue context failed"
+        log_summary = visible_summary if copied else f"{visible_summary}: {system_clipboard_status}"
+        log_entry = _gui_action_log_entry(
+            "copy-for-ai",
+            clipboard_status,
+            log_summary,
+            charCount=ctx.get("charCount"),
+            byteCount=ctx.get("byteCount"),
+            includedSections=ctx.get("includedSections"),
+            clipboardStatus=clipboard_status,
+            tkClipboardStatus=tk_clipboard_status,
+            systemClipboardStatus=system_clipboard_status,
+            clipboardBackends=clipboard_backends,
+            visibleSummary=visible_summary,
+        )
+        prior_log = state_ref["value"].get("actionLog") if isinstance(state_ref["value"].get("actionLog"), list) else []
+        updated_log = prior_log + [log_entry]
+        state_ref["value"]["actionLog"] = updated_log
+        state_ref["value"]["visibleActivityLog"] = _gui_visible_activity_log(updated_log)
+        state_ref["value"]["activityLogDetails"] = _gui_activity_log_details(updated_log)
+        state_ref["value"]["copyForAiContext"] = ctx["bundle"]
+        state_ref["value"]["copyForAiText"] = copy_text
+        state_ref["value"]["lastCopyForAi"] = {
+            "status": clipboard_status,
+            "tkClipboardStatus": tk_clipboard_status,
+            "systemClipboardStatus": system_clipboard_status,
+            "clipboardBackends": clipboard_backends,
+            "charCount": ctx.get("charCount"),
+            "byteCount": ctx.get("byteCount"),
+            "includedSections": ctx.get("includedSections"),
+            "copyForAiContextSections": ctx.get("includedSections"),
+        }
+        render_activity_log("copy-for-ai")
+
+    copy_for_ai_btn.configure(command=copy_for_ai_action)
+    button_registry.setdefault("copy-for-ai", []).append(copy_for_ai_btn)
     activity_text = tk.Text(activity_frame, height=5, wrap="word", relief="flat")
-    activity_text.grid(row=0, column=0, sticky="ew")
+    activity_text.grid(row=1, column=0, sticky="ew")
 
     def render_activity_log(reason: str = "render") -> None:
         record_region_render("activityLog", reason)
@@ -6236,7 +6635,16 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
                 if not isinstance(item, dict):
                     continue
                 row_text = f"{_gui_text(item.get('label'))}: {_gui_text(item.get('value'))}"
-                ttk.Label(frame, text=row_text, wraplength=250, justify="left").grid(row=row_cursor, column=0, columnspan=2, sticky="ew", pady=1)
+                logo = load_row_logo(item.get("logoPath"))
+                if logo is not None:
+                    item["logoRendered"] = True
+                    ttk.Label(frame, image=logo).grid(row=row_cursor, column=0, sticky="w", padx=(0, 6), pady=1)
+                    ttk.Label(frame, text=row_text, wraplength=220, justify="left").grid(row=row_cursor, column=1, sticky="ew", pady=1)
+                else:
+                    item["logoRendered"] = False
+                    ttk.Label(frame, text=f"{_gui_text(item.get('icon') or '')} {row_text}".strip(), wraplength=250, justify="left").grid(
+                        row=row_cursor, column=0, columnspan=2, sticky="ew", pady=1
+                    )
                 row_cursor += 1
             summary = _gui_text(card.get("summary"))
             if summary != "Not set":
@@ -6251,6 +6659,7 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
     def render_sections(reason: str = "full-dashboard") -> None:
         record_region_render("fullDashboard", reason)
         button_registry.clear()
+        button_registry.setdefault("copy-for-ai", []).append(copy_for_ai_btn)
         section_labels.clear()
         state_ref["value"]["steamLogoRendered"] = False
         render_detected_mod_sidebar(reason)
@@ -6391,6 +6800,10 @@ def _write_gui_smoke_report(
             "steamPublished": False,
             "playableClaimed": False,
             "disabledReasons": gui_state.get("disabledReasons", []),
+            "copyForAiText": gui_state.get("copyForAiText"),
+            "copyForAiContext": gui_state.get("copyForAiContext"),
+            "lastCopyForAi": gui_state.get("lastCopyForAi"),
+            "copyForAiContextSections": gui_state.get("lastCopyForAi", {}).get("copyForAiContextSections"),
         },
     )
 

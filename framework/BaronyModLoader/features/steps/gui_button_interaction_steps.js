@@ -24,9 +24,26 @@ const EXPECTED_SAFE_ALL_ACTIONS = [
   "workshop-preview",
 ];
 const LAUNCH_ACTIONS = [
-  { id: "launch-bml", label: "Launch BaronyModLoader" },
+  { id: "launch-bml", label: "Launch BML Barony" },
   { id: "launch-vanilla", label: "Launch Vanilla Barony" },
 ];
+
+const CLIPBOARD_PROBE_MAX_BUFFER = 16 * 1024 * 1024;
+const COPY_FOR_AI_VISIBLE_SUMMARY = "Copied AI issue context";
+
+function findExecutable(commandName, searchPath = process.env.PATH || "") {
+  const pathEntries = searchPath.split(path.delimiter).filter(Boolean);
+  for (const dir of pathEntries) {
+    const candidate = path.join(dir, commandName);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch (_error) {
+      // Keep searching PATH.
+    }
+  }
+  return null;
+}
 
 function loadContract() {
   const raw = fs.readFileSync(BUTTON_CONTRACT, "utf8");
@@ -87,7 +104,7 @@ function normalizeActionId(value) {
     .replace(/runebound:\s*elixirs/g, "runebound-elixirs")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  if (/^(launch-bml|launch-baronymodloader|launch-barony-mod-loader)$/.test(normalized)) return "launch-bml";
+  if (/^(launch-bml|launch-bml-barony|launch-baronymodloader|launch-barony-mod-loader)$/.test(normalized)) return "launch-bml";
   if (/^(launch-vanilla|launch-vanilla-barony)$/.test(normalized)) return "launch-vanilla";
   return normalized;
 }
@@ -287,7 +304,7 @@ function requireVisibleLaunchFeedback(world, actionId, label) {
   const report = ensureReport(world);
   const activity = visibleActivityText(report);
   const labelPattern = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|${actionId}`, "i");
-  if (!labelPattern.test(activity) || !/mock|started|launched|process|pid|vanilla|baronymodloader/i.test(activity)) {
+  if (!labelPattern.test(activity) || !/mock|started|launched|process|pid|vanilla|bml|barony/i.test(activity)) {
     contractGap(world, `${actionId} lacks concise visible launch feedback in Recent Activity/Action Log.`);
   }
 }
@@ -415,6 +432,240 @@ function runeboundPlayableClaim(value) {
   return found;
 }
 
+const COPY_FOR_AI_ACTION_ID = "copy-for-ai";
+const MIN_COPY_FOR_AI_PAYLOAD_CHARS = 600;
+const COPY_FOR_AI_REQUIRED_CONTEXT_SECTIONS = [
+  ["app id", /\b(appId|app id|launcher|application|BaronyModLoader|barony-mod-loader|BML)\b/i],
+  ["app version", /\b(appVersion|applicationVersion|launcherVersion|bmlVersion|BaronyModLoader version|BML version|version)\b/i],
+  ["schema", /\bschema(?:Version)?\b/i],
+  ["generated timestamp", /\b(generatedAt|generated timestamp|timestamp|createdAt)\b/i],
+  ["profile path", /\b(profilePath|profile path|profileDir|profileRoot)\b/i],
+  ["profile state", /\b(profile|profileState|selectedProfile|activeProfile)\b/i],
+  ["selected mod/package", /\b(selectedMod|selected mod|selectedPackage|selected package|packageId)\b/i],
+  ["active mods", /\b(activeMods|active mods|enabledMods|activePackageIds)\b/i],
+  ["environment", /\b(environment|platform|operating system|OS)\b/i],
+  ["install", /\b(install|installPath|install summary|gamePath|baronyPath)\b/i],
+  ["readiness", /\b(readiness|ready|blocked|disabledReasons)\b/i],
+  ["diagnostics", /\b(diagnostics|diagnosticDetails|diagnosticsDetails|diagnosticsEvidence)\b/i],
+  ["workshop", /\b(workshop|Steam Workshop|steamPublished|steam publish)\b/i],
+  ["last launch", /\b(lastLaunch|last launch|launchResult|launchDryRun)\b/i],
+  ["visible activity", /\b(visibleActivityLog|visible activity|Recent Activity|recentActivity)\b/i],
+  ["full action log", /\b(actionLog|action log)\b/i],
+  ["activity log details", /\b(activityLogDetails|activity log details|full activity details)\b/i],
+];
+
+function copyForAiMetadataRoots(report) {
+  const roots = actionEvidenceEntries(report, COPY_FOR_AI_ACTION_ID)
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({ value: entry, pathParts: ["copy-for-ai-evidence"] }));
+  for (const entry of valuesForKey(report, /(copyForAi|copiedAi|aiSupport|supportContext|issueContext|clipboard|copiedContext|contextBundle)/i)) {
+    if (entry.value && typeof entry.value === "object") roots.push(entry);
+  }
+  return roots;
+}
+
+function copyForAiPayloadCandidates(report) {
+  const candidates = [];
+  const keyPattern = /^(copyForAiText|copiedText|copiedPayload|payload|context|contextText|clipboardText|clipboardPayload|aiSupportContext|supportContext|issueContext|contextBundle|text)$/i;
+  const pathPattern = /(copyForAi|copiedAi|aiSupport|supportContext|issueContext|clipboard|copiedContext|contextBundle|payload|context)/i;
+  for (const entry of valuesForKey(report, keyPattern)) {
+    if (typeof entry.value !== "string" || !entry.value.trim()) continue;
+    const joinedPath = entry.pathParts.join(".");
+    if (pathPattern.test(joinedPath) || /context|payload|clipboard|copy/i.test(joinedPath)) {
+      candidates.push({ text: entry.value, path: joinedPath });
+    }
+  }
+  for (const root of copyForAiMetadataRoots(report)) {
+    walk(root.value, (node, pathParts) => {
+      if (typeof node !== "string" || !node.trim()) return;
+      const joinedPath = [...root.pathParts, ...pathParts].join(".");
+      const key = pathParts[pathParts.length - 1] || "";
+      if (!keyPattern.test(key) || !pathPattern.test(joinedPath)) return;
+      candidates.push({ text: node, path: joinedPath });
+    });
+  }
+  return candidates.sort((left, right) => right.text.length - left.text.length);
+}
+
+function parseStructuredPayload(text) {
+  const trimmed = String(text || "").trim();
+  const candidates = [trimmed];
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) candidates.push(fenced[1].trim());
+  const firstObject = trimmed.indexOf("{");
+  const lastObject = trimmed.lastIndexOf("}");
+  if (firstObject >= 0 && lastObject > firstObject) candidates.push(trimmed.slice(firstObject, lastObject + 1));
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (_error) {
+      // Structured prose is allowed; JSON is preferred but not mandatory.
+    }
+  }
+  return null;
+}
+
+function copyForAiPayloadInfo(world) {
+  if (world.copyForAiPayloadInfo) return world.copyForAiPayloadInfo;
+  const report = ensureReport(world);
+  const candidates = copyForAiPayloadCandidates(report);
+  const best = candidates[0];
+  if (!best) {
+    contractGap(world, "Copy for AI smoke report does not expose copied AI context text/payload metadata.");
+  }
+  const parsed = parseStructuredPayload(best.text);
+  world.copyForAiPayloadInfo = {
+    text: best.text,
+    path: best.path,
+    parsed,
+    evidenceText: `${best.text}\n${parsed ? structuralText(parsed) : ""}`,
+  };
+  return world.copyForAiPayloadInfo;
+}
+
+function copyForAiNumericMetadata(report, pattern) {
+  const values = [];
+  for (const root of copyForAiMetadataRoots(report)) {
+    walk(root.value, (node, pathParts) => {
+      const key = pathParts[pathParts.length - 1] || "";
+      if (!pattern.test(key)) return;
+      const numeric = typeof node === "number" ? node : (/^\d+$/.test(String(node)) ? Number(node) : NaN);
+      if (Number.isFinite(numeric) && numeric > 0) values.push({ value: numeric, path: [...root.pathParts, ...pathParts].join(".") });
+    });
+  }
+  return values;
+}
+
+function copyForAiClipboardStatusMetadata(report) {
+  const values = [];
+  for (const root of copyForAiMetadataRoots(report)) {
+    walk(root.value, (node, pathParts) => {
+      const key = pathParts[pathParts.length - 1] || "";
+      const pathText = [...root.pathParts, ...pathParts].join(".");
+      if (!/clipboard/i.test(pathText) || !/(status|state|result|error|reason|available|copied|written)/i.test(key)) return;
+      if (node === undefined || node === null || String(node).trim() === "") return;
+      values.push({ value: node, path: pathText });
+    });
+  }
+  return values;
+}
+
+function copyForAiLastCopyMetadata(report) {
+  const direct = directField(report, "lastCopyForAi");
+  if (direct && typeof direct === "object") return { value: direct, pathParts: ["lastCopyForAi"] };
+  const match = valuesForKey(report, /^lastCopyForAi$/i).find((entry) => entry.value && typeof entry.value === "object");
+  return match || null;
+}
+
+function copyStatusSucceeded(value) {
+  if (value === true) return true;
+  if (value && typeof value === "object") {
+    return /(success|succeeded|copied|written|ok)/i.test(structuralText(value)) && !/(failed|error|timeout|unavailable|skipped)/i.test(structuralText(value));
+  }
+  return /(success|succeeded|copied|written|ok)/i.test(String(value || "")) && !/(failed|error|timeout|unavailable|skipped)/i.test(String(value || ""));
+}
+
+function copyForAiBackendMetadata(report) {
+  const lastCopy = copyForAiLastCopyMetadata(report);
+  if (!lastCopy) {
+    return { lastCopy: null, backendEntries: [], tkStatuses: [], systemStatuses: [] };
+  }
+  const backendEntries = [];
+  const tkStatuses = [];
+  const systemStatuses = [];
+  walk(lastCopy.value, (node, pathParts) => {
+    if (node === undefined || node === null || String(node).trim() === "") return;
+    const key = pathParts[pathParts.length - 1] || "";
+    const pathText = [...lastCopy.pathParts, ...pathParts].join(".");
+    if (/(clipboardBackends|backend|backends|backendResults|backendStatuses)$/i.test(key) || /clipboard.*backend/i.test(pathText)) {
+      backendEntries.push({ value: node, path: pathText });
+    }
+    if (/^tkClipboardStatus$|tk.*clipboard.*(status|result|error|reason|copied|written)/i.test(key) || /tk.*clipboard.*(status|result|error|reason|copied|written)/i.test(pathText)) {
+      tkStatuses.push({ value: node, path: pathText });
+    }
+    if (/^(systemClipboardStatus|externalClipboardStatus|persistentClipboardStatus|waylandClipboardStatus|wlCopyStatus)$/i.test(key) || /(system|external|persistent|wayland|wl-copy|wlCopy).*clipboard.*(status|result|error|reason|copied|written)|clipboard.*(system|external|persistent|wayland|wl-copy|wlCopy)/i.test(pathText)) {
+      systemStatuses.push({ value: node, path: pathText });
+    }
+  });
+  return { lastCopy, backendEntries, tkStatuses, systemStatuses };
+}
+
+function waylandWlPasteProbeEligibility() {
+  const waylandDisplay = process.env.WAYLAND_DISPLAY || "";
+  if (!waylandDisplay) return { eligible: false, reason: "WAYLAND_DISPLAY is not set", wlPastePath: null, waylandDisplay };
+  const wlPastePath = findExecutable("wl-paste", `/usr/bin:${process.env.PATH || ""}`);
+  if (!wlPastePath) return { eligible: false, reason: "wl-paste is not on PATH", wlPastePath: null, waylandDisplay };
+  return { eligible: true, reason: "wl-paste available on Wayland", wlPastePath, waylandDisplay };
+}
+
+function normalizeClipboardProbeText(value) {
+  return String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/g, "");
+}
+
+function probeWaylandClipboardAfterCopy(world) {
+  const eligibility = waylandWlPasteProbeEligibility();
+  if (!eligibility.eligible) {
+    world.copyForAiWlPasteProbe = { ...eligibility, skipped: true };
+    return world.copyForAiWlPasteProbe;
+  }
+  const probe = spawnSync(eligibility.wlPastePath, ["--no-newline"], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, PATH: `/usr/bin:${process.env.PATH || ""}` },
+    encoding: "utf8",
+    timeout: 3000,
+    maxBuffer: CLIPBOARD_PROBE_MAX_BUFFER,
+  });
+  world.copyForAiWlPasteProbe = {
+    ...eligibility,
+    skipped: false,
+    status: probe.error && probe.error.code === "ETIMEDOUT" ? 124 : probe.status,
+    signal: probe.signal,
+    error: probe.error ? `${probe.error.code || probe.error.name || "error"}: ${probe.error.message}` : "",
+    stdout: probe.stdout || "",
+    stderr: probe.stderr || "",
+  };
+  return world.copyForAiWlPasteProbe;
+}
+
+function copyForAiSectionMetadata(report, payloadText) {
+  const explicit = [];
+  for (const root of copyForAiMetadataRoots(report)) {
+    walk(root.value, (node, pathParts) => {
+      const key = pathParts[pathParts.length - 1] || "";
+      if (!/(includedSections|sectionsIncluded|contextSections|sectionNames|sections)$/i.test(key)) return;
+      if (Array.isArray(node)) explicit.push(...node.map(String));
+      else if (typeof node === "string") explicit.push(node);
+    });
+  }
+  if (explicit.length) return explicit;
+  return COPY_FOR_AI_REQUIRED_CONTEXT_SECTIONS
+    .filter(([, pattern]) => pattern.test(payloadText))
+    .map(([label]) => label);
+}
+
+function assertCopyForAiPayloadUseful(world) {
+  const { text, evidenceText, path: payloadPath } = copyForAiPayloadInfo(world);
+  const trimmed = String(text || "").trim();
+  const failures = [];
+  if (!trimmed) failures.push("payload is empty");
+  if (trimmed.length < MIN_COPY_FOR_AI_PAYLOAD_CHARS) failures.push(`payload is too short (${trimmed.length} chars, expected at least ${MIN_COPY_FOR_AI_PAYLOAD_CHARS})`);
+  if (trimmed === COPY_FOR_AI_VISIBLE_SUMMARY) failures.push("payload is only the visible activity summary, not the AI issue context");
+  if (/\[object Object\]/i.test(trimmed)) failures.push("payload contains [object Object]");
+  if (/<[^>\n]+ object at 0x[0-9a-f]+>/i.test(trimmed)) failures.push("payload contains Python object repr");
+  if (/\b(?:PosixPath|WindowsPath)\(/.test(trimmed)) failures.push("payload contains Python pathlib repr");
+  const missing = COPY_FOR_AI_REQUIRED_CONTEXT_SECTIONS
+    .filter(([, pattern]) => !pattern.test(evidenceText))
+    .map(([label]) => label);
+  if (missing.length) failures.push(`missing issue-fix context sections: ${missing.join(", ")}`);
+  if (failures.length) {
+    contractGap(
+      world,
+      "Copied AI issue context is not pasteable/useful enough for issue fixing.",
+      `PAYLOAD PATH: ${payloadPath}\nFAILURES:\n${failures.join("\n")}\nPAYLOAD PREVIEW:\n${trimmed.slice(0, 4000) || "<empty>"}`
+    );
+  }
+}
+
 Given("a BaronyModLoader GUI button interaction smoke report path", function () {
   loadContract();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bml-gui-button-interactions-"));
@@ -440,6 +691,21 @@ When("I run the BaronyModLoader GUI with all smoke button clicks", function () {
   if (this.guiButtonInteractionCommand.error && this.guiButtonInteractionCommand.error.code === "ETIMEDOUT") {
     this.guiButtonInteractionCommand.status = 124;
   }
+});
+
+When("I run the BaronyModLoader GUI with Copy for AI smoke button click", function () {
+  const args = ["gui", "--smoke-clicks", COPY_FOR_AI_ACTION_ID, "--smoke-report", this.guiButtonInteractionReportPath];
+  this.guiButtonInteractionCommandLine = `${BML_BIN} ${args.join(" ")}`;
+  this.guiButtonInteractionCommand = spawnSync(BML_BIN, args, {
+    cwd: REPO_ROOT,
+    env: { ...process.env, PATH: `/usr/bin:${process.env.PATH || ""}` },
+    encoding: "utf8",
+    timeout: 90000,
+  });
+  if (this.guiButtonInteractionCommand.error && this.guiButtonInteractionCommand.error.code === "ETIMEDOUT") {
+    this.guiButtonInteractionCommand.status = 124;
+  }
+  probeWaylandClipboardAfterCopy(this);
 });
 
 When("I run the BaronyModLoader GUI with mocked launch button clicks", function () {
@@ -619,6 +885,109 @@ Then("the smoke report includes clickedActions and a visible activity log for ev
   if (!directField(report, "activeMods")) {
     contractGap(this, "Expected smoke report to include activeMods summary after button clicks.");
   }
+});
+
+Then("the Copy for AI smoke invoked the Tk button without launching Barony", function () {
+  const report = ensureReport(this);
+  const entries = requireClickedAction(this, COPY_FOR_AI_ACTION_ID);
+  if (!entries.some((entry) => entry && entry.invoked === true)) {
+    contractGap(this, "copy-for-ai clickedActions entry does not report invoked:true.", `ACTIONS:\n${entries.map(textForEntry).join("\n---\n")}`);
+  }
+  requireLaunchTkInvocation(this, COPY_FOR_AI_ACTION_ID);
+  for (const { id, label } of LAUNCH_ACTIONS) {
+    if (actionEntries(report, id).length > 0) {
+      contractGap(this, `Copy for AI smoke must not invoke ${label}.`);
+    }
+  }
+  assertNoTrueSideEffect(this, /^processStarted$|^processLaunched$|baronyStarted|gameStarted|startedProcess/i, "Barony process start");
+});
+
+Then("the Copy for AI smoke report exposes non-empty copied AI issue context metadata", function () {
+  const report = ensureReport(this);
+  const payload = copyForAiPayloadInfo(this);
+  const charCounts = copyForAiNumericMetadata(report, /(char(?:acter)?Count|chars|payloadChars|copiedChars|clipboardChars)$/i);
+  const byteCounts = copyForAiNumericMetadata(report, /(byteCount|bytes|payloadBytes|copiedBytes|clipboardBytes)$/i);
+  const clipboardStatuses = copyForAiClipboardStatusMetadata(report);
+  const sectionNames = copyForAiSectionMetadata(report, payload.evidenceText);
+  const backendMetadata = copyForAiBackendMetadata(report);
+  const failures = [];
+  if (!payload.text.trim()) failures.push("missing non-empty copied context payload text");
+  if (payload.text.trim() === COPY_FOR_AI_VISIBLE_SUMMARY) failures.push("copied payload text is only the visible summary");
+  if (!charCounts.length && !byteCounts.length) failures.push("missing copied payload char/byte count metadata");
+  if (!clipboardStatuses.length) failures.push("missing clipboard status/error metadata");
+  if (!backendMetadata.lastCopy) failures.push("missing lastCopyForAi object");
+  if (!backendMetadata.backendEntries.length) failures.push("lastCopyForAi is missing clipboardBackends/backend attempts metadata");
+  if (!backendMetadata.tkStatuses.length) failures.push("lastCopyForAi is missing tkClipboardStatus metadata");
+  if (!backendMetadata.systemStatuses.length) failures.push("lastCopyForAi is missing systemClipboardStatus/external clipboard metadata");
+  if (sectionNames.length < 8) failures.push(`missing included section names metadata (found ${sectionNames.length})`);
+  if (failures.length) {
+    contractGap(
+      this,
+      "Copy for AI smoke report does not expose enough clipboard/copy proof metadata.",
+      [
+        `FAILURES:\n${failures.join("\n")}`,
+        `PAYLOAD PATH: ${payload.path}`,
+        `CHAR COUNTS: ${charCounts.map((entry) => `${entry.path}=${entry.value}`).join(", ") || "<none>"}`,
+        `BYTE COUNTS: ${byteCounts.map((entry) => `${entry.path}=${entry.value}`).join(", ") || "<none>"}`,
+        `CLIPBOARD STATUS: ${clipboardStatuses.map((entry) => `${entry.path}=${entry.value}`).join(", ") || "<none>"}`,
+        `LAST COPY: ${backendMetadata.lastCopy ? textForEntry(backendMetadata.lastCopy.value) : "<none>"}`,
+        `BACKENDS: ${backendMetadata.backendEntries.map((entry) => `${entry.path}=${textForEntry(entry.value)}`).join(", ") || "<none>"}`,
+        `TK STATUS: ${backendMetadata.tkStatuses.map((entry) => `${entry.path}=${textForEntry(entry.value)}`).join(", ") || "<none>"}`,
+        `SYSTEM STATUS: ${backendMetadata.systemStatuses.map((entry) => `${entry.path}=${textForEntry(entry.value)}`).join(", ") || "<none>"}`,
+        `SECTIONS: ${sectionNames.join(", ") || "<none>"}`,
+      ].join("\n")
+    );
+  }
+});
+
+Then("the Copy for AI smoke report proves backend clipboard persistence when available", function () {
+  const report = ensureReport(this);
+  const payload = copyForAiPayloadInfo(this);
+  const backendMetadata = copyForAiBackendMetadata(report);
+  const failures = [];
+  const tkSucceeded = backendMetadata.tkStatuses.some((entry) => copyStatusSucceeded(entry.value));
+  const systemSucceeded = backendMetadata.systemStatuses.some((entry) => copyStatusSucceeded(entry.value));
+  if (!tkSucceeded) failures.push("Tk clipboard backend was not reported as successful");
+  if (!backendMetadata.systemStatuses.length) failures.push("system/external clipboard backend was not attempted or reported");
+  let probe = this.copyForAiWlPasteProbe || waylandWlPasteProbeEligibility();
+  if (probe.eligible && !probe.skipped) {
+    const expected = normalizeClipboardProbeText(payload.text);
+    let actual = normalizeClipboardProbeText(probe.stdout);
+    if (probe.status !== 0 || actual !== expected) {
+      const refreshedProbe = probeWaylandClipboardAfterCopy(this);
+      const refreshedActual = normalizeClipboardProbeText(refreshedProbe.stdout);
+      if (refreshedProbe.status === 0 && refreshedActual === expected) {
+        probe = refreshedProbe;
+        actual = refreshedActual;
+      }
+    }
+    if (probe.status !== 0) {
+      failures.push(`wl-paste failed after smoke click (status ${probe.status === null || probe.status === undefined ? "<unset>" : probe.status})`);
+    }
+    if (actual === COPY_FOR_AI_VISIBLE_SUMMARY) {
+      failures.push("wl-paste returned only the visible summary instead of the AI issue context");
+    }
+    if (actual !== expected) {
+      failures.push(`wl-paste did not return the full report payload (expected ${expected.length} chars, got ${actual.length} chars)`);
+    }
+    if (!systemSucceeded) failures.push("system/external clipboard backend was not reported as successful despite Wayland wl-paste being available");
+  }
+  if (failures.length) {
+    contractGap(
+      this,
+      "Copy for AI smoke did not prove persistent user-visible clipboard behavior.",
+      [
+        `FAILURES:\n${failures.join("\n")}`,
+        `WL-PASTE PROBE: ${textForEntry(probe)}`,
+        `LAST COPY: ${backendMetadata.lastCopy ? textForEntry(backendMetadata.lastCopy.value) : "<none>"}`,
+        `PAYLOAD PATH: ${payload.path}`,
+      ].join("\n")
+    );
+  }
+});
+
+Then("copied AI issue context includes issue-fix essentials and rejects useless payloads", function () {
+  assertCopyForAiPayloadUseful(this);
 });
 
 Then("no GUI button action claims Runebound: Elixirs is playable", function () {

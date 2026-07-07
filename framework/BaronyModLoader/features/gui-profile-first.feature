@@ -19,6 +19,12 @@ Feature: Profile-first GUI Mods list
     And visible Recent Activity entries are concise, target-named, and keep verbose data in report details
     And the right side does not keep a separate Mods card
 
+  @gui-profile-first @copy-for-ai @activity-log
+  Scenario: Recent Activity exposes Copy for AI support context action outside status cards
+    When the user opens the profile-first mod manager for the first time
+    Then the Recent Activity area exposes a Copy for AI button
+    And Copy for AI is not exposed as an Environment, Profile, or Workshop compact status card action
+
 
   @gui-profile-first @entity-iconography
   Scenario: Major profile-first entities expose paired iconography
@@ -98,14 +104,16 @@ Feature: Profile-first GUI Mods list
     When the user reviews the Environment card
     Then Environment summary rows include OS, Platform, and Game version
     And the Platform row value is Steam storefront instead of linux-x86_64
+    And the Platform row renders as Platform: Steam, not Steam: Steam
     And the Environment smoke report proves the Steam logo is rendered
-    And Environment summary rows render compact badge-like labels with text
-    And Environment compact status actions expose Launch BaronyModLoader and Launch Vanilla Barony
+    And Environment summary rows pair Platform, OS, and Game version values with logo or icon metadata
+    And Environment compact status actions expose Launch BML Barony and Launch Vanilla Barony
     And the smoke report includes full Environment launch action labels and Workshop warning text
     And hidden smoke window metadata proves no widget was auto-focused
     And important labels, buttons, and warnings expose no-clipping metadata
 
     And diagnostic details remain available in smoke report details fields
+
   @gui-profile-first @playability-boundary
   Scenario: GUI never claims Runebound is playable
     When the user reviews the Mods list for Runebound evidence
