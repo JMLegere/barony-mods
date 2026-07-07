@@ -13,6 +13,10 @@ const BML_BIN = path.join(REPO_ROOT, "framework/BaronyModLoader/bin/barony-mod-l
 const BUTTON_CONTRACT = path.join(REPO_ROOT, ".tmp/profile-first-button-interaction-contract.json");
 const RUNEBOUND_ID = "jml.runebound-elixirs";
 const RUNEBOUND_NAME = "Runebound: Elixirs";
+const STASH_ID = "jml.stash";
+const STASH_NAME = "Stash";
+const STASH_PKG_PATH = path.join(REPO_ROOT, "mods/stash");
+const RUNEBOUND_PKG_PATH = path.join(REPO_ROOT, "mods/runebound-elixirs");
 const EXPECTED_SAFE_ALL_ACTIONS = [
   "detect-install",
   "refresh-readiness",
@@ -406,6 +410,108 @@ function activeModsFrom(value) {
 
 function hasRunebound(mods) {
   return mods.some((mod) => /jml\.runebound-elixirs|runebound:\s*elixirs|runebound-elixirs/i.test(String(mod)));
+}
+
+function packageManifest(packagePath) {
+  return JSON.parse(fs.readFileSync(path.join(packagePath, "bml-package.json"), "utf8"));
+}
+
+function activeModFixture(packagePath) {
+  const manifest = packageManifest(packagePath);
+  return {
+    id: manifest.id,
+    name: manifest.name,
+    version: manifest.version,
+    packagePath,
+    manifestPath: path.join(packagePath, "bml-package.json"),
+    checksumSet: `bdd-fixture:${manifest.id}:${manifest.version}`,
+    enabledAt: "2026-07-07T00:00:00Z",
+  };
+}
+
+function writeActiveProfileFixture(world, activePackagePaths, profileId) {
+  const xdgDataHome = path.join(world.guiButtonInteractionTempDir, "xdg-data-home");
+  const profileDir = path.join(xdgDataHome, "BaronyModLoader", "profiles", "default");
+  const bmlRoot = path.join(profileDir, "BaronyModLoader");
+  const logsDir = path.join(bmlRoot, "logs");
+  const reportsDir = path.join(bmlRoot, "reports");
+  const manifestsDir = path.join(bmlRoot, "manifests");
+  const stateDir = path.join(bmlRoot, "state");
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.mkdirSync(reportsDir, { recursive: true });
+  fs.mkdirSync(manifestsDir, { recursive: true });
+  fs.mkdirSync(stateDir, { recursive: true });
+
+  const fakeInstallDir = path.join(world.guiButtonInteractionTempDir, "fake-steam", "Barony");
+  const fakeExecutable = path.join(fakeInstallDir, "barony.x86_64");
+  fs.mkdirSync(fakeInstallDir, { recursive: true });
+  fs.writeFileSync(fakeExecutable, "#!/usr/bin/env sh\nexit 0\n", "utf8");
+  fs.chmodSync(fakeExecutable, 0o755);
+
+  const activeMods = activePackagePaths.map(activeModFixture);
+  const profile = {
+    schemaVersion: "0.1.0",
+    profile: {
+      id: profileId,
+      createdAt: "2026-07-07T00:00:00Z",
+      updatedAt: "2026-07-07T00:00:00Z",
+    },
+    app: {
+      id: "BaronyModLoader",
+      version: "0.1.0",
+      schemaVersion: "0.1.0",
+    },
+    paths: {
+      profileRoot: profileDir,
+      bmlRoot,
+      logs: logsDir,
+      reports: reportsDir,
+      manifests: manifestsDir,
+      state: stateDir,
+      runtimeManifest: path.join(bmlRoot, "runtime-manifest.json"),
+    },
+    activeMods,
+    runtime: {
+      gameSource: "manual",
+      baronyExecutable: fakeExecutable,
+      runtimeInfo: null,
+      steam: null,
+    },
+  };
+  fs.writeFileSync(path.join(bmlRoot, "profile.json"), `${JSON.stringify(profile, null, 2)}\n`, "utf8");
+  fs.writeFileSync(
+    path.join(bmlRoot, "active-mods.json"),
+    `${JSON.stringify({ schemaVersion: "0.1.0", generatedAt: "2026-07-07T00:00:00Z", mods: activeMods }, null, 2)}\n`,
+    "utf8"
+  );
+  return {
+    xdgDataHome,
+    profileDir,
+    bmlRoot,
+    runtimeManifestPath: path.join(bmlRoot, "runtime-manifest.json"),
+    activeModsPath: path.join(bmlRoot, "active-mods.json"),
+    activeIds: activeMods.map((mod) => mod.id),
+    selectedPackageId: RUNEBOUND_ID,
+  };
+}
+
+function writeSingleActiveRuneboundProfileFixture(world) {
+  world.singleActiveProfileFixture = writeActiveProfileFixture(world, [RUNEBOUND_PKG_PATH], "bdd-single-active-profile");
+  return world.singleActiveProfileFixture;
+}
+
+function writeMultipleActiveProfileFixture(world) {
+  world.multipleActiveProfileFixture = writeActiveProfileFixture(world, [STASH_PKG_PATH, RUNEBOUND_PKG_PATH], "bdd-multiple-active-profile");
+  return world.multipleActiveProfileFixture;
+}
+
+function requireLaunchBmlEvidence(world) {
+  const report = ensureReport(world);
+  const evidence = actionEvidenceEntries(report, "launch-bml");
+  if (!evidence.length) {
+    contractGap(world, "Expected launch-bml action evidence in smoke report.");
+  }
+  return { report, evidence, text: evidence.map(textForEntry).join("\n") };
 }
 
 function stateBucket(report, bucketName, actionId) {
@@ -1122,11 +1228,41 @@ When("I run the BaronyModLoader GUI with Copy for AI smoke button click and syst
 });
 
 When("I run the BaronyModLoader GUI with mocked launch button clicks", function () {
+  const fixture = writeSingleActiveRuneboundProfileFixture(this);
   const args = ["gui", "--smoke-clicks", "launch-bml,launch-vanilla", "--smoke-report", this.guiButtonInteractionReportPath];
-  this.guiButtonInteractionCommandLine = `BML_GUI_LAUNCH_MODE=mock ${BML_BIN} ${args.join(" ")}`;
+  this.guiButtonInteractionCommandLine = `XDG_DATA_HOME=${fixture.xdgDataHome} BML_GUI_LAUNCH_MODE=mock ${BML_BIN} ${args.join(" ")}`;
   this.guiButtonInteractionCommand = spawnSync(BML_BIN, args, {
     cwd: REPO_ROOT,
-    env: { ...process.env, PATH: `/usr/bin:${process.env.PATH || ""}`, BML_GUI_LAUNCH_MODE: "mock" },
+    env: { ...process.env, PATH: `/usr/bin:${process.env.PATH || ""}`, BML_GUI_LAUNCH_MODE: "mock", XDG_DATA_HOME: fixture.xdgDataHome },
+    encoding: "utf8",
+    timeout: 90000,
+  });
+  if (this.guiButtonInteractionCommand.error && this.guiButtonInteractionCommand.error.code === "ETIMEDOUT") {
+    this.guiButtonInteractionCommand.status = 124;
+  }
+});
+
+When("I run the BaronyModLoader GUI Launch BML smoke with Stash and Runebound active but Runebound selected", function () {
+  const fixture = writeMultipleActiveProfileFixture(this);
+  const args = [
+    "gui",
+    "--smoke-clicks",
+    "launch-bml",
+    "--smoke-select-mod",
+    RUNEBOUND_ID,
+    "--smoke-report",
+    this.guiButtonInteractionReportPath,
+  ];
+  const env = {
+    ...process.env,
+    PATH: `/usr/bin:${process.env.PATH || ""}`,
+    BML_GUI_LAUNCH_MODE: "mock",
+    XDG_DATA_HOME: fixture.xdgDataHome,
+  };
+  this.guiButtonInteractionCommandLine = `XDG_DATA_HOME=${fixture.xdgDataHome} BML_GUI_LAUNCH_MODE=mock ${BML_BIN} ${args.join(" ")}`;
+  this.guiButtonInteractionCommand = spawnSync(BML_BIN, args, {
+    cwd: REPO_ROOT,
+    env,
     encoding: "utf8",
     timeout: 90000,
   });
@@ -1185,6 +1321,62 @@ Then("mocked launch feedback reports BML and Vanilla process launch metadata wit
   const vanillaText = actionEvidenceText(report, "launch-vanilla");
   if (/\bBML_[A-Z0-9_]+\b|LD_PRELOAD/i.test(vanillaText)) {
     contractGap(this, "launch-vanilla includes BML-specific environment or LD_PRELOAD evidence.", `ACTION EVIDENCE:\n${vanillaText}`);
+  }
+});
+
+Then("the BML launch smoke blocks on multiple active profile packages before process launch", function () {
+  const { evidence, text } = requireLaunchBmlEvidence(this);
+  const invokedEntries = evidence.filter((entry) => entry && typeof entry === "object" && entry.id === "launch-bml");
+  if (!invokedEntries.some((entry) => entry.invoked === true || /tk button\.invoke|button\.invoke|invoked/i.test(textForEntry(entry)))) {
+    contractGap(this, "Expected Launch BML Barony to be invoked through its Tk button.", `ACTION EVIDENCE:\n${text}`);
+  }
+  if (!/\bblocked\b/i.test(text)) {
+    contractGap(this, "Launch BML Barony did not report blocked status for multiple active profile packages.", `ACTION EVIDENCE:\n${text}`);
+  }
+  const trueProcessFields = evidence.flatMap((entry) =>
+    booleanFieldEvidence(entry, /^processStarted$|^processLaunched$|baronyStarted|gameStarted|startedProcess/i, true)
+  );
+  if (trueProcessFields.length) {
+    contractGap(this, "Launch BML Barony reported a process launch despite multiple active profile packages.", `TRUE PROCESS FIELDS:\n${trueProcessFields.join("\n")}\nACTION EVIDENCE:\n${text}`);
+  }
+  const falseStarted = evidence.flatMap((entry) => booleanFieldEvidence(entry, /^processStarted$/i, false));
+  const falseLaunched = evidence.flatMap((entry) => booleanFieldEvidence(entry, /^processLaunched$/i, false));
+  if (!falseStarted.length || !falseLaunched.length) {
+    contractGap(this, "Launch BML Barony must explicitly report processStarted=false and processLaunched=false.", `ACTION EVIDENCE:\n${text}`);
+  }
+});
+
+Then("the BML launch blocker visibly lists Stash and Runebound active package ids", function () {
+  const { report, text } = requireLaunchBmlEvidence(this);
+  const activity = visibleActivityText(report);
+  const combined = `${text}\n${activity}`;
+  for (const packageId of [STASH_ID, RUNEBOUND_ID]) {
+    if (!combined.includes(packageId)) {
+      contractGap(this, `Launch BML Barony blocker does not visibly list active package id ${packageId}.`, `ACTION/ACTIVITY EVIDENCE:\n${combined}`);
+    }
+  }
+  if (!/multiple|more than one|disable all but one|disable .* one|only one|select.*enable|enable.*selected/i.test(combined)) {
+    contractGap(this, "Launch BML Barony blocker does not clearly instruct the user how to resolve multiple active packages.", `ACTION/ACTIVITY EVIDENCE:\n${combined}`);
+  }
+});
+
+Then("the BML launch smoke does not write a misleading one-mod runtime manifest", function () {
+  const fixture = this.multipleActiveProfileFixture || {};
+  const manifestPath = fixture.runtimeManifestPath;
+  if (manifestPath && fs.existsSync(manifestPath)) {
+    const raw = fs.readFileSync(manifestPath, "utf8");
+    let manifest = null;
+    try {
+      manifest = JSON.parse(raw);
+    } catch (_error) {
+      // Non-JSON is still a launch artifact at the blocked boundary.
+    }
+    const mods = manifest && Array.isArray(manifest.mods) ? manifest.mods.map((entry) => String(entry.id || entry.packageId || entry)) : [];
+    contractGap(
+      this,
+      "Launch BML Barony wrote a runtime manifest even though multiple active profile packages should block before manifest generation.",
+      `Runtime manifest path: ${manifestPath}\nManifest mods: ${JSON.stringify(mods)}\nManifest preview:\n${raw.slice(0, 4000)}`
+    );
   }
 });
 

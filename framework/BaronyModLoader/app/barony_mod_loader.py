@@ -2687,6 +2687,17 @@ def validate_profile_package_enabled(profile: dict[str, Any], profile_dir: Path,
     package_id = str(package.manifest.get("id"))
     package_version = str(package.manifest.get("version"))
     active_mods = profile_authoritative_mods(profile, profile_dir)
+    active_package_ids = active_mod_package_ids(active_mods)
+    if len(active_mods) > 1:
+        result.add(
+            "BML_PROFILE_MULTIPLE_ACTIVE_PACKAGES",
+            "fatal",
+            multiple_active_packages_message(active_package_ids),
+            packageId=package_id,
+            activePackageIds=active_package_ids,
+            activeMods=active_mods,
+        )
+        return result
     for mod in active_mods:
         if mod.get("id") != package_id:
             continue
@@ -2709,9 +2720,102 @@ def validate_profile_package_enabled(profile: dict[str, Any], profile_dir: Path,
         "fatal",
         "Requested package is not enabled in the profile active mod state. Run profile enable before launch, or use profile disable to keep it inactive.",
         packageId=package_id,
-        enabledPackageIds=[str(mod.get("id")) for mod in active_mods if mod.get("id") is not None],
+        enabledPackageIds=active_package_ids,
     )
     return result
+
+
+def active_mod_package_id(mod: dict[str, Any]) -> str | None:
+    nested_package = mod.get("package") if isinstance(mod.get("package"), dict) else {}
+    package_id = mod.get("id") or mod.get("packageId") or nested_package.get("id")
+    return str(package_id) if package_id is not None and str(package_id) else None
+
+
+def active_mod_package_ids(active_mods: Iterable[dict[str, Any]]) -> list[str]:
+    return [package_id for mod in active_mods if isinstance(mod, dict) and (package_id := active_mod_package_id(mod)) is not None]
+
+
+def active_mod_package_path(mod: dict[str, Any]) -> str | None:
+    for key in ("packagePath", "manifestPath", "path"):
+        value = mod.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def multiple_active_packages_message(active_package_ids: list[str]) -> str:
+    listed = ", ".join(active_package_ids) if active_package_ids else "unknown package ids"
+    return (
+        f"Multiple active BML packages are enabled: {listed}. "
+        "Disable all but one active package, or select the target package and enable only it before launching BML Barony."
+    )
+
+
+def validate_profile_single_active_package(profile: dict[str, Any], profile_dir: Path) -> ValidationResult:
+    result = ValidationResult("profile active launch package")
+    active_mods = profile_authoritative_mods(profile, profile_dir)
+    active_package_ids = active_mod_package_ids(active_mods)
+    if len(active_mods) > 1:
+        result.add(
+            "BML_PROFILE_MULTIPLE_ACTIVE_PACKAGES",
+            "fatal",
+            multiple_active_packages_message(active_package_ids),
+            activePackageIds=active_package_ids,
+            activeMods=active_mods,
+        )
+    return result
+
+
+def resolve_profile_launch_package(
+    profile: dict[str, Any],
+    profile_dir: Path,
+    selected_package: LoadedPackage | None = None,
+) -> tuple[LoadedPackage | None, list[dict[str, Any]], ValidationResult]:
+    result = ValidationResult("profile active launch package")
+    active_mods = profile_authoritative_mods(profile, profile_dir)
+    active_package_ids = active_mod_package_ids(active_mods)
+    selected_package_id = selected_package.manifest.get("id") if selected_package is not None else None
+
+    if len(active_mods) > 1:
+        result.add(
+            "BML_PROFILE_MULTIPLE_ACTIVE_PACKAGES",
+            "fatal",
+            multiple_active_packages_message(active_package_ids),
+            activePackageIds=active_package_ids,
+            activeMods=active_mods,
+            selectedPackageId=selected_package_id,
+        )
+        return None, active_mods, result
+
+    if not active_mods:
+        result.add(
+            "BML_PROFILE_NO_ACTIVE_PACKAGE",
+            "fatal",
+            "No BML package is enabled in the active profile. Enable exactly one target package before launching BML Barony.",
+            activePackageIds=[],
+            selectedPackageId=selected_package_id,
+        )
+        return None, active_mods, result
+
+    active_mod = active_mods[0]
+    package_path = active_mod_package_path(active_mod)
+    if package_path is None:
+        result.add(
+            "BML_PROFILE_ACTIVE_PACKAGE_PATH_MISSING",
+            "fatal",
+            "The active profile package has no packagePath or manifestPath. Disable it and enable the target package again before launching BML Barony.",
+            activePackageIds=active_package_ids,
+            activeMod=active_mod,
+            selectedPackageId=selected_package_id,
+        )
+        return None, active_mods, result
+
+    launch_package, load_result = load_package(package_path)
+    result.extend(load_result)
+    if launch_package is not None:
+        result.extend(validate_package(launch_package))
+        result.extend(validate_profile_package_enabled(profile, profile_dir, launch_package))
+    return launch_package, active_mods, result
 
 
 def write_profile_active_mods(profile_dir: Path, profile: dict[str, Any], mods: list[dict[str, Any]], generated_at: str) -> None:
@@ -3138,9 +3242,9 @@ def _active_mods_from_guard_args(subject: Any = None, profile_dir: Any = None, a
 
 def validate_single_active_package(subject: Any = None, profile_dir: Any = None, active_mods: Any = None, profile: Any = None) -> dict[str, Any]:
     mods = _active_mods_from_guard_args(subject, profile_dir, active_mods, profile)
-    active_ids = [str(mod.get("id")) for mod in mods if mod.get("id")]
-    blocked = len(active_ids) > 1
-    reasons = [f"Multiple active packages are enabled: {', '.join(active_ids)}. Disable all but one before launch."] if blocked else []
+    active_ids = active_mod_package_ids(mods)
+    blocked = len(mods) > 1
+    reasons = [multiple_active_packages_message(active_ids)] if blocked else []
     return {
         "ok": not blocked,
         "allowed": not blocked,
@@ -5227,19 +5331,39 @@ def _gui_refresh_readiness(install: dict[str, Any], profile: dict[str, Any] | No
 
 
 def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, package: LoadedPackage | None) -> dict[str, Any]:
-    if profile is None or package is None:
+    registry_path = runtime_registry_path(None)
+    if profile is None:
         return {
             "status": "blocked",
+            "dryRun": True,
             "processStarted": False,
             "processLaunched": False,
-            "disabledReasons": ["Profile and selected package are required before launch dry-run metadata can be generated."],
+            "wouldStartBarony": False,
+            "registry": str(registry_path),
+            "disabledReasons": ["Create or select a profile before launch dry-run metadata can be generated."],
+            "sideEffects": {"processLaunch": False, "filesystemWrite": False},
         }
-    runtime_info = _gui_runtime_info_for_package(package)
-    plan = plan_runtime_manifest(profile, profile_dir, package, runtime_info, bml_profile_root(profile_dir) / "manifests" / "runtime-manifest.json")
-    combined = ValidationResult("GUI BaronyModLoader launch readiness")
-    combined.extend(validate_package(package))
-    combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
-    registry_path = runtime_registry_path(None)
+
+    launch_package, active_mods, combined = resolve_profile_launch_package(profile, profile_dir, package)
+    active_package_ids = active_mod_package_ids(active_mods)
+    selected_package_id = package.manifest.get("id") if package is not None else None
+    if launch_package is None:
+        return {
+            "status": "blocked",
+            "dryRun": True,
+            "processStarted": False,
+            "processLaunched": False,
+            "wouldStartBarony": False,
+            "registry": str(registry_path),
+            "activePackageIds": active_package_ids,
+            "selectedPackageId": selected_package_id,
+            "disabledReasons": _validation_disabled_reasons(combined),
+            "problems": _validation_problems(combined),
+            "sideEffects": {"processLaunch": False, "filesystemWrite": False},
+        }
+
+    runtime_info = _gui_runtime_info_for_package(launch_package)
+    plan = plan_runtime_manifest(profile, profile_dir, launch_package, runtime_info, bml_profile_root(profile_dir) / "manifests" / "runtime-manifest.json")
     registry, registry_result = load_runtime_registry(registry_path, missing_ok=False)
     combined.extend(registry_result)
     combined.extend(validate_profile_steam_install(profile))
@@ -5247,7 +5371,7 @@ def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, packa
         _selected_runtime, _selected_runtime_info, _runtime_info_path, _runtime_executable, selection_result = select_registered_runtime(
             registry,
             profile,
-            package,
+            launch_package,
             None,
         )
         combined.extend(selection_result)
@@ -5259,6 +5383,9 @@ def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, packa
         "processLaunched": False,
         "wouldStartBarony": False,
         "registry": str(registry_path),
+        "launchPackageId": launch_package.manifest.get("id"),
+        "selectedPackageId": selected_package_id,
+        "activePackageIds": active_package_ids,
         "runtimeManifestPath": plan.get("runtimeManifestPath"),
         "manifestPath": plan.get("manifestPath"),
         "manifest": plan.get("manifest"),
@@ -5399,14 +5526,18 @@ def _gui_start_launch_process(
 def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: LoadedPackage | None) -> dict[str, Any]:
     combined = ValidationResult("GUI BaronyModLoader launch validation")
     mocked = _gui_launch_mocked()
+    launch_package = package
+    active_mods: list[dict[str, Any]] = []
+    selected_package_id = package.manifest.get("id") if package is not None else None
     if profile is None:
         combined.add("BML_GUI_PROFILE_MISSING", "fatal", "Create or select a profile before launching BaronyModLoader.")
-    if package is None:
-        combined.add("BML_GUI_PACKAGE_MISSING", "fatal", "Select a local BML package before launching BaronyModLoader.")
-    if package is not None:
-        combined.extend(validate_package(package))
-    if profile is not None and package is not None:
-        combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
+        if package is None:
+            combined.add("BML_GUI_PACKAGE_MISSING", "fatal", "Select a local BML package before launching BaronyModLoader.")
+    else:
+        launch_package, active_mods, active_result = resolve_profile_launch_package(profile, profile_dir, package)
+        combined.extend(active_result)
+    active_package_ids = active_mod_package_ids(active_mods)
+
     registry_path = runtime_registry_path(None)
     registry: dict[str, Any] = {}
     registry_result = ValidationResult("runtime registry")
@@ -5422,11 +5553,11 @@ def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: 
     runtime_info: dict[str, Any] | None = None
     runtime_info_path: Path | None = None
     runtime_executable: Path | None = None
-    if mocked and profile is not None and package is not None:
+    if mocked and profile is not None and launch_package is not None:
         steam = profile_steam_install(profile) or {}
         executable_value = steam.get("executable") or _gui_default_barony_executable()
         runtime_executable = Path(str(executable_value)).expanduser().resolve(strict=False)
-        runtime_info = _gui_runtime_info_for_package(package)
+        runtime_info = _gui_runtime_info_for_package(launch_package)
         runtime_info_path = bml_profile_root(profile_dir) / "mock-runtime-info.json"
         target = current_platform_target()
         mock_hook_name = WINDOWS_HOOK_LIBRARY_NAME if sys.platform == "win32" else "libbarony_bml.so"
@@ -5437,27 +5568,35 @@ def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: 
             "steamExecutable": str(runtime_executable),
             "hookLibrary": str(bml_profile_root(profile_dir) / "mock" / mock_hook_name),
         }
-    elif profile is not None and package is not None and registry_result.ok:
+    elif profile is not None and launch_package is not None and registry_result.ok:
         selected_runtime, runtime_info, runtime_info_path, runtime_executable, selection_result = select_registered_runtime(
             registry,
             profile,
-            package,
+            launch_package,
             None,
         )
         combined.extend(selection_result)
 
     out_path = bml_profile_root(profile_dir) / "runtime-manifest.json"
     if not combined.ok:
-        return _gui_launch_blocked("bml", combined, registry=str(registry_path), runtimeManifestPath=str(out_path))
+        return _gui_launch_blocked(
+            "bml",
+            combined,
+            registry=str(registry_path),
+            runtimeManifestPath=str(out_path),
+            activePackageIds=active_package_ids,
+            selectedPackageId=selected_package_id,
+            launchPackageId=launch_package.manifest.get("id") if launch_package is not None else None,
+        )
 
     assert profile is not None
-    assert package is not None
+    assert launch_package is not None
     assert selected_runtime is not None
     assert runtime_info is not None
     assert runtime_info_path is not None
     assert runtime_executable is not None
 
-    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, package, runtime_info, out_path, runtime_executable, selected_runtime)
+    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, launch_package, runtime_info, out_path, runtime_executable, selected_runtime)
     command = [str(runtime_executable)]
     cwd = launch_working_directory(profile, runtime_executable)
     env = launch_environment(profile, profile_dir, out_path, selected_runtime)
@@ -5475,6 +5614,9 @@ def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: 
             "runtimeManifestPath": str(out_path),
             "runtimeManifest": str(out_path),
             "activeMods": str(active_mods_path),
+            "activePackageIds": active_package_ids,
+            "selectedPackageId": selected_package_id,
+            "launchPackageId": launch_package.manifest.get("id"),
             "createdAt": manifest["launch"]["createdAt"],
         },
     )
@@ -6186,7 +6328,12 @@ def build_profile_first_gui_state(
         result = launch_result or {"status": "blocked", "processStarted": False, "processLaunched": False, "disabledReasons": ["Launch action did not run."]}
         mode_label = "BML Barony" if action == "launch-bml" else "Vanilla Barony"
         blocked = result.get("status") == "blocked" or bool(result.get("disabledReasons"))
-        visible = f"Launch {mode_label} blocked" if blocked else f"Launch {mode_label} started"
+        first_disabled_reason = next((str(reason) for reason in (result.get("disabledReasons") or []) if reason), "")
+        visible = (
+            f"Launch {mode_label} blocked: {_gui_short_activity_text(first_disabled_reason)}"
+            if blocked and first_disabled_reason
+            else (f"Launch {mode_label} blocked" if blocked else f"Launch {mode_label} started")
+        )
         action_log.append(
             _gui_action_log_entry(
                 action,
@@ -6203,6 +6350,9 @@ def build_profile_first_gui_state(
                 runtimeManifestPath=result.get("runtimeManifestPath") or result.get("manifestPath"),
                 disabledReasons=result.get("disabledReasons"),
                 problems=result.get("problems"),
+                activePackageIds=result.get("activePackageIds"),
+                selectedPackageId=result.get("selectedPackageId"),
+                launchPackageId=result.get("launchPackageId"),
                 launchLog=result.get("launchLog"),
                 visibleSummary=visible,
             )
