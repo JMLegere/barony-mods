@@ -8658,6 +8658,51 @@ def validate_runtime_info_for_modlist(runtime_info: dict[str, Any], plan: Modlis
     return result
 
 
+def assert_package_active_in_modlist(package_arg: str | None, plan: ModlistCompatibilityPlan) -> ValidationResult:
+    result = ValidationResult("modlist package assertion")
+    if not package_arg:
+        return result
+
+    package, load_result = load_package(package_arg)
+    result.extend(load_result)
+    if package is None:
+        return result
+
+    asserted_package_id = str(package.manifest.get("id") or "")
+    asserted_package_version = str(package.manifest.get("version") or "")
+    asserted_paths = requested_package_paths(package)
+    active_packages: list[dict[str, Any]] = []
+    for active_package in plan.packages:
+        active_package_id = str(active_package.manifest.get("id") or "")
+        active_package_version = str(active_package.manifest.get("version") or "")
+        active_paths = requested_package_paths(active_package)
+        active_packages.append(
+            {
+                "id": active_package_id,
+                "version": active_package_version,
+                "paths": sorted(str(path) for path in active_paths),
+            }
+        )
+        if (
+            asserted_package_id
+            and asserted_package_id == active_package_id
+            and asserted_package_version == active_package_version
+            and not asserted_paths.isdisjoint(active_paths)
+        ):
+            return result
+
+    result.add(
+        "BML_MODLIST_ASSERTED_PACKAGE_NOT_ACTIVE",
+        "fatal",
+        "Requested --package is not included in the active profile modlist.",
+        packageId=asserted_package_id,
+        packageVersion=asserted_package_version,
+        requestedPaths=sorted(str(path) for path in asserted_paths),
+        activePackages=active_packages,
+    )
+    return result
+
+
 def _modlist_load_order_entry_matches_package(entry: dict[str, Any], package: LoadedPackage) -> bool:
     package_id = str(package.manifest.get("id") or "")
     entry_id = entry.get("id")
@@ -10256,6 +10301,53 @@ def select_registered_runtime(
     return None, None, None, None, result
 
 
+def select_registered_runtime_for_modlist(
+    registry: dict[str, Any],
+    profile: dict[str, Any],
+    plan: ModlistCompatibilityPlan,
+    requested_runtime_id: str | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None, Path | None, ValidationResult]:
+    result = ValidationResult("modlist runtime selection")
+    ordered_packages = modlist_plan_ordered_packages(plan)
+    representative_package = ordered_packages[0] if ordered_packages else None
+    if representative_package is None:
+        result.add(
+            "BML_MODLIST_RUNTIME_SELECTION_NO_PACKAGES",
+            "fatal",
+            "Runtime selection requires at least one active package in the modlist.",
+        )
+        return None, None, None, None, result
+
+    runtimes = [entry for entry in registry.get("runtimes", []) if isinstance(entry, dict)]
+    if requested_runtime_id:
+        runtimes = [entry for entry in runtimes if entry.get("id") == requested_runtime_id]
+        if not runtimes:
+            result.add("BML_RUNTIME_REGISTRY_ID_MISSING", "fatal", f"Runtime id not found in registry: {requested_runtime_id}")
+            return None, None, None, None, result
+
+    candidate_failures: list[Problem] = []
+    for runtime in runtimes:
+        runtime_info, runtime_info_path, executable, runtime_result = validate_registered_runtime(runtime, profile, representative_package)
+        candidate_result = ValidationResult(f"registered modlist runtime {runtime.get('id') or '<missing>'}")
+        candidate_result.extend(runtime_result)
+        if runtime_result.ok and runtime_info is not None and executable is not None:
+            modlist_runtime_result = validate_runtime_info_for_modlist(runtime_info, plan)
+            candidate_result.extend(modlist_runtime_result)
+            if modlist_runtime_result.ok:
+                result.extend(candidate_result)
+                return runtime, runtime_info, runtime_info_path, executable, result
+        candidate_failures.extend(candidate_result.problems)
+
+    result.problems.extend(candidate_failures)
+    result.add(
+        "BML_RUNTIME_REGISTRY_NO_COMPATIBLE_RUNTIME",
+        "fatal",
+        "No registered installed hook runtime is compatible with this profile modlist.",
+        hint="Register a BML hook runtime that supports every active package in the profile modlist.",
+    )
+    return None, None, None, None, result
+
+
 def launch_working_directory(profile: dict[str, Any], executable: Path) -> Path:
     steam = profile_steam_install(profile)
     if steam and isinstance(steam.get("installPath"), str):
@@ -10314,25 +10406,30 @@ def command_launch_plan(args: argparse.Namespace) -> int:
     profile, profile_dir, profile_result = load_profile(args.profile_dir)
     combined.extend(profile_result)
 
-    package, package_load_result = load_package(args.package)
-    combined.extend(package_load_result)
-    if package is not None:
-        combined.extend(validate_package(package))
-    if profile is not None and package is not None:
-        combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
-
+    plan: ModlistCompatibilityPlan | None = None
+    if profile is not None:
+        plan = build_modlist_compatibility_plan(profile, profile_dir)
+        combined.problems.extend(plan.issues)
 
     runtime_info, runtime_info_path, runtime_load_result = load_runtime_info(args.runtime_info)
     combined.extend(runtime_load_result)
-    if package is not None and runtime_info is not None:
-        combined.extend(validate_runtime_info(runtime_info, package))
+
+    if plan is not None and runtime_info is not None:
+        runtime_result = validate_runtime_info_for_modlist(runtime_info, plan)
+        plan.issues.extend(runtime_result.problems)
+        combined.extend(runtime_result)
+
+    if plan is not None and args.package:
+        assertion_result = assert_package_active_in_modlist(args.package, plan)
+        plan.issues.extend(assertion_result.problems)
+        combined.extend(assertion_result)
 
     if not combined.ok:
         print_report(combined, heading="Launch plan validation")
         return 1
 
     assert profile is not None
-    assert package is not None
+    assert plan is not None
     assert runtime_info is not None
 
     if args.out:
@@ -10340,9 +10437,21 @@ def command_launch_plan(args: argparse.Namespace) -> int:
     else:
         out_path = bml_profile_root(profile_dir) / "runtime-manifest.json"
 
-    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, package, runtime_info, out_path)
+    manifest, active_mods_path, validation_report_path = write_modlist_launch_artifacts(profile, profile_dir, plan, runtime_info, out_path)
 
-    print(json.dumps({"status": "created", "runtimeManifest": str(out_path), "activeMods": str(active_mods_path), "runtimeInfo": str(runtime_info_path), "createdAt": manifest["launch"]["createdAt"]}, indent=2))
+    print(
+        json.dumps(
+            {
+                "status": "created",
+                "runtimeManifest": str(out_path),
+                "activeMods": str(active_mods_path),
+                "validationReport": str(validation_report_path),
+                "runtimeInfo": str(runtime_info_path),
+                "createdAt": manifest["launch"]["createdAt"],
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -10352,13 +10461,15 @@ def command_launch(args: argparse.Namespace) -> int:
     profile, profile_dir, profile_result = load_profile(args.profile_dir)
     combined.extend(profile_result)
 
-    package, package_load_result = load_package(args.package)
-    combined.extend(package_load_result)
-    if package is not None:
-        combined.extend(validate_package(package))
-    if profile is not None and package is not None:
-        combined.extend(validate_profile_package_enabled(profile, profile_dir, package))
+    plan: ModlistCompatibilityPlan | None = None
+    if profile is not None:
+        plan = build_modlist_compatibility_plan(profile, profile_dir)
+        combined.problems.extend(plan.issues)
 
+    if plan is not None and args.package:
+        assertion_result = assert_package_active_in_modlist(args.package, plan)
+        plan.issues.extend(assertion_result.problems)
+        combined.extend(assertion_result)
 
     registry_path = runtime_registry_path(args.registry)
     registry, registry_result = load_runtime_registry(registry_path, missing_ok=False)
@@ -10373,13 +10484,14 @@ def command_launch(args: argparse.Namespace) -> int:
     runtime_info: dict[str, Any] | None = None
     runtime_info_path: Path | None = None
     runtime_executable: Path | None = None
-    if profile is not None and package is not None and registry_result.ok:
-        selected_runtime, runtime_info, runtime_info_path, runtime_executable, selection_result = select_registered_runtime(
+    if profile is not None and plan is not None and registry_result.ok:
+        selected_runtime, runtime_info, runtime_info_path, runtime_executable, selection_result = select_registered_runtime_for_modlist(
             registry,
             profile,
-            package,
+            plan,
             args.runtime,
         )
+        plan.issues.extend(selection_result.problems)
         combined.extend(selection_result)
 
     if args.out:
@@ -10393,13 +10505,21 @@ def command_launch(args: argparse.Namespace) -> int:
         return 1
 
     assert profile is not None
-    assert package is not None
+    assert plan is not None
     assert selected_runtime is not None
     assert runtime_info is not None
     assert runtime_info_path is not None
     assert runtime_executable is not None
 
-    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, package, runtime_info, out_path, runtime_executable, selected_runtime)
+    manifest, active_mods_path, validation_report_path = write_modlist_launch_artifacts(
+        profile,
+        profile_dir,
+        plan,
+        runtime_info,
+        out_path,
+        runtime_executable,
+        selected_runtime,
+    )
     barony_args = normalize_barony_args(args.barony_args)
     command = [
         str(runtime_executable),
@@ -10416,6 +10536,7 @@ def command_launch(args: argparse.Namespace) -> int:
         "runtimeInfo": str(runtime_info_path),
         "runtimeManifest": str(out_path),
         "activeMods": str(active_mods_path),
+        "validationReport": str(validation_report_path),
         "cwd": str(cwd),
         "command": command,
         "environment": {
@@ -10545,16 +10666,16 @@ def build_parser() -> argparse.ArgumentParser:
     profile_inspect.add_argument("profile_dir", help="Profile directory created by profile create.")
     profile_inspect.set_defaults(func=command_profile_inspect)
 
-    launch_plan = subparsers.add_parser("launch-plan", help="Validate profile/package/runtime and write runtime-manifest.json.")
+    launch_plan = subparsers.add_parser("launch-plan", help="Validate profile modlist/runtime and write runtime-manifest.json.")
     launch_plan.add_argument("profile_dir", help="Profile directory created by profile create.")
-    launch_plan.add_argument("--package", required=True, help="Package directory or direct package manifest JSON path.")
+    launch_plan.add_argument("--package", help="Optional package directory or manifest path; asserts that the package is included in the active profile modlist.")
     launch_plan.add_argument("--runtime-info", required=True, help="Runtime-info JSON path.")
     launch_plan.add_argument("--out", help="Output runtime-manifest.json path. Defaults to <profile>/BaronyModLoader/runtime-manifest.json.")
     launch_plan.set_defaults(func=command_launch_plan)
 
     launch = subparsers.add_parser("launch", help="Select a registered runtime, write launch artifacts, and start Barony.")
     launch.add_argument("profile_dir", help="Profile directory created by profile create.")
-    launch.add_argument("--package", required=True, help="Installed package directory or direct package manifest JSON path.")
+    launch.add_argument("--package", help="Optional installed package directory or manifest path; asserts that the package is included in the active profile modlist.")
     launch.add_argument("--registry", help=f"Runtime registry path. Defaults to {DEFAULT_RUNTIME_REGISTRY_PATH}.")
     launch.add_argument("--runtime", help="Explicit registered runtime id. Defaults to the first compatible runtime.")
     launch.add_argument("--out", help="Output runtime-manifest.json path. Defaults to <profile>/BaronyModLoader/runtime-manifest.json.")

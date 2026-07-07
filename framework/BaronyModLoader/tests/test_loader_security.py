@@ -379,6 +379,19 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             "capabilities": [{"id": capability_id, "version": "0.1.0"} for capability_id in capability_ids],
         }
 
+    def set_registry_runtime_capabilities(self, registry_path: Path, capability_ids: list[str]) -> Path:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        runtime = registry["runtimes"][0]
+        runtime_info_path = Path(runtime["runtimeInfo"])
+        existing_runtime_info = json.loads(runtime_info_path.read_text(encoding="utf-8"))
+        runtime_info = self.runtime_info_for_capabilities(capability_ids)
+        if "windowsRuntimeStatus" in existing_runtime_info:
+            runtime_info["windowsRuntimeStatus"] = existing_runtime_info["windowsRuntimeStatus"]
+        write_json(runtime_info_path, runtime_info)
+        runtime["capabilities"] = runtime_info["capabilities"]
+        write_json(registry_path, registry)
+        return runtime_info_path
+
 
     def set_package_manifest_compatibility(
         self,
@@ -686,6 +699,161 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertNotIn("/tmp/evil-hook.so", json.dumps(environment))
             self.assertNotIn("/tmp/evil-runtime-manifest.json", json.dumps(environment))
             self.assertNotIn("BML_STASH_PROFILE", environment)
+
+
+    def test_launch_plan_without_package_writes_two_active_mod_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            runtime_info_path = workspace / "modlist-runtime-info.json"
+            write_json(runtime_info_path, self.runtime_info_for_capabilities(["persistent_storage", "multiplayer_version_metadata"]))
+            self.write_profile_active_mods(
+                profile_dir,
+                [
+                    self.active_mod_entry_for_package(alpha_dir, load_order=20),
+                    self.active_mod_entry_for_package(beta_dir, load_order=10),
+                ],
+            )
+
+            launch_plan = self.run_cli("launch-plan", str(profile_dir), "--runtime-info", str(runtime_info_path))
+
+            self.assertEqual(launch_plan.returncode, 0, launch_plan.stdout)
+            payload = json.loads(launch_plan.stdout)
+            self.assertEqual(payload["status"], "created")
+            self.assertEqual(payload["runtimeInfo"], str(runtime_info_path.resolve()))
+            manifest_path = Path(payload["runtimeManifest"])
+            validation_report_path = profile_dir / loader.APP_ID / "validation-report.json"
+            self.assertEqual(payload["validationReport"], str(validation_report_path))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual([mod["id"] for mod in manifest["mods"]], ["test.beta", "test.alpha"])
+            self.assertEqual([mod["loadOrder"] for mod in manifest["mods"]], [0, 1])
+            validation_report = json.loads(validation_report_path.read_text(encoding="utf-8"))
+            self.assertTrue(validation_report["launchable"])
+            self.assertEqual(validation_report["blockingIssues"], [])
+            self.assertEqual(self.plan_package_ids(validation_report["loadOrder"]), ["test.beta", "test.alpha"])
+
+    def test_launch_plan_package_assertion_blocks_package_not_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            inactive_dir = self.make_package(workspace, "inactive-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.set_package_identity(inactive_dir, "test.inactive")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir, inactive_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            self.set_package_runtime_capabilities(inactive_dir, ["persistent_storage"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            runtime_info_path = workspace / "modlist-runtime-info.json"
+            write_json(runtime_info_path, self.runtime_info_for_capabilities(["persistent_storage", "multiplayer_version_metadata"]))
+            self.write_profile_active_mods(
+                profile_dir,
+                [
+                    self.active_mod_entry_for_package(alpha_dir, load_order=10),
+                    self.active_mod_entry_for_package(beta_dir, load_order=20),
+                ],
+            )
+
+            launch_plan = self.run_cli(
+                "launch-plan",
+                str(profile_dir),
+                "--package",
+                str(inactive_dir),
+                "--runtime-info",
+                str(runtime_info_path),
+            )
+
+            self.assertNotEqual(launch_plan.returncode, 0, launch_plan.stdout)
+            self.assertIn("BML_MODLIST_ASSERTED_PACKAGE_NOT_ACTIVE", launch_plan.stdout)
+            self.assertIn("test.inactive", launch_plan.stdout)
+            self.assertNotIn('"status": "created"', launch_plan.stdout)
+
+    def test_launch_plan_declared_package_conflict_blocks_launchable_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            self.set_package_manifest_compatibility(
+                alpha_dir,
+                conflicts=[self.package_conflict("test.beta", "Alpha and beta both own the same gameplay surface.")],
+            )
+            self.set_package_manifest_compatibility(beta_dir, conflicts=[])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            runtime_info_path = workspace / "modlist-runtime-info.json"
+            write_json(runtime_info_path, self.runtime_info_for_capabilities(["persistent_storage", "multiplayer_version_metadata"]))
+            self.write_profile_active_mods(
+                profile_dir,
+                [
+                    self.active_mod_entry_for_package(alpha_dir),
+                    self.active_mod_entry_for_package(beta_dir),
+                ],
+            )
+
+            launch_plan = self.run_cli("launch-plan", str(profile_dir), "--runtime-info", str(runtime_info_path))
+
+            self.assertNotEqual(launch_plan.returncode, 0, launch_plan.stdout)
+            self.assertIn("BML_MODLIST_PACKAGE_CONFLICT", launch_plan.stdout)
+            self.assertIn("test.beta", launch_plan.stdout)
+            self.assertNotIn('"status": "created"', launch_plan.stdout)
+            validation_report_path = profile_dir / loader.APP_ID / "validation-report.json"
+            if validation_report_path.exists():
+                validation_report = json.loads(validation_report_path.read_text(encoding="utf-8"))
+                self.assertFalse(validation_report["launchable"])
+
+    def test_launch_dry_run_without_package_writes_two_active_mod_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            profile_dir, registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            runtime_info_path = self.set_registry_runtime_capabilities(
+                registry_path,
+                ["persistent_storage", "multiplayer_version_metadata"],
+            )
+            self.write_profile_active_mods(
+                profile_dir,
+                [
+                    self.active_mod_entry_for_package(alpha_dir, load_order=20),
+                    self.active_mod_entry_for_package(beta_dir, load_order=10),
+                ],
+            )
+
+            launch = self.run_cli("launch", str(profile_dir), "--registry", str(registry_path), "--dry-run")
+
+            self.assertEqual(launch.returncode, 0, launch.stdout)
+            payload = json.loads(launch.stdout)
+            self.assertEqual(payload["status"], "dry-run")
+            self.assertEqual(payload["runtimeInfo"], str(runtime_info_path))
+            manifest_path = Path(payload["runtimeManifest"])
+            validation_report_path = profile_dir / loader.APP_ID / "validation-report.json"
+            self.assertEqual(payload["validationReport"], str(validation_report_path))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual([mod["id"] for mod in manifest["mods"]], ["test.beta", "test.alpha"])
+            self.assertEqual([mod["loadOrder"] for mod in manifest["mods"]], [0, 1])
+            active_mods = json.loads(Path(payload["activeMods"]).read_text(encoding="utf-8"))
+            self.assertEqual([mod["id"] for mod in active_mods["mods"]], ["test.beta", "test.alpha"])
+            validation_report = json.loads(validation_report_path.read_text(encoding="utf-8"))
+            self.assertTrue(validation_report["launchable"])
+            self.assertEqual(validation_report["blockingIssues"], [])
 
     def test_launch_rejects_disabled_package_when_profile_has_active_mod_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
