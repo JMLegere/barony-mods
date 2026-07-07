@@ -872,7 +872,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                 "--dry-run",
             )
             self.assertNotEqual(launch.returncode, 0, launch.stdout)
-            self.assertIn("BML_PROFILE_PACKAGE_DISABLED", launch.stdout)
+            self.assertIn("BML_PROFILE_NO_ACTIVE_PACKAGE", launch.stdout)
 
 
     def test_launch_rejects_new_profile_empty_active_mods(self) -> None:
@@ -891,7 +891,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                 "--dry-run",
             )
             self.assertNotEqual(launch.returncode, 0, launch.stdout)
-            self.assertIn("BML_PROFILE_PACKAGE_DISABLED", launch.stdout)
+            self.assertIn("BML_PROFILE_NO_ACTIVE_PACKAGE", launch.stdout)
 
     def test_profile_disable_empty_profile_active_mods_ignores_stale_active_mods_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -920,7 +920,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertEqual(profile["activeMods"], [])
             self.assertEqual(active_mods["mods"], [])
 
-    def test_launch_rejects_enabled_package_path_mismatch(self) -> None:
+    def test_launch_rejects_package_assertion_path_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
             package_dir = self.make_package(workspace, "requested-package")
@@ -938,7 +938,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                 "--dry-run",
             )
             self.assertNotEqual(launch.returncode, 0, launch.stdout)
-            self.assertIn("BML_PROFILE_PACKAGE_PATH_MISMATCH", launch.stdout)
+            self.assertIn("BML_MODLIST_ASSERTED_PACKAGE_NOT_ACTIVE", launch.stdout)
             stdout_for_paths = launch.stdout.replace("\\\\", "\\")
             self.assertIn(str(enabled_dir.resolve()), stdout_for_paths)
             self.assertIn(str(package_dir.resolve()), stdout_for_paths)
