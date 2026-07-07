@@ -531,11 +531,41 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertEqual(profiles_by_id["challenge"]["activeModCount"], 2)
             self.assertTrue(profiles_by_id["challenge"]["selected"])
 
+
+    def test_profiles_primary_action_label_is_new_profile(self) -> None:
+        action = loader._gui_action("create-select-profile")
+
+        self.assertEqual(action["label"], "New profile")
+
+    def test_gui_new_profile_action_targets_generated_profile_when_current_exists(self) -> None:
+        with self.isolated_gui_data_home() as data_home:
+            profiles_root = data_home / loader.APP_ID / "profiles"
+            default_dir = profiles_root / "default"
+            generated_id = "profile-2"
+            generated_dir = profiles_root / generated_id
+            self.write_gui_profile(default_dir, "default", [])
+
+            self.assertEqual(
+                loader._gui_create_select_profile_target("default", profiles_root, selector_values=["default"]),
+                generated_id,
+            )
+
+            state = loader.build_profile_first_gui_state(action="create-select-profile", selected_profile_selector="default")
+
+            self.assertEqual(state["profilePath"], str(generated_dir))
+            self.assertEqual(state["selectedProfileId"], generated_id)
+            self.assertEqual(state["profile"]["selectedProfileId"], generated_id)
+            created_profile = json.loads((generated_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            self.assertEqual(created_profile["profile"]["id"], generated_id)
+            self.assertTrue((default_dir / loader.APP_ID / "profile.json").is_file())
+
     def test_gui_typed_profile_creation_writes_typed_profile_id(self) -> None:
         with self.isolated_gui_data_home() as data_home:
             profile_id = "challenge-run"
             expected_dir = data_home / loader.APP_ID / "profiles" / profile_id
+            profiles_root = data_home / loader.APP_ID / "profiles"
 
+            self.assertEqual(loader._gui_create_select_profile_target(profile_id, profiles_root), profile_id)
             state = loader.build_profile_first_gui_state(action="create-select-profile", selected_profile_selector=profile_id)
 
             created_profile = json.loads((expected_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))

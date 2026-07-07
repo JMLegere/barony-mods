@@ -4088,7 +4088,7 @@ GUI_ENTITY_ICON_RENDER_ORDER = (
 
 GUI_ACTION_LABELS = {
     "detect-install": "Detect install",
-    "create-select-profile": "Manage profile",
+    "create-select-profile": "New profile",
     "scan-packages": "Scan packages",
     "enable-package": "Enable selected mod",
     "disable-package": "Disable selected mod",
@@ -5564,6 +5564,59 @@ def _gui_profile_path_is_safe(profile_dir: Path, profiles_root: Path) -> bool:
         return False
     return resolved_profile == resolved_root or resolved_path_is_within(resolved_profile, resolved_root)
 
+def _gui_selector_value_profile_ids(selector_values: Iterable[Any] = ()) -> set[str]:
+    profile_ids: set[str] = set()
+    for value in selector_values:
+        text = str(value or "").strip()
+        safe_id = _gui_safe_profile_id(text)
+        if safe_id is not None:
+            profile_ids.add(safe_id)
+        if text:
+            name_id = _gui_safe_profile_id(Path(text).name)
+            if name_id is not None:
+                profile_ids.add(name_id)
+    return profile_ids
+
+
+def _gui_existing_profile_ids(profiles_root: Path) -> set[str]:
+    if _path_is_under_tmp(profiles_root) or not profiles_root.exists() or not profiles_root.is_dir():
+        return set()
+    profile_ids: set[str] = set()
+    for child in sorted(profiles_root.iterdir(), key=lambda item: item.name):
+        if child.is_dir() and _gui_profile_path_is_safe(child, profiles_root):
+            safe_id = _gui_safe_profile_id(child.name)
+            if safe_id is not None:
+                profile_ids.add(safe_id)
+    return profile_ids
+
+
+def _gui_profile_id_is_available(profile_id_value: Any, profiles_root: Path, selector_values: Iterable[Any] = ()) -> bool:
+    profile_id_text = _gui_safe_profile_id(profile_id_value)
+    if profile_id_text is None or _path_is_under_tmp(profiles_root):
+        return False
+    taken = _gui_selector_value_profile_ids(selector_values) | _gui_existing_profile_ids(profiles_root)
+    return profile_id_text not in taken and not (profiles_root / profile_id_text).exists()
+
+
+def _gui_next_profile_id(profiles_root: Path, selector_values: Iterable[Any] = ()) -> str | None:
+    if _path_is_under_tmp(profiles_root):
+        return None
+    taken = _gui_selector_value_profile_ids(selector_values) | _gui_existing_profile_ids(profiles_root)
+    number = 2
+    while True:
+        candidate = f"profile-{number}"
+        if candidate not in taken and not (profiles_root / candidate).exists():
+            return candidate
+        number += 1
+
+
+def _gui_create_select_profile_target(selected_profile_selector: Any, profiles_root: Path, selector_values: Iterable[Any] = ()) -> str | None:
+    safe_selector = _gui_safe_profile_id(str(selected_profile_selector or "").strip())
+    if safe_selector is not None and safe_selector != "default" and _gui_profile_id_is_available(safe_selector, profiles_root, selector_values):
+        return safe_selector
+    return _gui_next_profile_id(profiles_root, selector_values)
+
+
 
 def _gui_resolve_profile_selector(selected_profile_selector: str | None = None) -> dict[str, Any]:
     profiles_root = _gui_profiles_root()
@@ -5583,6 +5636,8 @@ def _gui_resolve_profile_selector(selected_profile_selector: str | None = None) 
         "reason": None,
         "matchedExisting": False,
         "createCandidate": selector != "default",
+        "existingProfileIds": ["default"],
+        "selectorValues": ["default"],
     }
     if _path_is_under_tmp(profiles_root):
         base.update({
@@ -5597,6 +5652,17 @@ def _gui_resolve_profile_selector(selected_profile_selector: str | None = None) 
         for child in sorted(profiles_root.iterdir(), key=lambda item: item.name):
             if child.is_dir() and profile_json_path(child).exists() and _gui_profile_path_is_safe(child, profiles_root):
                 existing_profiles.append(profile_summary_for_card(child, default_profile_dir))
+    existing_profile_ids = [
+        str(summary.get("id") or Path(str(summary.get("path") or "")).name)
+        for summary in existing_profiles
+        if summary.get("id") or summary.get("path")
+    ]
+    if "default" not in existing_profile_ids:
+        existing_profile_ids.insert(0, "default")
+    base.update({
+        "existingProfileIds": existing_profile_ids,
+        "selectorValues": existing_profile_ids,
+    })
     needle = selector.casefold()
     for summary in existing_profiles:
         profile_path_text = str(summary.get("path") or "")
@@ -7216,6 +7282,33 @@ def build_profile_first_gui_state(
     selected_profile_selector: str | None = None,
 ) -> dict[str, Any]:
     profile_selection = _gui_resolve_profile_selector(selected_profile_selector)
+    if action == "create-select-profile" and profile_selection.get("valid"):
+        original_profile_selector = (
+            str(selected_profile_selector).strip()
+            if selected_profile_selector is not None
+            else str(profile_selection.get("selectedProfileSelector") or "").strip()
+        )
+        target_profile_id = _gui_create_select_profile_target(
+            original_profile_selector,
+            Path(str(profile_selection.get("profilesRoot") or _gui_profiles_root())),
+            profile_selection.get("selectorValues") if isinstance(profile_selection.get("selectorValues"), list) else (),
+        )
+        if target_profile_id is None:
+            profile_selection.update({
+                "valid": False,
+                "status": "blocked",
+                "reason": "No safe profile id is available under the profiles root.",
+                "profileButtonTargetId": None,
+                "profileButtonOriginalSelector": original_profile_selector,
+            })
+        elif target_profile_id != profile_selection.get("selectedProfileId"):
+            profile_selection = _gui_resolve_profile_selector(target_profile_id)
+            profile_selection["requestedSelector"] = original_profile_selector
+            profile_selection["profileButtonTargetId"] = target_profile_id
+            profile_selection["profileButtonOriginalSelector"] = original_profile_selector
+        else:
+            profile_selection["profileButtonTargetId"] = target_profile_id
+            profile_selection["profileButtonOriginalSelector"] = original_profile_selector
     profile_dir = Path(str(profile_selection.get("selectedProfilePath") or _gui_default_profile_path()))
     install = _gui_detect_install()
     action_log = [dict(item) for item in (activity_log or []) if isinstance(item, dict)]
@@ -7238,6 +7331,9 @@ def build_profile_first_gui_state(
         "profileSelectorCreateCandidate": bool(profile_selection.get("createCandidate")),
         "requestedProfileSelector": profile_selection.get("requestedSelector"),
         "profilesRoot": profile_selection.get("profilesRoot"),
+        "profileButtonTargetId": profile_selection.get("profileButtonTargetId"),
+        "profileButtonOriginalSelector": profile_selection.get("profileButtonOriginalSelector"),
+        "profileSelectorValues": profile_selection.get("selectorValues"),
     })
     requested_selector = (selected_mod_selector or selected_package_selector or "").strip() or None
     package_catalog, selected_package, selected_summary = _gui_scan_packages()
@@ -7305,6 +7401,9 @@ def build_profile_first_gui_state(
         "profileSelectorCreateCandidate": bool(profile_selection.get("createCandidate")),
         "requestedProfileSelector": profile_selection.get("requestedSelector"),
         "profilesRoot": profile_selection.get("profilesRoot"),
+        "profileButtonTargetId": profile_selection.get("profileButtonTargetId"),
+        "profileButtonOriginalSelector": profile_selection.get("profileButtonOriginalSelector"),
+        "profileSelectorValues": profile_selection.get("selectorValues"),
     })
     readiness = _gui_refresh_readiness(install, profile, selected_package, profile_dir)
     launch_dry_run = _gui_launch_dry_run(profile, profile_dir, selected_package)
@@ -7410,7 +7509,7 @@ def build_profile_first_gui_state(
                 tmpPathRejected=profile_state.get("tmpPathRejected"),
                 profileSelectorValid=profile_state.get("profileSelectorValid"),
                 profileSelectorReason=profile_state.get("profileSelectorReason"),
-                visibleSummary="Profile selector rejected" if invalid_selector else "Profile selected",
+                visibleSummary="Profile selector rejected" if invalid_selector else ("Profile created" if created else "Profile selected"),
             )
         )
     elif action == "scan-packages":
@@ -7565,6 +7664,9 @@ def build_profile_first_gui_state(
             "valid": profile_state.get("profileSelectorValid"),
             "reason": profile_state.get("profileSelectorReason"),
             "profilesRoot": profile_state.get("profilesRoot"),
+            "values": profile_state.get("profileSelectorValues"),
+            "createTarget": profile_state.get("profileButtonTargetId"),
+            "buttonOriginalSelector": profile_state.get("profileButtonOriginalSelector"),
         },
         "profile": profile_state,
         "profiles": profile_state.get("profiles") if isinstance(profile_state.get("profiles"), list) else [],
