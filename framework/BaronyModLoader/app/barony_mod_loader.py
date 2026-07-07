@@ -8651,6 +8651,236 @@ def write_launch_artifacts(
     return manifest, active_mods_path
 
 
+def validate_runtime_info_for_modlist(runtime_info: dict[str, Any], plan: ModlistCompatibilityPlan) -> ValidationResult:
+    result = ValidationResult("modlist runtime compatibility")
+    for package in plan.packages:
+        result.extend(validate_runtime_info(runtime_info, package))
+    return result
+
+
+def _modlist_load_order_entry_matches_package(entry: dict[str, Any], package: LoadedPackage) -> bool:
+    package_id = str(package.manifest.get("id") or "")
+    entry_id = entry.get("id")
+    if isinstance(entry_id, str) and entry_id and entry_id != package_id:
+        return False
+
+    package_version = str(package.manifest.get("version") or "")
+    entry_version = entry.get("version")
+    if isinstance(entry_version, str) and entry_version and entry_version != package_version:
+        return False
+
+    entry_paths = {
+        normalized
+        for key in ("path", "packagePath", "manifestPath")
+        if (normalized := normalized_profile_path(entry.get(key))) is not None
+    }
+    if entry_paths and entry_paths.isdisjoint(requested_package_paths(package)):
+        return False
+
+    return True
+
+
+def modlist_plan_ordered_packages(plan: ModlistCompatibilityPlan) -> list[LoadedPackage]:
+    packages = list(plan.packages)
+    if not plan.load_order:
+        return packages
+
+    ordered: list[LoadedPackage] = []
+    used_indices: set[int] = set()
+    for entry in plan.load_order:
+        if not isinstance(entry, dict):
+            return packages
+        match_index = next(
+            (
+                index
+                for index, package in enumerate(packages)
+                if index not in used_indices and _modlist_load_order_entry_matches_package(entry, package)
+            ),
+            None,
+        )
+        if match_index is None:
+            return packages
+        used_indices.add(match_index)
+        ordered.append(packages[match_index])
+
+    ordered.extend(package for index, package in enumerate(packages) if index not in used_indices)
+    return ordered
+
+
+def _runtime_manifest_launch_payload_for_modlist(
+    profile: dict[str, Any],
+    runtime_info: dict[str, Any],
+    runtime_executable: Path | None = None,
+    runtime_registration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    profile_runtime = profile.get("runtime", {})
+    profile_id = profile.get("profile", {}).get("id")
+    barony_executable = profile_runtime.get("baronyExecutable") if isinstance(profile_runtime, dict) else None
+    steam_install = profile_runtime.get("steam") if isinstance(profile_runtime, dict) and isinstance(profile_runtime.get("steam"), dict) else None
+    runtime_strategy = runtime_registration.get("runtimeStrategy") if isinstance(runtime_registration, dict) else None
+    game_install_id = "profile-local"
+    if steam_install:
+        build_id = steam_install.get("buildId") or "unknown-build"
+        game_install_id = f"steam:{STEAM_BARONY_APP_ID}:{build_id}"
+
+    launch_payload: dict[str, Any] = {
+        "profileId": profile_id,
+        "gameInstallId": game_install_id,
+        "gameSource": profile_runtime.get("gameSource", "manual") if isinstance(profile_runtime, dict) else "manual",
+        "baronyExecutable": str(Path(barony_executable).expanduser().absolute()) if barony_executable else None,
+        "launchExecutable": str(runtime_executable) if runtime_executable else None,
+        "bmlRuntimeExecutable": None,
+        "runtimeStrategy": runtime_strategy,
+        "createdAt": utc_now(),
+        "runtime": {
+            "runtimeId": runtime_info.get("runtimeId"),
+            "runtimeVersion": runtime_info.get("runtimeVersion"),
+            "registryRuntimeId": runtime_registration.get("id") if isinstance(runtime_registration, dict) else None,
+        },
+        "steam": steam_install,
+    }
+    if isinstance(runtime_registration, dict):
+        launch_payload.update(
+            {
+                "storefront": runtime_registration.get("storefront"),
+                "platform": runtime_registration.get("platform"),
+                "platformTarget": runtime_registration.get("platformTarget"),
+                "launchAdapter": runtime_registration.get("launchAdapter"),
+                "hookArtifactExtension": runtime_registration.get("hookArtifactExtension"),
+                "steamExecutable": runtime_registration.get("steamExecutable"),
+                "steamExecutableSha256": runtime_registration.get("steamExecutableSha256"),
+                "steamExecutableBuildId": runtime_registration.get("steamExecutableBuildId"),
+                "gameVersionString": runtime_registration.get("gameVersionString"),
+                "hookLibrary": runtime_registration.get("hookLibrary"),
+                "hookLibrarySha256": runtime_registration.get("hookLibrarySha256"),
+                "hookManifest": runtime_registration.get("hookManifest"),
+                "hookManifestSha256": runtime_registration.get("hookManifestSha256"),
+                "launcherExecutable": runtime_registration.get("launcherExecutable"),
+                "launcherExecutableSha256": runtime_registration.get("launcherExecutableSha256"),
+            }
+        )
+    return launch_payload
+
+
+def _runtime_manifest_mod_entry(package: LoadedPackage, load_order: int) -> dict[str, Any]:
+    required_capabilities = [
+        {
+            "id": entry.get("id"),
+            "version": entry.get("version"),
+            "required": True,
+        }
+        for entry in package_required_capabilities(package.manifest)
+    ]
+    return {
+        "id": package.manifest.get("id"),
+        "version": package.manifest.get("version"),
+        "packagePath": str(package.manifest_path),
+        "checksumSet": package_checksum(package),
+        "loadOrder": load_order,
+        "capabilities": required_capabilities,
+        "modules": package.manifest.get("modules", {}),
+    }
+
+
+def build_runtime_manifest_for_modlist(
+    profile: dict[str, Any],
+    profile_dir: Path,
+    plan: ModlistCompatibilityPlan,
+    runtime_info: dict[str, Any],
+    runtime_executable: Path | None = None,
+    runtime_registration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    ordered_packages = modlist_plan_ordered_packages(plan)
+    return {
+        "contract": {
+            "id": RUNTIME_CONTRACT_ID,
+            "version": RUNTIME_CONTRACT_VERSION,
+        },
+        "app": {
+            "id": APP_ID,
+            "version": APP_VERSION,
+        },
+        "launch": _runtime_manifest_launch_payload_for_modlist(profile, runtime_info, runtime_executable, runtime_registration),
+        "mods": [_runtime_manifest_mod_entry(package, index) for index, package in enumerate(ordered_packages)],
+    }
+
+
+def validation_report_for_modlist_plan(plan: ModlistCompatibilityPlan) -> dict[str, Any]:
+    issues = [problem_to_dict(issue) for issue in plan.issues]
+    blocking_issues = [problem_to_dict(issue) for issue in plan.blocking_issues]
+    non_blocking_issues = [problem_to_dict(issue) for issue in plan.non_blocking_issues]
+    return {
+        "launchable": plan.launchable,
+        "issues": issues,
+        "blockingIssues": blocking_issues,
+        "nonBlockingIssues": non_blocking_issues,
+        "warnings": non_blocking_issues,
+        "enabledMods": [dict(mod) for mod in plan.enabled_mods if isinstance(mod, dict)],
+        "loadOrder": [dict(entry) for entry in plan.load_order if isinstance(entry, dict)],
+    }
+
+
+def _active_mods_entry_for_modlist_package(package: LoadedPackage, runtime_manifest_path: Path, load_order: int) -> dict[str, Any]:
+    return {
+        "id": package.manifest.get("id"),
+        "version": package.manifest.get("version"),
+        "packagePath": str(preferred_package_path(package)),
+        "manifestPath": str(package.manifest_path),
+        "checksumSet": package_checksum(package),
+        "runtimeManifest": str(runtime_manifest_path),
+        "loadOrder": load_order,
+    }
+
+
+def write_modlist_launch_artifacts(
+    profile: dict[str, Any],
+    profile_dir: Path,
+    plan: ModlistCompatibilityPlan,
+    runtime_info: dict[str, Any],
+    out_path: Path,
+    runtime_executable: Path | None = None,
+    runtime_registration: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], Path, Path]:
+    bml_root = bml_profile_root(profile_dir)
+    log_dir = bml_root / "logs"
+    report_dir = bml_root / "reports"
+    state_dir = bml_root / "state"
+    manifest_dir = bml_root / "manifests"
+    validation_report_path = bml_root / "validation-report.json"
+    for directory in (log_dir, report_dir, state_dir, manifest_dir, out_path.parent, validation_report_path.parent):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    manifest = build_runtime_manifest_for_modlist(profile, profile_dir, plan, runtime_info, runtime_executable, runtime_registration)
+    manifest["launch"].update(
+        {
+            "runtimeManifest": "BaronyModLoader/runtime-manifest.json",
+            "runtimeLoadReport": "BaronyModLoader/reports/runtime-load-report.json",
+            "runtimeLog": "BaronyModLoader/logs/runtime.log",
+            "stateRoot": "BaronyModLoader/state/",
+            "validationReport": "BaronyModLoader/validation-report.json",
+        }
+    )
+    write_json_file(out_path, manifest)
+
+    ordered_packages = modlist_plan_ordered_packages(plan)
+    active_mods_path = active_mods_json_path(profile_dir)
+    write_json_file(
+        active_mods_path,
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "profileId": profile.get("profile", {}).get("id"),
+            "generatedAt": manifest["launch"]["createdAt"],
+            "mods": [
+                _active_mods_entry_for_modlist_package(package, out_path, index)
+                for index, package in enumerate(ordered_packages)
+            ],
+        },
+    )
+
+    write_json_file(validation_report_path, validation_report_for_modlist_plan(plan))
+    return manifest, active_mods_path, validation_report_path
+
+
 
 def _flatten_path_args(*values: Any) -> list[Path]:
     paths: list[Path] = []

@@ -355,6 +355,31 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
     def package_conflict(self, package_id: str, reason: str = "Declared package conflict for test coverage.") -> dict:
         return {"id": package_id, "kind": "package", "reason": reason}
 
+    def set_package_runtime_capabilities(self, package_dir: Path, capability_ids: list[str]) -> None:
+        manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["dependencies"] = []
+        manifest["engine"]["capabilities"] = [
+            {
+                "id": capability_id,
+                "version": "0.1.0",
+                "required": True,
+                "reason": f"Test package requires {capability_id}.",
+            }
+            for capability_id in capability_ids
+        ]
+        write_json(manifest_path, manifest)
+
+    def runtime_info_for_capabilities(self, capability_ids: list[str]) -> dict:
+        return {
+            "runtimeId": "modlist-test-runtime",
+            "runtimeVersion": "0.1.0",
+            "contract": {"id": loader.RUNTIME_CONTRACT_ID, "versions": [loader.RUNTIME_CONTRACT_VERSION]},
+            "platforms": [{"platform": loader.current_platform_id()}],
+            "capabilities": [{"id": capability_id, "version": "0.1.0"} for capability_id in capability_ids],
+        }
+
+
     def set_package_manifest_compatibility(
         self,
         package_dir: Path,
@@ -1076,6 +1101,131 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                 "BML_PROFILE_PACKAGE_PATH_MISMATCH",
                 [problem.code for problem in plan.issues],
             )
+
+    def test_validate_runtime_info_for_modlist_accepts_two_package_capability_sets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir, load_order=10),
+                self.active_mod_entry_for_package(beta_dir, load_order=20),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+            runtime_info = self.runtime_info_for_capabilities(["persistent_storage", "multiplayer_version_metadata"])
+
+            result = loader.validate_runtime_info_for_modlist(runtime_info, plan)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertTrue(result.ok, [problem.code for problem in result.problems])
+            self.assertEqual(result.problems, [])
+
+    def test_validate_runtime_info_for_modlist_blocks_missing_active_package_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir, load_order=10),
+                self.active_mod_entry_for_package(beta_dir, load_order=20),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+            runtime_info = self.runtime_info_for_capabilities(["persistent_storage"])
+
+            result = loader.validate_runtime_info_for_modlist(runtime_info, plan)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertFalse(result.ok)
+            missing = [problem for problem in result.problems if problem.code == "BML_RUNTIME_CAPABILITY_MISSING"]
+            self.assertEqual(len(missing), 1, [problem.code for problem in result.problems])
+            self.assertEqual(missing[0].details["capability"], "multiplayer_version_metadata")
+
+    def test_build_runtime_manifest_for_modlist_emits_plan_load_order_mods(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir, load_order=20),
+                self.active_mod_entry_for_package(beta_dir, load_order=10),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+            runtime_info = self.runtime_info_for_capabilities(["persistent_storage", "multiplayer_version_metadata"])
+
+            manifest = loader.build_runtime_manifest_for_modlist(profile, profile_dir, plan, runtime_info)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            manifest_mods = manifest["mods"]
+            self.assertEqual([mod["id"] for mod in manifest_mods], ["test.beta", "test.alpha"])
+            self.assertEqual([mod["loadOrder"] for mod in manifest_mods], [0, 1])
+            self.assertTrue(all(isinstance(mod["loadOrder"], int) for mod in manifest_mods))
+
+    def test_write_modlist_launch_artifacts_writes_manifest_active_mods_and_validation_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            self.set_package_runtime_capabilities(alpha_dir, ["persistent_storage"])
+            self.set_package_runtime_capabilities(beta_dir, ["multiplayer_version_metadata"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir, load_order=20),
+                self.active_mod_entry_for_package(beta_dir, load_order=10),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+            runtime_info = self.runtime_info_for_capabilities(["persistent_storage", "multiplayer_version_metadata"])
+            runtime_manifest_path = profile_dir / loader.APP_ID / "runtime-manifest.json"
+
+            result = loader.write_modlist_launch_artifacts(profile, profile_dir, plan, runtime_info, runtime_manifest_path)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            manifest_payload = result[0] if isinstance(result, tuple) else result
+            self.assertEqual([mod["id"] for mod in manifest_payload["mods"]], ["test.beta", "test.alpha"])
+            self.assertEqual([mod["loadOrder"] for mod in manifest_payload["mods"]], [0, 1])
+            written_manifest = json.loads(runtime_manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual([mod["id"] for mod in written_manifest["mods"]], ["test.beta", "test.alpha"])
+            self.assertEqual([mod["loadOrder"] for mod in written_manifest["mods"]], [0, 1])
+
+            active_mods = json.loads((profile_dir / loader.APP_ID / "active-mods.json").read_text(encoding="utf-8"))
+            self.assertEqual([mod["id"] for mod in active_mods["mods"]], ["test.beta", "test.alpha"])
+            self.assertEqual([mod["loadOrder"] for mod in active_mods["mods"]], [0, 1])
+
+            validation_report_path = profile_dir / loader.APP_ID / "validation-report.json"
+            validation_report = json.loads(validation_report_path.read_text(encoding="utf-8"))
+            self.assertTrue(validation_report["launchable"])
+            self.assertEqual(validation_report["issues"], [])
+            self.assertEqual(validation_report["blockingIssues"], [])
+            self.assertEqual(validation_report["nonBlockingIssues"], [])
+            self.assertEqual(self.plan_package_ids(validation_report["loadOrder"]), ["test.beta", "test.alpha"])
 
     def test_package_validate_rejects_missing_or_uninstallable_asset_references(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
