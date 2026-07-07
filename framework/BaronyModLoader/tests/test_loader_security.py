@@ -501,6 +501,16 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         self.assertTrue(profiles_card["profileRows"][0]["selected"])
         self.assertEqual([item["label"] for item in profiles_card["rows"][:2]], ["✓ default", "• challenge"])
         self.assertIn("(selected)", profiles_card["rows"][0]["value"])
+        compact_row_texts = [loader._gui_compact_card_row_text(item) for item in profiles_card["rows"][:3]]
+        self.assertEqual(
+            compact_row_texts,
+            [
+                "✓ ✓ default: 1 active mod (selected)",
+                "• • challenge: 0 active mods",
+                "Selected profile: default",
+            ],
+        )
+        self.assertFalse(compact_row_texts[2].startswith("Not set"))
         self.assertIn("Profiles: ✓ default", profiles_card["summary"])
         self.assertIn("• challenge", profiles_card["summary"])
         copy_context = loader._gui_copy_for_ai_context({"profilePath": "/profiles/default", "profile": profile_state, "profileList": profile_state["profiles"]})

@@ -6927,6 +6927,14 @@ def _gui_selected_mod_detail_panel(selected_mod: dict[str, Any] | None, mods_con
     }
 
 
+def _gui_compact_card_row_text(item: dict[str, Any]) -> str:
+    row_text = f"{_gui_text(item.get('label'))}: {_gui_text(item.get('value'))}"
+    icon = item.get("icon")
+    if icon is None or (isinstance(icon, str) and not icon.strip()):
+        return row_text
+    return f"{_gui_text(icon)} {row_text}".strip()
+
+
 def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     def concept_actions(concept: dict[str, Any]) -> list[dict[str, Any]]:
         actions: list[dict[str, Any]] = []
@@ -8126,7 +8134,7 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
                     ttk.Label(frame, text=row_text, wraplength=220, justify="left").grid(row=row_cursor, column=1, sticky="ew", pady=1)
                 else:
                     item["logoRendered"] = False
-                    ttk.Label(frame, text=f"{_gui_text(item.get('icon') or '')} {row_text}".strip(), wraplength=250, justify="left").grid(
+                    ttk.Label(frame, text=_gui_compact_card_row_text(item), wraplength=250, justify="left").grid(
                         row=row_cursor, column=0, columnspan=2, sticky="ew", pady=1
                     )
                 row_cursor += 1
