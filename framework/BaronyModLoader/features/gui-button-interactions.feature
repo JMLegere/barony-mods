@@ -19,13 +19,23 @@ Feature: Profile-first GUI button interactions
     When I run the BaronyModLoader GUI with Copy for AI smoke button click
     Then the Copy for AI smoke invoked the Tk button without launching Barony
     And the Copy for AI smoke report exposes non-empty copied AI issue context metadata
-    And the Copy for AI smoke report proves backend clipboard persistence when available
+    And the Copy for AI smoke report proves verified backend clipboard readback when available
     And copied AI issue context includes issue-fix essentials and rejects useless payloads
 
   @gui-button-interactions @copy-for-ai @wayland-discovery @safe-specific
   Scenario: Copy for AI smoke click writes text/plain when WAYLAND_DISPLAY is absent but a Wayland socket is discoverable
     When I run the BaronyModLoader GUI with Copy for AI smoke button click and no WAYLAND_DISPLAY
-    Then the no-WAYLAND_DISPLAY Copy for AI smoke either gracefully skips on unavailable Wayland probing or records text/plain system clipboard success
+    Then the no-WAYLAND_DISPLAY Copy for AI smoke either gracefully skips on unavailable Wayland probing or records verified text/plain system clipboard readback
+
+  @gui-button-interactions @copy-for-ai @wayland-discovery @stale-wayland-display @safe-specific
+  Scenario: Copy for AI smoke click falls back from stale WAYLAND_DISPLAY to a discovered Wayland socket
+    When I run the BaronyModLoader GUI with Copy for AI smoke button click and stale WAYLAND_DISPLAY
+    Then the stale-WAYLAND_DISPLAY Copy for AI smoke either gracefully skips on unavailable Wayland probing or records verified text/plain system clipboard readback from a discovered fallback
+
+  @gui-button-interactions @copy-for-ai @clipboard-fallback @safe-specific
+  Scenario: Copy for AI smoke click writes a fallback file instead of claiming plain success when system readback fails
+    When I run the BaronyModLoader GUI with Copy for AI smoke button click and system clipboard tools unavailable
+    Then the Copy for AI smoke writes a fallback copy file and does not claim plain clipboard success
 
   @gui-button-interactions @environment @mocked-launch
   Scenario: Environment launch buttons start mocked BML and vanilla launches through Tk buttons

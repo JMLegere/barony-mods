@@ -3688,6 +3688,14 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
         display_source: str | None = None,
         xdg_runtime_dir: str | None = None,
         tool_found: bool | None = None,
+        verified_readback: bool = False,
+        readback_status: str | None = None,
+        readback_matches: bool | None = None,
+        readback_mime_type: str | None = None,
+        readback_tool_found: bool | None = None,
+        readback_size: int | None = None,
+        writer_exit_code: int | None = None,
+        readback_exit_code: int | None = None,
     ) -> dict[str, Any]:
         record: dict[str, Any] = {
             "backend": backend,
@@ -3699,6 +3707,11 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
             "status": status,
             "succeeded": succeeded,
             "stderrSnippet": stderr_snippet(stderr),
+            "verifiedReadback": verified_readback,
+            "readbackVerified": verified_readback,
+            "readbackStatus": readback_status or ("ok" if verified_readback else "not attempted"),
+            "readbackMatches": readback_matches,
+            "readbackMimeType": readback_mime_type or mime_type,
         }
         if display_source is not None:
             record["displaySource"] = display_source
@@ -3706,26 +3719,39 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
             record["xdgRuntimeDir"] = xdg_runtime_dir
         if tool_found is not None:
             record["toolFound"] = tool_found
+        if readback_tool_found is not None:
+            record["readbackToolFound"] = readback_tool_found
+        if readback_size is not None:
+            record["readbackSize"] = readback_size
+        if writer_exit_code is not None:
+            record["writerExitCode"] = writer_exit_code
+        if readback_exit_code is not None:
+            record["readbackExitCode"] = readback_exit_code
         return record
 
-    def wayland_display_candidates() -> tuple[list[dict[str, str]], str | None]:
-        configured_display = os.environ.get("WAYLAND_DISPLAY")
-        configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
-        fallback_runtime = f"/run/user/{getattr(os, 'getuid', lambda: 0)()}"
-        runtime_dir = configured_runtime or fallback_runtime
-        if configured_display:
-            return (
-                [
-                    {
-                        "display": configured_display,
-                        "source": "env:WAYLAND_DISPLAY",
-                        "xdgRuntimeDir": configured_runtime or "",
-                    }
-                ],
-                None,
-            )
+    def add_wayland_candidate(
+        items: list[dict[str, str]],
+        seen: set[tuple[str, str]],
+        *,
+        display: str,
+        source: str,
+        runtime_dir: str,
+    ) -> None:
+        display_name = str(display or "").strip()
+        if not display_name:
+            return
+        key = (display_name, runtime_dir)
+        if key in seen:
+            return
+        seen.add(key)
+        items.append({"display": display_name, "source": source, "xdgRuntimeDir": runtime_dir})
 
-        runtime_path = Path(runtime_dir)
+    def add_discovered_wayland_candidates(
+        items: list[dict[str, str]],
+        seen: set[tuple[str, str]],
+        runtime_path: Path,
+        errors: list[str],
+    ) -> None:
         try:
             discovered = sorted(
                 path
@@ -3733,21 +3759,49 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
                 if not path.name.endswith(".lock") and (path.is_socket() or path.is_file())
             )
         except OSError as exc:
-            return [], f"unable to scan {runtime_path}: {exc}"
+            errors.append(f"unable to scan {runtime_path}: {exc}")
+            return
 
-        return (
-            [
-                {
-                    "display": path.name,
-                    "source": f"discovered:{runtime_path}",
-                    "xdgRuntimeDir": str(runtime_path),
-                }
-                for path in discovered
-            ],
-            None,
-        )
+        for path in discovered:
+            add_wayland_candidate(
+                items,
+                seen,
+                display=path.name,
+                source=f"discovered:{runtime_path}",
+                runtime_dir=str(runtime_path),
+            )
+
+    def wayland_display_candidates() -> tuple[list[dict[str, str]], str | None]:
+        configured_display = os.environ.get("WAYLAND_DISPLAY")
+        configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
+        fallback_runtime = f"/run/user/{getattr(os, 'getuid', lambda: 0)()}"
+        items: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        scan_errors: list[str] = []
+
+        if configured_display:
+            add_wayland_candidate(
+                items,
+                seen,
+                display=configured_display,
+                source="env:WAYLAND_DISPLAY",
+                runtime_dir=configured_runtime or fallback_runtime,
+            )
+
+        scan_roots: list[Path] = []
+        if configured_runtime:
+            scan_roots.append(Path(configured_runtime))
+        fallback_path = Path(fallback_runtime)
+        if not any(path == fallback_path for path in scan_roots):
+            scan_roots.append(fallback_path)
+
+        for runtime_path in scan_roots:
+            add_discovered_wayland_candidates(items, seen, runtime_path, scan_errors)
+
+        return items, "; ".join(scan_errors) if scan_errors and not items else None
 
     wl_copy = shutil.which("wl-copy")
+    wl_paste = shutil.which("wl-paste")
     wayland_displays, wayland_scan_error = wayland_display_candidates()
     if wl_copy and wayland_displays:
         for display in wayland_displays:
@@ -3759,11 +3813,14 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
                 {
                     "backend": "wl-copy",
                     "command": [wl_copy, "--type", mime_text_plain],
+                    "readCommand": [wl_paste, "--type", mime_text_plain, "--no-newline"] if wl_paste else None,
+                    "readbackToolFound": bool(wl_paste),
                     "env": env,
                     "envDisplay": display["display"],
                     "displaySource": display["source"],
                     "xdgRuntimeDir": display.get("xdgRuntimeDir") or os.environ.get("XDG_RUNTIME_DIR") or "",
                     "mimeType": mime_text_plain,
+                    "readbackMimeType": mime_text_plain,
                 }
             )
     else:
@@ -3784,6 +3841,8 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
                 display_source="env:WAYLAND_DISPLAY" if os.environ.get("WAYLAND_DISPLAY") else "discovery",
                 xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{getattr(os, 'getuid', lambda: 0)()}",
                 tool_found=bool(wl_copy),
+                readback_tool_found=bool(wl_paste),
+                readback_status="not attempted",
             )
         )
 
@@ -3794,11 +3853,14 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
             {
                 "backend": "xclip",
                 "command": [xclip, "-selection", "clipboard", "-in"],
+                "readCommand": [xclip, "-selection", "clipboard", "-out", "-target", mime_text_plain],
+                "readbackToolFound": True,
                 "env": base_env,
                 "envDisplay": x11_display,
                 "displaySource": "env:DISPLAY",
                 "xdgRuntimeDir": os.environ.get("XDG_RUNTIME_DIR") or "",
                 "mimeType": mime_text_plain,
+                "readbackMimeType": mime_text_plain,
             }
         )
     else:
@@ -3814,6 +3876,8 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
                 display_source="env:DISPLAY",
                 xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR") or "",
                 tool_found=bool(xclip),
+                readback_tool_found=bool(xclip),
+                readback_status="not attempted",
             )
         )
 
@@ -3823,11 +3887,14 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
             {
                 "backend": "xsel",
                 "command": [xsel, "--clipboard", "--input"],
+                "readCommand": [xsel, "--clipboard", "--output"],
+                "readbackToolFound": True,
                 "env": base_env,
                 "envDisplay": x11_display,
                 "displaySource": "env:DISPLAY",
                 "xdgRuntimeDir": os.environ.get("XDG_RUNTIME_DIR") or "",
                 "mimeType": mime_text_plain,
+                "readbackMimeType": mime_text_plain,
             }
         )
     else:
@@ -3843,6 +3910,8 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
                 display_source="env:DISPLAY",
                 xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR") or "",
                 tool_found=bool(xsel),
+                readback_tool_found=bool(xsel),
+                readback_status="not attempted",
             )
         )
 
@@ -3859,6 +3928,8 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
             display_source=str(candidate.get("displaySource") or ""),
             xdg_runtime_dir=str(candidate.get("xdgRuntimeDir") or ""),
             tool_found=True,
+            readback_tool_found=bool(candidate.get("readbackToolFound")),
+            readback_status="pending",
         )
         stderr_output: str | bytes | None = None
         try:
@@ -3887,50 +3958,138 @@ def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, 
                 )
                 stderr_output = result.stderr or result.stdout
         except subprocess.TimeoutExpired as exc:
-            record.update({"status": "timeout", "succeeded": False, "stderrSnippet": stderr_snippet(exc.stderr or exc.output)})
+            record.update({"status": "timeout", "succeeded": False, "stderrSnippet": stderr_snippet(exc.stderr or exc.output), "readbackStatus": "not attempted"})
         except OSError as exc:
-            record.update({"status": f"error: {exc}", "succeeded": False, "stderrSnippet": stderr_snippet(str(exc))})
+            record.update({"status": f"error: {exc}", "succeeded": False, "stderrSnippet": stderr_snippet(str(exc)), "readbackStatus": "not attempted"})
         else:
             stderr = stderr_output
+            record["writerExitCode"] = result.returncode
             if result.returncode == 0:
-                record.update({"status": "ok", "succeeded": True, "stderrSnippet": stderr_snippet(stderr)})
-                backends.append(record)
-                return {
-                    "status": f"ok: {name}",
-                    "used": name,
-                    "succeeded": True,
-                    "available": True,
-                    "attempted": True,
-                    "systemBackendAvailable": True,
-                    "systemBackendAttempted": True,
-                    "envDisplay": record.get("envDisplay"),
-                    "mimeType": record.get("mimeType"),
-                    "clipboardBackends": backends,
-                }
-            stderr_text = stderr_snippet(stderr)
-            record.update(
-                {
-                    "status": f"error: exit {result.returncode}" + (f": {stderr_text}" if stderr_text else ""),
-                    "succeeded": False,
-                    "stderrSnippet": stderr_text,
-                }
-            )
+                record.update({"writerSucceeded": True, "status": "writer ok; readback pending", "stderrSnippet": stderr_snippet(stderr)})
+                read_command = candidate.get("readCommand")
+                if not read_command:
+                    record.update(
+                        {
+                            "status": "readback unavailable: matching paste tool not found",
+                            "succeeded": False,
+                            "verifiedReadback": False,
+                            "readbackVerified": False,
+                            "readbackStatus": "unavailable: paste tool not found",
+                            "readbackMatches": None,
+                            "readbackToolFound": False,
+                        }
+                    )
+                else:
+                    try:
+                        read_result = subprocess.run(
+                            read_command,
+                            text=True,
+                            timeout=timeout,
+                            capture_output=True,
+                            env=candidate["env"],
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        record.update(
+                            {
+                                "status": "readback timeout",
+                                "succeeded": False,
+                                "verifiedReadback": False,
+                                "readbackVerified": False,
+                                "readbackStatus": "timeout",
+                                "readbackMatches": False,
+                                "stderrSnippet": stderr_snippet(exc.stderr or exc.output or stderr),
+                            }
+                        )
+                    except OSError as exc:
+                        record.update(
+                            {
+                                "status": f"readback error: {exc}",
+                                "succeeded": False,
+                                "verifiedReadback": False,
+                                "readbackVerified": False,
+                                "readbackStatus": f"error: {exc}",
+                                "readbackMatches": False,
+                                "stderrSnippet": stderr_snippet(str(exc)),
+                            }
+                        )
+                    else:
+                        readback_text = read_result.stdout or ""
+                        readback_stderr = read_result.stderr or stderr
+                        readback_matches = read_result.returncode == 0 and readback_text == text
+                        readback_status = "ok" if readback_matches else f"error: exit {read_result.returncode}"
+                        if read_result.returncode == 0 and not readback_matches:
+                            readback_status = f"mismatch: expected {len(text)} chars, got {len(readback_text)} chars"
+                        record.update(
+                            {
+                                "readbackExitCode": read_result.returncode,
+                                "readbackSize": len(readback_text),
+                                "readbackStatus": readback_status,
+                                "readbackMatches": readback_matches,
+                                "readbackMimeType": str(candidate.get("readbackMimeType") or candidate.get("mimeType") or ""),
+                                "verifiedReadback": readback_matches,
+                                "readbackVerified": readback_matches,
+                                "succeeded": readback_matches,
+                                "status": "ok" if readback_matches else f"readback {readback_status}",
+                                "stderrSnippet": stderr_snippet(readback_stderr),
+                            }
+                        )
+            else:
+                stderr_text = stderr_snippet(stderr)
+                record.update(
+                    {
+                        "writerSucceeded": False,
+                        "status": f"error: exit {result.returncode}" + (f": {stderr_text}" if stderr_text else ""),
+                        "succeeded": False,
+                        "stderrSnippet": stderr_text,
+                        "readbackStatus": "not attempted",
+                    }
+                )
         backends.append(record)
 
     attempted = any(bool(backend.get("attempted")) for backend in backends)
     available = any(bool(backend.get("available")) for backend in backends)
+    verified_backend = next((backend for backend in backends if backend.get("verifiedReadback")), None)
+    if verified_backend is not None:
+        used = str(verified_backend.get("backend") or verified_backend.get("name") or "system")
+        return {
+            "status": f"ok: {used}",
+            "used": used,
+            "succeeded": True,
+            "verifiedReadback": True,
+            "readbackVerified": True,
+            "readbackBackend": used,
+            "readbackStatus": verified_backend.get("readbackStatus"),
+            "available": True,
+            "attempted": attempted,
+            "systemBackendAvailable": True,
+            "systemBackendAttempted": attempted,
+            "systemBackendVerified": True,
+            "envDisplay": verified_backend.get("envDisplay"),
+            "mimeType": verified_backend.get("mimeType"),
+            "clipboardBackends": backends,
+        }
+
     status = next(
         (str(backend.get("status")) for backend in reversed(backends) if backend.get("attempted")),
         "unavailable: no system clipboard backend available",
+    )
+    readback_status = next(
+        (str(backend.get("readbackStatus")) for backend in reversed(backends) if backend.get("attempted") and backend.get("readbackStatus")),
+        "not attempted",
     )
     return {
         "status": status,
         "used": None,
         "succeeded": False,
+        "verifiedReadback": False,
+        "readbackVerified": False,
+        "readbackBackend": None,
+        "readbackStatus": readback_status,
         "available": available,
         "attempted": attempted,
         "systemBackendAvailable": available,
         "systemBackendAttempted": attempted,
+        "systemBackendVerified": False,
         "envDisplay": None,
         "mimeType": None,
         "clipboardBackends": backends,
@@ -6450,10 +6609,26 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
 
         system_clipboard = _gui_system_clipboard_copy(copy_text)
         system_clipboard_status = system_clipboard.get("status") or "unavailable"
-        system_succeeded = bool(system_clipboard.get("succeeded"))
+        system_verified = bool(system_clipboard.get("verifiedReadback") or system_clipboard.get("readbackVerified") or system_clipboard.get("succeeded"))
+        system_succeeded = system_verified
         system_available = bool(system_clipboard.get("systemBackendAvailable") or system_clipboard.get("available"))
         system_attempted = bool(system_clipboard.get("systemBackendAttempted") or system_clipboard.get("attempted"))
         system_used = system_clipboard.get("used")
+        fallback_copy_path: str | None = None
+        fallback_copy_written = False
+        fallback_copy_status: str | None = None
+        linux_system_unverified = sys.platform.startswith("linux") and not system_verified
+        if linux_system_unverified:
+            try:
+                fallback_dir = _gui_data_home() / APP_ID / "copy-for-ai"
+                fallback_dir.mkdir(parents=True, exist_ok=True)
+                fallback_path = fallback_dir / f"copy-for-ai-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.txt"
+                fallback_path.write_text(copy_text, encoding="utf-8")
+                fallback_copy_path = str(fallback_path)
+                fallback_copy_written = True
+                fallback_copy_status = "ok"
+            except Exception as exc:
+                fallback_copy_status = f"error: {exc}"
         clipboard_backends = [
             {
                 "backend": "tk",
@@ -6465,21 +6640,32 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
                 "status": tk_clipboard_status,
                 "succeeded": tk_succeeded,
                 "stderrSnippet": "",
+                "verifiedReadback": False,
+                "readbackVerified": False,
+                "readbackStatus": "not verified",
+                "readbackMatches": None,
             },
             *system_clipboard.get("clipboardBackends", []),
         ]
-        linux_clipboard_requires_system = sys.platform.startswith("linux") and (system_available or system_attempted)
         if system_succeeded:
             clipboard_status = f"ok: system clipboard ({system_used or 'system'})"
             visible_summary = "Copied AI issue context"
             log_summary = visible_summary
-        elif linux_clipboard_requires_system:
-            if tk_succeeded:
-                clipboard_status = f"partial: tk ok; system={system_clipboard_status}"
-                visible_summary = "Copy AI issue context partial: system clipboard failed"
+        elif linux_system_unverified:
+            if fallback_copy_written and fallback_copy_path:
+                if tk_succeeded:
+                    clipboard_status = f"partial: tk ok; system={system_clipboard_status}; fallback={fallback_copy_path}"
+                    visible_summary = f"Copy AI issue context partial: system clipboard failed; fallback file: {fallback_copy_path}"
+                else:
+                    clipboard_status = f"partial: fallback file written; tk={tk_clipboard_status}; system={system_clipboard_status}"
+                    visible_summary = f"Copy AI issue context saved to fallback file: {fallback_copy_path}"
             else:
-                clipboard_status = f"error: tk={tk_clipboard_status}; system={system_clipboard_status}"
-                visible_summary = "Copy AI issue context failed"
+                if tk_succeeded:
+                    clipboard_status = f"partial: tk ok; system={system_clipboard_status}; fallback={fallback_copy_status or 'not written'}"
+                    visible_summary = f"Copy AI issue context partial: system clipboard failed; fallback file failed ({fallback_copy_status or 'not written'})"
+                else:
+                    clipboard_status = f"error: tk={tk_clipboard_status}; system={system_clipboard_status}; fallback={fallback_copy_status or 'not written'}"
+                    visible_summary = f"Copy AI issue context failed; fallback file failed ({fallback_copy_status or 'not written'})"
             log_summary = f"{visible_summary}: {system_clipboard_status}"
         elif tk_succeeded:
             clipboard_status = f"ok: tk fallback; system={system_clipboard_status}"
@@ -6502,6 +6688,11 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             systemClipboardDetails=system_clipboard,
             systemClipboardAvailable=system_available,
             systemClipboardAttempted=system_attempted,
+            systemClipboardVerified=system_verified,
+            fallbackCopyFile=fallback_copy_path,
+            fallbackCopyPath=fallback_copy_path,
+            fallbackCopyWritten=fallback_copy_written,
+            fallbackCopyStatus=fallback_copy_status,
             clipboardBackends=clipboard_backends,
             visibleSummary=visible_summary,
         )
@@ -6514,11 +6705,17 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
         state_ref["value"]["copyForAiText"] = copy_text
         state_ref["value"]["lastCopyForAi"] = {
             "status": clipboard_status,
+            "visibleSummary": visible_summary,
             "tkClipboardStatus": tk_clipboard_status,
             "systemClipboardStatus": system_clipboard_status,
             "systemClipboardDetails": system_clipboard,
             "systemClipboardAvailable": system_available,
             "systemClipboardAttempted": system_attempted,
+            "systemClipboardVerified": system_verified,
+            "fallbackCopyFile": fallback_copy_path,
+            "fallbackCopyPath": fallback_copy_path,
+            "fallbackCopyWritten": fallback_copy_written,
+            "fallbackCopyStatus": fallback_copy_status,
             "clipboardBackends": clipboard_backends,
             "charCount": ctx.get("charCount"),
             "byteCount": ctx.get("byteCount"),
