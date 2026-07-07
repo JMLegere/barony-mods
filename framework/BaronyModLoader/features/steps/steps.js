@@ -20,6 +20,7 @@ const STASH_PKG = path.join(REPO_ROOT, "mods/stash");
 const ELIXIRS_PKG = path.join(REPO_ROOT, "mods/runebound-elixirs");
 const PKG_SCHEMA = path.join(REPO_ROOT, "framework/BaronyModLoader/schema/package.schema.json");
 const RUNTIME_SCHEMA = path.join(REPO_ROOT, "framework/BaronyModLoader/schema/runtime-manifest.schema.json");
+const DESKTOP_FILE = path.join(REPO_ROOT, "framework/BaronyModLoader/share/applications/barony-modloader.desktop");
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -499,6 +500,41 @@ Then("entries exist for: workshop thumbnail, library grid icon variants", functi
   const out = this.scriptOutput || "";
   if (out.includes("STORE_MISSING")) throw new Error(`Store icons missing:\n${out}`);
   if (!out.includes("STORE_OK")) throw new Error(`Unexpected output:\n${out}`);
+});
+
+When("I inspect the BaronyModLoader desktop launcher metadata", function () {
+  if (!fs.existsSync(DESKTOP_FILE)) {
+    throw new Error(`Desktop launcher file is missing: ${DESKTOP_FILE}`);
+  }
+  const raw = fs.readFileSync(DESKTOP_FILE, "utf-8");
+  const entries = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^([A-Za-z][A-Za-z0-9-]*)=(.*)$/.exec(line);
+    if (match) entries[match[1]] = match[2].trim();
+  }
+  this.desktopLauncherPath = DESKTOP_FILE;
+  this.desktopLauncherRaw = raw;
+  this.desktopLauncherEntries = entries;
+});
+
+Then("the desktop launcher Icon entry points at a concrete generated BML PNG", function () {
+  const entries = this.desktopLauncherEntries || {};
+  const icon = entries.Icon || "";
+  if (!icon) {
+    throw new Error(`Desktop launcher has no Icon= entry:\n${this.desktopLauncherRaw || ""}`);
+  }
+  if (!path.isAbsolute(icon) || !/\.png$/i.test(icon)) {
+    throw new Error(
+      `Desktop launcher Icon= must be an absolute PNG path, not an icon-theme name or relative value.\n` +
+      `Icon=${icon}\nDesktop file: ${this.desktopLauncherPath}`
+    );
+  }
+  if (!/barony-modloader(?:-bml)?\.png$/i.test(icon)) {
+    throw new Error(`Desktop launcher Icon= must point at the generated BML PNG, got: ${icon}`);
+  }
+  if (!fs.existsSync(icon)) {
+    throw new Error(`Desktop launcher Icon= points at a missing PNG: ${icon}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

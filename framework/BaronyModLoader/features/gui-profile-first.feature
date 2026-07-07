@@ -32,6 +32,7 @@ Feature: Profile-first GUI Mods list
     Then the smoke report exposes rendered entity iconography for every major entity
     And Steam entity iconography keeps logo evidence or clear fallback text
     And renderedEntityIcons pairs every icon with accessible text labels
+    And the top header shows the loaded BML icon beside the BaronyModLoader title
 
   @gui-profile-first @provenance-sidebar @sections
   Scenario: Mods are sectioned by provenance
@@ -108,6 +109,8 @@ Feature: Profile-first GUI Mods list
     And the Environment smoke report proves the Steam logo is rendered
     And Environment summary rows pair Platform, OS, and Game version values with logo or icon metadata
     And Environment compact status actions expose Launch BML Barony and Launch Vanilla Barony
+    And Environment launch actions include generated BML and vanilla Barony icon paths
+    And the Game version row uses compact vanilla Barony icon metadata instead of a full wordmark
     And the smoke report includes full Environment launch action labels and Workshop warning text
     And hidden smoke window metadata proves no widget was auto-focused
     And important labels, buttons, and warnings expose no-clipping metadata

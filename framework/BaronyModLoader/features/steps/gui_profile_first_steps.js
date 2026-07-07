@@ -2209,6 +2209,133 @@ function platformSteamLogoEvidence(world) {
   };
 }
 
+function concreteImagePathEntries(value, keyPattern = /(iconPath|imagePath|logoPath|assetPath|sourcePath|path|icon|image|logo|asset|source)$/i) {
+  return valuesForKey(value, keyPattern)
+    .filter((entry) => typeof entry.value === "string" && /\.(png|jpg|jpeg|gif)$/i.test(entry.value))
+    .filter((entry) => !pathHasDotTmp(entry.value));
+}
+
+function imagePathExists(candidate) {
+  const pathText = String(candidate || "");
+  const resolved = path.isAbsolute(pathText) ? pathText : path.resolve(REPO_ROOT, pathText);
+  return fs.existsSync(resolved);
+}
+
+function bmlIconPathEntries(value) {
+  return concreteImagePathEntries(value)
+    .filter((entry) => /barony-modloader(?:-bml)?\.png$/i.test(String(entry.value)))
+    .filter((entry) => imagePathExists(entry.value));
+}
+
+function compactVanillaBaronyIconPathEntries(value) {
+  return concreteImagePathEntries(value)
+    .filter((entry) => /\.png$/i.test(String(entry.value)))
+    .filter((entry) => /\bbarony\b/i.test(String(entry.value)))
+    .filter((entry) => !/barony-modloader/i.test(String(entry.value)))
+    .filter((entry) => !/(?:^|[\\/])(logo|wordmark)\.(?:png|jpg|jpeg|gif)$/i.test(String(entry.value)))
+    .filter((entry) => !/wordmark|librarycache/i.test(String(entry.value)))
+    .filter((entry) => imagePathExists(entry.value));
+}
+
+function fullWordmarkPathEntries(value) {
+  return concreteImagePathEntries(value)
+    .filter((entry) => /wordmark|librarycache|(?:^|[\\/])logo\.(?:png|jpg|jpeg|gif)$/i.test(String(entry.value)));
+}
+
+function iconRenderedTrue(value) {
+  return valuesForKey(value, /(iconLoaded|iconRendered|iconVisible|imageLoaded|imageRendered|imageVisible|logoLoaded|logoRendered|logoVisible|loaded|rendered|visible|available)$/i)
+    .some((entry) => entry.value === true);
+}
+
+function directActionLabelMatches(node, label) {
+  const pattern = new RegExp(escapeRegex(label), "i");
+  return ["label", "title", "name", "text", "displayLabel", "visibleLabel", "ariaLabel"]
+    .some((key) => typeof node[key] === "string" && pattern.test(node[key]));
+}
+
+function actionIconMetadataEntries(container, actionId, label) {
+  return allObjects(container).filter((entry) => actionIdForEntry(entry.node) === actionId || directActionLabelMatches(entry.node, label));
+}
+
+function requireLaunchActionIconMetadata(world, container, actionId, label, pathMatcher, description) {
+  const candidates = actionIconMetadataEntries(container, actionId, label);
+  const matchingPaths = candidates.flatMap((entry) => pathMatcher(entry.node).map((pathEntry) => ({ action: entry, pathEntry })));
+  if (!matchingPaths.length) {
+    contractGap(
+      world,
+      `${label} lacks ${description} icon path metadata`,
+      `ACTION CANDIDATES:\n${candidates.map((entry) => `${entry.pathParts.join(".")}: ${objectText(entry.node)}`).join("\n---\n") || "<none>"}`
+    );
+  }
+  return matchingPaths;
+}
+
+function directHeaderIconEvidence(report) {
+  const pathEntries = valuesForKey(report, /^(headerIconPath|titleIconPath|appHeaderIconPath|headerBmlIconPath|titleBmlIconPath)$/i)
+    .filter((entry) => bmlIconPathEntries({ iconPath: entry.value }).length > 0);
+  const loadedEntries = valuesForKey(report, /^(headerIconLoaded|headerIconRendered|headerIconVisible|titleIconLoaded|titleIconRendered|titleIconVisible|appHeaderIconLoaded|appHeaderIconRendered)$/i)
+    .filter((entry) => entry.value === true);
+  return pathEntries.length > 0 && loadedEntries.length > 0 && /BaronyModLoader/i.test(String(report.title || report.windowTitle || "BaronyModLoader"));
+}
+
+function headerIconCandidates(report) {
+  return allObjects(report).filter((entry) => {
+    const pathText = entry.pathParts.join(".");
+    const text = objectText(entry.node);
+    return /(header|title|masthead|appHeader|appTitle)/i.test(pathText) || (/BaronyModLoader/i.test(text) && /(icon|logo|image)/i.test(text));
+  });
+}
+
+function requireHeaderBmlIcon(world) {
+  const report = world.profileFirstGuiReport || {};
+  if (directHeaderIconEvidence(report)) return;
+  const candidates = headerIconCandidates(report);
+  const matching = candidates.filter((entry) => /BaronyModLoader/i.test(objectText(entry.node)) && bmlIconPathEntries(entry.node).length > 0 && iconRenderedTrue(entry.node));
+  if (!matching.length) {
+    contractGap(
+      world,
+      "top header does not expose a loaded BML icon beside the BaronyModLoader title",
+      `HEADER CANDIDATES:\n${candidates.map((entry) => `${entry.pathParts.join(".")}: ${objectText(entry.node)}`).join("\n---\n") || "<none>"}\n` +
+      `appIconLoaded=${JSON.stringify(report.appIconLoaded)} appIconPath=${JSON.stringify(report.appIconPath)}`
+    );
+  }
+}
+
+function requireEnvironmentLaunchIconMetadata(world) {
+  const environment = requireEnvironmentNode(world);
+  requireLaunchActionIconMetadata(world, environment, "launch-bml", "Launch BML Barony", bmlIconPathEntries, "generated BML");
+  requireLaunchActionIconMetadata(world, environment, "launch-vanilla", "Launch Vanilla Barony", compactVanillaBaronyIconPathEntries, "vanilla Barony compact");
+}
+
+function requireCompactGameVersionIcon(world) {
+  const rows = environmentSummaryRows(world);
+  const row = gameVersionSummaryRow(rows);
+  if (!row) {
+    contractGap(world, "Environment summary rows/items are missing Game version row");
+  }
+  const { entries, byType } = indexedEntityIconography(world);
+  const gameVersionIconEntries = (byType.get("game-version") || []).map((entry) => entry.node);
+  const compactPaths = [
+    ...compactVanillaBaronyIconPathEntries(row),
+    ...gameVersionIconEntries.flatMap((entry) => compactVanillaBaronyIconPathEntries(entry)),
+  ];
+  const wordmarkPaths = [
+    ...fullWordmarkPathEntries(row),
+    ...gameVersionIconEntries.flatMap((entry) => fullWordmarkPathEntries(entry)),
+  ];
+  if (!compactPaths.length || wordmarkPaths.length) {
+    contractGap(
+      world,
+      "Game version row must use compact vanilla/Barony B icon metadata, not a full wordmark/game logo path",
+      `GAME VERSION ROW:\n${rowText(row) || "<none>"}\n` +
+      `COMPACT PATHS:\n${compactPaths.map((entry) => `${entry.pathParts.join(".")}=${entry.value}`).join("\n") || "<none>"}\n` +
+      `WORDMARK PATHS:\n${wordmarkPaths.map((entry) => `${entry.pathParts.join(".")}=${entry.value}`).join("\n") || "<none>"}\n` +
+      `GAME VERSION ENTITY ICONS:\n${(byType.get("game-version") || []).map(entityEntryDebug).join("\n") || "<none>"}\n` +
+      `ALL ENTITY ICONS:\n${entries.map(entityEntryDebug).join("\n") || "<none>"}`
+    );
+  }
+}
+
 function summaryRowExplicitLabel(row) {
   if (!row || typeof row !== "object") return "";
   return ["label", "title", "name", "displayLabel", "visibleLabel", "fieldLabel", "renderedLabel"]
@@ -3424,6 +3551,14 @@ Then("Environment summary rows pair Platform, OS, and Game version values with l
   assertEnvironmentSummaryIconPairs(this);
 });
 
+Then("Environment launch actions include generated BML and vanilla Barony icon paths", function () {
+  requireEnvironmentLaunchIconMetadata(this);
+});
+
+Then("the Game version row uses compact vanilla Barony icon metadata instead of a full wordmark", function () {
+  requireCompactGameVersionIcon(this);
+});
+
 Then("the smoke report exposes rendered entity iconography for every major entity", function () {
   assertAllEntityIconography(this);
 });
@@ -3434,6 +3569,10 @@ Then("Steam entity iconography keeps logo evidence or clear fallback text", func
 
 Then("renderedEntityIcons pairs every icon with accessible text labels", function () {
   assertRenderedEntityIconsPairTextLabels(this);
+});
+
+Then("the top header shows the loaded BML icon beside the BaronyModLoader title", function () {
+  requireHeaderBmlIcon(this);
 });
 
 Then("Environment summary rows render compact badge-like labels with text", function () {

@@ -3428,6 +3428,14 @@ def _gui_environment_row_entity_type(row_key: Any) -> str:
     return GUI_ENVIRONMENT_ROW_ENTITY_TYPES.get(str(row_key or ""), "environment")
 
 
+def _gui_action_icon_metadata(action_id: str) -> dict[str, Any]:
+    if action_id == "launch-bml":
+        return {"iconPath": _gui_bml_app_icon_path(), "iconKind": "bml-app", "iconSource": "repo-hicolor"}
+    if action_id == "launch-vanilla":
+        return {"iconPath": _gui_vanilla_barony_icon_path(), "iconKind": "barony-vanilla", "iconSource": "repo-hicolor"}
+    return {}
+
+
 def _gui_action(action_id: str, status: Any = "available", *, enabled: bool = True, **metadata: Any) -> dict[str, Any]:
     action = {
         "id": action_id,
@@ -3436,6 +3444,9 @@ def _gui_action(action_id: str, status: Any = "available", *, enabled: bool = Tr
         "enabled": bool(enabled),
         "disabled": not enabled,
     }
+    for key, value in _gui_action_icon_metadata(action_id).items():
+        if value is not None:
+            action[key] = value
     for key, value in metadata.items():
         if value is not None:
             action[key] = value
@@ -4118,6 +4129,14 @@ def _gui_button_action_snapshot(gui_state: dict[str, Any]) -> list[dict[str, Any
                 "reason",
                 "contextual",
                 "placement",
+                "iconPath",
+                "iconKind",
+                "iconSource",
+                "iconLoaded",
+                "iconRendered",
+                "iconWidth",
+                "iconHeight",
+                "iconError",
             ):
                 if key in action:
                     item[key] = action.get(key)
@@ -4637,20 +4656,25 @@ def _gui_os_icon_path() -> str | None:
     return None
 
 
-def _gui_barony_game_logo_path() -> str | None:
-    candidates = [
-        Path.home() / ".local/share/Steam/appcache/librarycache" / STEAM_BARONY_APP_ID / "logo.png",
-        Path.home() / ".local/share/Steam/appcache/librarycache" / STEAM_BARONY_APP_ID / "icon.jpg",
-    ]
-    for candidate in candidates:
+def _gui_bml_app_icon_path() -> str | None:
+    for candidate in (
+        APP_ROOT / "share" / "icons" / "hicolor" / "256x256" / "apps" / "barony-modloader.png",
+        APP_ROOT / "share" / "icons" / "hicolor" / "256x256" / "apps" / "barony-modloader-bml.png",
+        APP_ROOT / "share" / "icons" / "hicolor" / "1024x1024" / "apps" / "barony-modloader.png",
+        APP_ROOT / "share" / "icons" / "hicolor" / "1024x1024" / "apps" / "barony-modloader-bml.png",
+    ):
         if candidate.is_file():
             return str(candidate)
-    artwork_root = Path.home() / ".local/share/Steam/appcache/librarycache" / STEAM_BARONY_APP_ID
-    if artwork_root.exists():
-        for pattern in ("**/logo.png", "**/*logo*.png", "**/*icon*.png", "*.png", "*.jpg"):
-            matches = sorted(artwork_root.glob(pattern))
-            if matches:
-                return str(matches[0])
+    return None
+
+
+def _gui_vanilla_barony_icon_path() -> str | None:
+    for candidate in (
+        APP_ROOT / "share" / "icons" / "hicolor" / "256x256" / "apps" / "barony-vanilla.png",
+        APP_ROOT / "share" / "icons" / "hicolor" / "1024x1024" / "apps" / "barony-vanilla.png",
+    ):
+        if candidate.is_file():
+            return str(candidate)
     return None
 
 
@@ -4886,7 +4910,7 @@ def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, An
     os_value = " ".join(part for part in os_parts if part).strip() or "unknown"
     steam_icon_path = _gui_steam_icon_path()
     os_logo_path = _gui_os_icon_path()
-    game_logo_path = _gui_barony_game_logo_path()
+    game_logo_path = _gui_vanilla_barony_icon_path()
     version_value = "Unknown"
     version_source = "unknown"
     for key in ("gameVersionString", "executableBuildId", "LastBuildID", "lastBuildId", "buildId"):
@@ -4946,6 +4970,9 @@ def _gui_environment_summary_items(install: dict[str, Any]) -> list[dict[str, An
             "source": version_source,
             "gameLogoPath": game_logo_path,
             "gameLogoAvailable": game_logo_path is not None,
+            "vanillaIconPath": game_logo_path,
+            "vanillaIconAvailable": game_logo_path is not None,
+            "logoPath": game_logo_path,
         },
     ]
     return rows
@@ -6071,7 +6098,7 @@ def build_profile_first_gui_state(
         requested_package_summary = _gui_resolve_package_summary(package_catalog, requested_selector)
         if requested_package_summary is not None:
             package_catalog, selected_package, selected_summary = _gui_scan_packages(_gui_selected_package_path(requested_package_summary))
-    actions = [{"id": action_id, "label": label, "status": "available"} for action_id, label in GUI_ACTIONS]
+    actions = [_gui_action(action_id, "available") for action_id, _label in GUI_ACTIONS]
     active_result: dict[str, Any] | None = None
     launch_result: dict[str, Any] | None = None
     active_mods = profile_authoritative_mods(profile, profile_dir) if profile is not None else []
@@ -6333,6 +6360,8 @@ def build_profile_first_gui_state(
     visible_activity = _gui_visible_activity_log(action_log)
     activity_details = _gui_activity_log_details(action_log)
     diagnostic_details = diagnostics.get("diagnosticDetails") or diagnostics.get("details") or diagnostics
+    app_icon_path = _gui_bml_app_icon_path()
+    vanilla_icon_path = _gui_vanilla_barony_icon_path()
     steam_logo_path = next((item.get("steamLogoPath") for item in environment_summary_items if isinstance(item, dict) and item.get("id") == "platform"), None)
     entity_iconography = _gui_entity_iconography_records(
         steam_logo_path=steam_logo_path,
@@ -6384,6 +6413,11 @@ def build_profile_first_gui_state(
         "platformStorefront": "Steam",
         "steamLogoPath": steam_logo_path,
         "steamLogoRendered": False,
+        "appIconPath": app_icon_path,
+        "appIconLoaded": bool(app_icon_path),
+        "headerIconPath": app_icon_path,
+        "headerIconLoaded": False,
+        "vanillaBaronyIconPath": vanilla_icon_path,
         "actions": actions,
         "actionLog": action_log,
         "visibleActivityLog": visible_activity,
@@ -6459,14 +6493,7 @@ def _gui_bulleted_warning_text(warnings: Iterable[Any], *, width: int = 58) -> s
 
 
 def _gui_app_icon_path() -> str | None:
-    for candidate in (
-        APP_ROOT / "share" / "icons" / "hicolor" / "256x256" / "apps" / "barony-modloader.png",
-        APP_ROOT / "share" / "icons" / "hicolor" / "1024x1024" / "apps" / "barony-modloader.png",
-        APP_ROOT / "share" / "icons" / "hicolor" / "256x256" / "apps" / "barony-modloader-bml.png",
-    ):
-        if candidate.is_file():
-            return str(candidate)
-    return None
+    return _gui_bml_app_icon_path()
 
 
 def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[str], Any, dict[str, list[Any]], dict[str, Any]]:
@@ -6575,7 +6602,30 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
     container.columnconfigure(0, weight=1)
     container.rowconfigure(2, weight=1)
 
-    ttk.Label(container, text="BaronyModLoader", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+    title_frame = ttk.Frame(container, style="Dashboard.TFrame")
+    title_frame.grid(row=0, column=0, sticky="w")
+    title_frame.columnconfigure(1, weight=1)
+    header_icon_path = gui_state.get("headerIconPath") or _gui_bml_app_icon_path()
+    if header_icon_path:
+        try:
+            header_icon = tk.PhotoImage(file=str(header_icon_path))
+            max_side = max(int(header_icon.width()), int(header_icon.height()), 1)
+            if max_side > 32:
+                factor = max(1, int((max_side + 31) // 32))
+                header_icon = header_icon.subsample(factor, factor)
+            image_registry.append(header_icon)
+            gui_state["headerIconPath"] = str(header_icon_path)
+            gui_state["headerIconLoaded"] = True
+            gui_state["headerIconWidth"] = int(header_icon.width())
+            gui_state["headerIconHeight"] = int(header_icon.height())
+            ttk.Label(title_frame, image=header_icon, style="Title.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        except tk.TclError as exc:
+            gui_state["headerIconPath"] = str(header_icon_path)
+            gui_state["headerIconLoaded"] = False
+            gui_state["headerIconError"] = str(exc)
+    else:
+        gui_state["headerIconLoaded"] = False
+    ttk.Label(title_frame, text="BaronyModLoader", style="Title.TLabel").grid(row=0, column=1, sticky="w")
     ttk.Label(
         container,
         text="Mods stay on the left for scanning and selection; the selected mod inspector and profile actions sit on the right above compact status cards.",
@@ -6821,13 +6871,35 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
 
     def render_action_button(parent: Any, action: dict[str, Any], *, row: int, column: int, primary: bool = False, columnspan: int = 1) -> None:
         action_id = str(action.get("id") or "action")
-        button = ttk.Button(
-            parent,
-            text=str(action.get("label") or _humanize_enum_label(action_id)),
-            command=lambda item=action_id: rebuild(str(item)),
-            style="Primary.TButton" if primary else "TButton",
-            state="normal" if action.get("enabled", True) else "disabled",
-        )
+        button_options: dict[str, Any] = {
+            "text": str(action.get("label") or _humanize_enum_label(action_id)),
+            "command": lambda item=action_id: rebuild(str(item)),
+            "style": "Primary.TButton" if primary else "TButton",
+            "state": "normal" if action.get("enabled", True) else "disabled",
+        }
+        icon_path = action.get("iconPath")
+        if icon_path:
+            try:
+                icon = tk.PhotoImage(file=str(icon_path))
+                max_side = max(int(icon.width()), int(icon.height()), 1)
+                if max_side > 18:
+                    factor = max(1, int((max_side + 17) // 18))
+                    icon = icon.subsample(factor, factor)
+                image_registry.append(icon)
+                button_options["image"] = icon
+                button_options["compound"] = "left"
+                action["iconLoaded"] = True
+                action["iconRendered"] = True
+                action["iconWidth"] = int(icon.width())
+                action["iconHeight"] = int(icon.height())
+            except tk.TclError as exc:
+                action["iconLoaded"] = False
+                action["iconRendered"] = False
+                action["iconError"] = str(exc)
+        elif "iconLoaded" not in action:
+            action["iconLoaded"] = False
+            action["iconRendered"] = False
+        button = ttk.Button(parent, **button_options)
         button.grid(row=row, column=column, columnspan=columnspan, sticky="ew", padx=3, pady=3)
         button_registry.setdefault(action_id, []).append(button)
 
@@ -7175,6 +7247,12 @@ def _write_gui_smoke_report(
             "appIconPath": gui_state.get("appIconPath"),
             "appIconLoaded": gui_state.get("appIconLoaded"),
             "appIconError": gui_state.get("appIconError"),
+            "headerIconPath": gui_state.get("headerIconPath"),
+            "headerIconLoaded": gui_state.get("headerIconLoaded"),
+            "headerIconWidth": gui_state.get("headerIconWidth"),
+            "headerIconHeight": gui_state.get("headerIconHeight"),
+            "headerIconError": gui_state.get("headerIconError"),
+            "vanillaBaronyIconPath": gui_state.get("vanillaBaronyIconPath"),
             "concepts": gui_state.get("concepts", []),
             "conceptMap": gui_state.get("conceptMap", {}),
             "profilePath": gui_state.get("profilePath"),
@@ -7206,6 +7284,12 @@ def _write_gui_smoke_report(
             "steamLogoPath": gui_state.get("steamLogoPath"),
             "entityIconography": gui_state.get("entityIconography", []),
             "renderedEntityIcons": gui_state.get("renderedEntityIcons", []),
+            "buttonActions": _gui_button_action_snapshot(gui_state),
+            "launchButtonIcons": [
+                item
+                for item in _gui_button_action_snapshot(gui_state)
+                if item.get("id") in {"launch-bml", "launch-vanilla"}
+            ],
             "renderedTextCompleteness": text_completeness,
             "clippingChecks": clipping_checks,
             "redrawEvents": gui_state.get("redrawEvents", []),

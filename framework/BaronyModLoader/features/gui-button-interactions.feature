@@ -42,6 +42,7 @@ Feature: Profile-first GUI button interactions
     When I run the BaronyModLoader GUI with mocked launch button clicks
     Then the mocked launch smoke invoked both GUI launch buttons through Tk
     And mocked launch feedback reports BML and Vanilla process launch metadata without starting Barony
+    And mocked launch button metadata includes generated BML and vanilla Barony icon paths
 
   @gui-button-interactions @profiles
   Scenario: Profiles button creates and selects a stable profile outside .tmp

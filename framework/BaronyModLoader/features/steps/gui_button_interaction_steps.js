@@ -326,6 +326,71 @@ function pathHasDotTmp(candidate) {
   return String(candidate).split(/[\\/]+/).includes(".tmp");
 }
 
+function allObjects(value) {
+  const objects = [];
+  walk(value, (node, pathParts) => {
+    if (node && typeof node === "object" && !Array.isArray(node)) objects.push({ node, pathParts });
+  });
+  return objects;
+}
+
+function imagePathExists(candidate) {
+  const pathText = String(candidate || "");
+  const resolved = path.isAbsolute(pathText) ? pathText : path.resolve(REPO_ROOT, pathText);
+  return fs.existsSync(resolved);
+}
+
+function concreteIconPathEntries(value) {
+  return valuesForKey(value, /(iconPath|imagePath|logoPath|assetPath|sourcePath|icon|image|logo|asset|source)$/i)
+    .filter((entry) => typeof entry.value === "string" && /\.(png|jpg|jpeg|gif)$/i.test(entry.value))
+    .filter((entry) => !pathHasDotTmp(entry.value));
+}
+
+function bmlIconPathEntries(value) {
+  return concreteIconPathEntries(value)
+    .filter((entry) => /barony-modloader(?:-bml)?\.png$/i.test(String(entry.value)))
+    .filter((entry) => imagePathExists(entry.value));
+}
+
+function compactVanillaBaronyIconPathEntries(value) {
+  return concreteIconPathEntries(value)
+    .filter((entry) => /\.png$/i.test(String(entry.value)))
+    .filter((entry) => /\bbarony\b/i.test(String(entry.value)))
+    .filter((entry) => !/barony-modloader/i.test(String(entry.value)))
+    .filter((entry) => !/(?:^|[\\/])(logo|wordmark)\.(?:png|jpg|jpeg|gif)$/i.test(String(entry.value)))
+    .filter((entry) => !/wordmark|librarycache/i.test(String(entry.value)))
+    .filter((entry) => imagePathExists(entry.value));
+}
+
+function directActionLabelMatches(node, label) {
+  const labelPattern = new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  return ["label", "title", "name", "text", "displayLabel", "visibleLabel", "ariaLabel"]
+    .some((key) => typeof node[key] === "string" && labelPattern.test(node[key]));
+}
+
+function launchActionMetadataObjects(report, actionId, label) {
+  const normalized = normalizeActionId(actionId);
+  return allObjects(report).filter((entry) => actionIdForEntry(entry.node) === normalized || directActionLabelMatches(entry.node, label));
+}
+
+function requireLaunchActionIconPath(world, actionId, label, pathMatcher, description) {
+  const report = ensureReport(world);
+  const candidates = launchActionMetadataObjects(report, actionId, label);
+  const matches = candidates.flatMap((entry) => pathMatcher(entry.node).map((pathEntry) => ({ entry, pathEntry })));
+  if (!matches.length) {
+    contractGap(
+      world,
+      `${label} lacks ${description} icon path metadata`,
+      `ACTION METADATA CANDIDATES:\n${candidates.map((entry) => `${entry.pathParts.join(".")}: ${textForEntry(entry.node)}`).join("\n---\n") || "<none>"}`
+    );
+  }
+}
+
+function requireMockedLaunchButtonIconMetadata(world) {
+  requireLaunchActionIconPath(world, "launch-bml", "Launch BML Barony", bmlIconPathEntries, "generated BML");
+  requireLaunchActionIconPath(world, "launch-vanilla", "Launch Vanilla Barony", compactVanillaBaronyIconPathEntries, "vanilla Barony compact");
+}
+
 function activeModsFrom(value) {
   if (!value) return [];
   if (Array.isArray(value)) return value.map((item) => (typeof item === "string" ? item : structuralText(item)));
@@ -1121,6 +1186,10 @@ Then("mocked launch feedback reports BML and Vanilla process launch metadata wit
   if (/\bBML_[A-Z0-9_]+\b|LD_PRELOAD/i.test(vanillaText)) {
     contractGap(this, "launch-vanilla includes BML-specific environment or LD_PRELOAD evidence.", `ACTION EVIDENCE:\n${vanillaText}`);
   }
+});
+
+Then("mocked launch button metadata includes generated BML and vanilla Barony icon paths", function () {
+  requireMockedLaunchButtonIconMetadata(this);
 });
 
 Then("the Profiles create-select-profile action creates and selects a stable profile outside .tmp", function () {

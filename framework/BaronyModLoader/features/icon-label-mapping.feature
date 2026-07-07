@@ -22,3 +22,9 @@ Feature: Icon Label Mapping Contract
   Scenario: Icon label mapping covers store (Steam) icons
     When I run a Python script that checks store icon labels
     Then entries exist for: workshop thumbnail, library grid icon variants
+
+
+  @bdd-harness @desktop-launcher @icon
+  Scenario: Desktop launcher resolves the generated BML PNG directly
+    When I inspect the BaronyModLoader desktop launcher metadata
+    Then the desktop launcher Icon entry points at a concrete generated BML PNG
