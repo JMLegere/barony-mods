@@ -6700,10 +6700,19 @@ def _gui_build_concepts(
         _gui_evidence("Profiles list", profile_list_labels or "None", "available" if profiles_list else "empty"),
         _gui_evidence("Active mods", active_mod_names or "None"),
     ]
+    visible_profile_summary_items = [
+        f"{'✓' if item.get('selected') else '•'} {item.get('id') or Path(str(item.get('path') or '')).name} — {item.get('activeModCount', 0)} {'active mod' if item.get('activeModCount') == 1 else 'active mods'}{' selected' if item.get('selected') else ''}"
+        for item in profiles_list
+        if isinstance(item, dict) and (item.get("id") or item.get("path"))
+    ]
     profiles_summary = (
-        f"Profile {profile_id_value or 'default'} is selected with {len(active_mods)} {'active mod' if len(active_mods) == 1 else 'active mods'}."
-        if not profile_blockers
-        else "No profile is selected yet."
+        "Profiles: " + "; ".join(visible_profile_summary_items[:4])
+        if not profile_blockers and visible_profile_summary_items
+        else (
+            f"Profile {profile_id_value or 'default'} is selected with {len(active_mods)} {'active mod' if len(active_mods) == 1 else 'active mods'}."
+            if not profile_blockers
+            else "No profile is selected yet."
+        )
     )
 
     selected_problems = selected_package.get("problems")
