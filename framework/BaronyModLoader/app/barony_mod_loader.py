@@ -3684,6 +3684,32 @@ def profile_json_path(profile_dir: Path) -> Path:
     return bml_profile_root(profile_dir) / "profile.json"
 
 
+def profile_summary_for_card(profile_dir: Path, selected_profile_dir: Path) -> dict[str, Any]:
+    profile, resolved_profile_dir, result = load_profile(str(profile_dir))
+    active_mods = profile_authoritative_mods(profile, resolved_profile_dir) if profile is not None else []
+    return {
+        "id": profile_id(profile) if profile is not None else profile_dir.name,
+        "path": str(resolved_profile_dir),
+        "profilePath": str(profile_json_path(resolved_profile_dir)),
+        "selected": resolved_profile_dir.resolve(strict=False) == selected_profile_dir.resolve(strict=False),
+        "status": "loaded" if profile is not None and result.ok else "missing",
+        "activeModCount": len(active_mods),
+        "modCount": len(active_mods),
+    }
+
+
+def list_profile_summaries_for_card(selected_profile_dir: Path) -> list[dict[str, Any]]:
+    profiles_root = selected_profile_dir.parent
+    candidates: list[Path] = []
+    if profiles_root.exists() and profiles_root.is_dir():
+        for child in sorted(profiles_root.iterdir(), key=lambda item: item.name):
+            if child.is_dir() and profile_json_path(child).exists():
+                candidates.append(child)
+    if not any(candidate.resolve(strict=False) == selected_profile_dir.resolve(strict=False) for candidate in candidates):
+        candidates.append(selected_profile_dir)
+    return [profile_summary_for_card(candidate, selected_profile_dir) for candidate in candidates]
+
+
 def build_profile_state(profile_dir: Any, package_root: Any = None, *, package: LoadedPackage | None = None) -> dict[str, Any]:
     """Return a semantic profile DTO without rewriting profile files."""
     loaded_profile, resolved_profile_dir, load_result = load_profile(str(profile_dir))
@@ -3727,6 +3753,7 @@ def build_profile_state(profile_dir: Any, package_root: Any = None, *, package: 
         "profilePath": str(profile_path),
         "activeModsPath": str(active_mods_json_path(resolved_profile_dir)),
     }
+    profiles = list_profile_summaries_for_card(resolved_profile_dir)
     product_path_values = [str(value) for value in paths.values()]
     tmp_product_paths = [value for value in product_path_values if "/.tmp/" in value or value.endswith("/.tmp") or ".tmp" in Path(value).parts]
     if tmp_product_paths:
@@ -3745,6 +3772,9 @@ def build_profile_state(profile_dir: Any, package_root: Any = None, *, package: 
         "warnings": warnings,
         "disabledReasons": disabled,
         "tmpProductPaths": tmp_product_paths,
+        "profiles": profiles,
+        "profileList": profiles,
+        "profileCount": len(profiles),
     }
 
 
@@ -6649,10 +6679,17 @@ def _gui_build_concepts(
 
     profile_id_value = profile_state.get("id") or (profile_state.get("profile") if isinstance(profile_state.get("profile"), dict) else {}).get("id")
     profile_blockers = [] if profile_state.get("status") == "selected" else ["Create or select a stable profile before enabling mods."]
+    profiles_list = profile_state.get("profiles") if isinstance(profile_state.get("profiles"), list) else []
+    profile_list_labels = [
+        str(item.get("id") or Path(str(item.get("path") or "")).name)
+        for item in profiles_list
+        if isinstance(item, dict) and (item.get("id") or item.get("path"))
+    ]
     profiles_evidence = [
         _gui_evidence("Selected profile", profile_id_value, profile_state.get("status")),
         _gui_evidence("Profile path", profile_state.get("path")),
         _gui_evidence("Stable default path", profile_state.get("stableDefault")),
+        _gui_evidence("Profiles list", profile_list_labels or "None", "available" if profiles_list else "empty"),
         _gui_evidence("Active mods", active_mod_names or "None"),
     ]
     profiles_summary = (
@@ -6717,7 +6754,6 @@ def _gui_build_concepts(
             "status": "blocked" if environment_blockers else "ready",
             "statusSummary": environment_summary,
             "environmentSummaryItems": environment_summary_items,
-            "evidence": environment_evidence,
             "primaryAction": _gui_action("launch-bml", bml_launch_status, enabled=True, disabledReasons=environment_blockers),
             "secondaryActions": [
                 _gui_action("launch-vanilla", vanilla_launch_status, enabled=True, disabledReasons=vanilla_blockers),
@@ -6747,7 +6783,7 @@ def _gui_build_concepts(
             "secondaryActions": [],
             "warnings": [],
             "blockers": profile_blockers,
-            "state": {"profile": profile_state, "activeMods": active_mods},
+            "state": {"profile": profile_state, "profiles": profiles_list, "profileList": profiles_list, "activeMods": active_mods},
         },
         {
             "key": "mods",
@@ -6933,7 +6969,10 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
     if profiles:
         profile_state = profiles.get("state") if isinstance(profiles.get("state"), dict) else {}
         profile_active_mods = profile_state.get("activeMods") if isinstance(profile_state.get("activeMods"), list) else []
-        profile_rows = evidence_rows(profiles, {"Selected profile", "Active mods"})
+        profiles_list = profile_state.get("profiles") if isinstance(profile_state.get("profiles"), list) else []
+        profile_rows = evidence_rows(profiles, {"Selected profile", "Profiles list", "Active mods"})
+        if not any(row.get("label") == "Profiles list" for row in profile_rows):
+            profile_rows.append({"label": "Profiles list", "value": str(len(profiles_list)), "status": "available" if profiles_list else "empty"})
         if not any(row.get("label") == "Active mods" for row in profile_rows):
             profile_rows.append({"label": "Active mods", "value": str(len(profile_active_mods)), "status": "enabled"})
         cards.append(
@@ -6944,9 +6983,11 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
                 "status": profiles.get("status"),
                 "summary": profiles.get("statusSummary"),
                 "activeModCount": len(profile_active_mods),
-                "profileCount": 1,
-                "count": 1,
+                "profileCount": len(profiles_list),
+                "count": len(profiles_list),
                 "profileActiveModCount": len(profile_active_mods),
+                "profiles": profiles_list,
+                "profileList": profiles_list,
                 "rows": profile_rows,
                 "actions": concept_actions(profiles),
                 "sourceConcept": "profiles",

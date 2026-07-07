@@ -437,6 +437,67 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
                             module_item.pop("exclusive", None)
             write_json(manifest_path, manifest)
 
+    def test_profile_state_exposes_profiles_list_for_profiles_card(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            package_dir = self.make_package(workspace)
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, package_dir)
+            self.write_profile_active_mods(profile_dir, [self.active_mod_entry_for_package(package_dir)])
+            alternate_dir = profile_dir.parent / "alternate"
+            (alternate_dir / loader.APP_ID).mkdir(parents=True)
+            write_json(
+                alternate_dir / loader.APP_ID / "profile.json",
+                {
+                    "schemaVersion": loader.SCHEMA_VERSION,
+                    "profile": {"id": "alternate"},
+                    "runtime": {},
+                    "activeMods": [],
+                },
+            )
+
+            state = loader.build_profile_state(profile_dir)
+
+            profile_ids = [item["id"] for item in state["profiles"]]
+            self.assertIn("security-test", profile_ids)
+            self.assertIn("alternate", profile_ids)
+            self.assertEqual(state["profileCount"], 2)
+            selected = [item for item in state["profileList"] if item["selected"]]
+            self.assertEqual([item["id"] for item in selected], ["security-test"])
+
+    def test_profiles_concept_and_compact_card_contain_profiles_list(self) -> None:
+        profile_state = {
+            "status": "selected",
+            "id": "default",
+            "path": "/profiles/default",
+            "stableDefault": True,
+            "profiles": [
+                {"id": "default", "path": "/profiles/default", "selected": True, "activeModCount": 1},
+                {"id": "challenge", "path": "/profiles/challenge", "selected": False, "activeModCount": 0},
+            ],
+        }
+        concepts = loader._gui_build_concepts(
+            install={"status": "ready"},
+            profile_state=profile_state,
+            package_catalog={"packages": []},
+            selected_summary=None,
+            selected_mod=None,
+            active_mods=[],
+            active_result=None,
+            readiness={"readiness": {"rows": [], "disabledReasons": [], "status": "ready"}},
+            launch_dry_run={"status": "ready", "disabledReasons": []},
+            diagnostics={"items": [], "productionValidation": [], "label": "No diagnostics", "status": "not_run"},
+            windows_status={"disabledReasons": []},
+            workshop={"metadataRows": [], "previewAssets": [], "status": "ready"},
+            environment_summary_items=[],
+        )
+        concept_map = {concept["key"]: concept for concept in concepts}
+        profiles = concept_map["profiles"]
+        self.assertEqual([item["id"] for item in profiles["state"]["profiles"]], ["default", "challenge"])
+        compact = loader._gui_compact_status_cards(concept_map)
+        profiles_card = next(card for card in compact if card["key"] == "profiles")
+        self.assertEqual(profiles_card["profileCount"], 2)
+        self.assertEqual([item["id"] for item in profiles_card["profileList"]], ["default", "challenge"])
+
     def assert_issue_mentions(self, issues: list[loader.Problem], token: str) -> loader.Problem:
         token_lower = token.casefold()
         for problem in issues:
