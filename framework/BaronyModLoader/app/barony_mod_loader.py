@@ -6458,6 +6458,17 @@ def _gui_bulleted_warning_text(warnings: Iterable[Any], *, width: int = 58) -> s
     return "\n".join(lines)
 
 
+def _gui_app_icon_path() -> str | None:
+    for candidate in (
+        APP_ROOT / "share" / "icons" / "hicolor" / "256x256" / "apps" / "barony-modloader.png",
+        APP_ROOT / "share" / "icons" / "hicolor" / "1024x1024" / "apps" / "barony-modloader.png",
+        APP_ROOT / "share" / "icons" / "hicolor" / "256x256" / "apps" / "barony-modloader-bml.png",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[str], Any, dict[str, list[Any]], dict[str, Any]]:
     tk = __import__("tk" + "inter")
     ttk = __import__("tk" + "inter.ttk", fromlist=["ttk"])
@@ -6467,6 +6478,20 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
     root.geometry("1180x880")
     root.minsize(980, 740)
     root._bml_images = []  # Keep Tk PhotoImage references alive.
+    app_icon_path = _gui_app_icon_path()
+    if app_icon_path:
+        try:
+            app_icon = tk.PhotoImage(file=app_icon_path)
+            root.iconphoto(True, app_icon)
+            root._bml_images.append(app_icon)
+            gui_state["appIconPath"] = app_icon_path
+            gui_state["appIconLoaded"] = True
+        except tk.TclError as exc:
+            gui_state["appIconPath"] = app_icon_path
+            gui_state["appIconLoaded"] = False
+            gui_state["appIconError"] = str(exc)
+    else:
+        gui_state["appIconLoaded"] = False
 
     style = ttk.Style(root)
     try:
@@ -7147,6 +7172,9 @@ def _write_gui_smoke_report(
             "geometry": root.winfo_geometry(),
             "renderedSectionLabels": section_labels,
             "renderedConceptTitles": section_labels,
+            "appIconPath": gui_state.get("appIconPath"),
+            "appIconLoaded": gui_state.get("appIconLoaded"),
+            "appIconError": gui_state.get("appIconError"),
             "concepts": gui_state.get("concepts", []),
             "conceptMap": gui_state.get("conceptMap", {}),
             "profilePath": gui_state.get("profilePath"),
