@@ -334,6 +334,38 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             {"schemaVersion": loader.SCHEMA_VERSION, "profileId": profile["profile"]["id"], "mods": mods},
         )
 
+    @contextmanager
+    def isolated_gui_data_home(self):
+        original_xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        with tempfile.TemporaryDirectory(prefix="gui-profiles-", dir=str(BML_ROOT)) as temp_dir:
+            data_home = Path(temp_dir) / "data"
+            os.environ["XDG_DATA_HOME"] = str(data_home)
+            try:
+                yield data_home
+            finally:
+                if original_xdg_data_home is None:
+                    os.environ.pop("XDG_DATA_HOME", None)
+                else:
+                    os.environ["XDG_DATA_HOME"] = original_xdg_data_home
+
+    def write_gui_profile(self, profile_dir: Path, profile_id: str, mods: list[dict]) -> None:
+        bml_root = profile_dir / loader.APP_ID
+        for child in ("logs", "reports", "manifests", "state"):
+            (bml_root / child).mkdir(parents=True, exist_ok=True)
+        profile = {
+            "schemaVersion": loader.SCHEMA_VERSION,
+            "profile": {"id": profile_id, "createdAt": "2026-07-03T00:00:00Z", "updatedAt": "2026-07-03T00:00:00Z"},
+            "app": {"id": loader.APP_ID, "version": loader.APP_VERSION},
+            "paths": {"profileRoot": str(profile_dir), "bmlRoot": str(bml_root)},
+            "activeMods": mods,
+            "runtime": {},
+        }
+        write_json(bml_root / "profile.json", profile)
+        write_json(
+            bml_root / "active-mods.json",
+            {"schemaVersion": loader.SCHEMA_VERSION, "profileId": profile_id, "mods": mods},
+        )
+
     def set_package_identity(
         self,
         package_dir: Path,
@@ -464,11 +496,61 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             selected = [item for item in state["profileList"] if item["selected"]]
             self.assertEqual([item["id"] for item in selected], ["security-test"])
 
+    def test_gui_profile_selector_uses_alternate_profile_state(self) -> None:
+        with self.isolated_gui_data_home() as data_home:
+            workspace = data_home.parent / "packages"
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            gamma_dir = self.make_package(workspace, "gamma-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.set_package_identity(gamma_dir, "test.gamma")
+            profiles_root = data_home / loader.APP_ID / "profiles"
+            default_dir = profiles_root / "default"
+            challenge_dir = profiles_root / "challenge"
+            self.write_gui_profile(default_dir, "default", [self.active_mod_entry_for_package(alpha_dir)])
+            self.write_gui_profile(
+                challenge_dir,
+                "challenge",
+                [
+                    self.active_mod_entry_for_package(beta_dir),
+                    self.active_mod_entry_for_package(gamma_dir),
+                ],
+            )
+
+            state = loader.build_profile_first_gui_state(selected_profile_selector="challenge")
+
+            self.assertEqual(state["profilePath"], str(challenge_dir))
+            self.assertEqual(state["selectedProfilePath"], str(challenge_dir))
+            self.assertEqual(state["selectedProfileId"], "challenge")
+            self.assertEqual(state["profile"]["selectedProfileId"], "challenge")
+            self.assertEqual([mod["id"] for mod in state["activeMods"]], ["test.beta", "test.gamma"])
+            profiles_by_id = {item["id"]: item for item in state["profileList"]}
+            self.assertEqual(profiles_by_id["default"]["activeModCount"], 1)
+            self.assertFalse(profiles_by_id["default"]["selected"])
+            self.assertEqual(profiles_by_id["challenge"]["activeModCount"], 2)
+            self.assertTrue(profiles_by_id["challenge"]["selected"])
+
+    def test_gui_typed_profile_creation_writes_typed_profile_id(self) -> None:
+        with self.isolated_gui_data_home() as data_home:
+            profile_id = "challenge-run"
+            expected_dir = data_home / loader.APP_ID / "profiles" / profile_id
+
+            state = loader.build_profile_first_gui_state(action="create-select-profile", selected_profile_selector=profile_id)
+
+            created_profile = json.loads((expected_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["profilePath"], str(expected_dir))
+            self.assertEqual(state["selectedProfileId"], profile_id)
+            self.assertEqual(state["profile"]["selectedProfileId"], profile_id)
+            self.assertEqual(created_profile["profile"]["id"], profile_id)
+
     def test_profiles_concept_and_compact_card_contain_profiles_list(self) -> None:
         profile_state = {
             "status": "selected",
             "id": "default",
             "path": "/profiles/default",
+            "selectedProfileId": "default",
+            "selectedProfilePath": "/profiles/default",
             "stableDefault": True,
             "profiles": [
                 {"id": "default", "path": "/profiles/default", "selected": True, "activeModCount": 1},
@@ -500,11 +582,17 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         self.assertEqual([item["selected"] for item in profiles_card["profileList"]], [True, False])
         self.assertEqual([item["id"] for item in profiles_card["profileRows"]], ["default", "challenge"])
         self.assertEqual([item["selected"] for item in profiles_card["profileRows"]], [True, False])
+        self.assertEqual(profiles_card["selectedProfileId"], "default")
+        self.assertEqual(profiles_card["selectedProfilePath"], "/profiles/default")
+        self.assertEqual(profiles_card["profileSelectorValues"], ["default", "challenge"])
+        self.assertEqual(profiles_card["profileSelector"]["current"], "default")
+        self.assertEqual(profiles_card["profileSelector"]["selectedProfileId"], "default")
+        self.assertEqual(profiles_card["profileSelector"]["values"], ["default", "challenge"])
         compact_row_texts = [loader._gui_compact_card_row_text(item) for item in profiles_card["rows"]]
         self.assertEqual(
             compact_row_texts,
             [
-                "✓ default: 1 active mod (selected)",
+                "✓ default: 1 active mod",
                 "• challenge: 0 active mods",
             ],
         )

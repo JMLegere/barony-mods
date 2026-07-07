@@ -5051,6 +5051,27 @@ def _gui_state_selected_mod_selector(gui_state: dict[str, Any]) -> str | None:
             return text
     return None
 
+def _gui_state_selected_profile_selector(gui_state: dict[str, Any]) -> str | None:
+    profile = gui_state.get("profile")
+    if isinstance(profile, dict):
+        for key in ("selectedProfileSelector", "selectedProfileId", "id", "profileId"):
+            value = profile.get(key)
+            if value:
+                return str(value)
+    for key in ("profileSelector", "selectedProfileSelector", "selectedProfileId"):
+        value = gui_state.get(key)
+        if isinstance(value, dict):
+            for nested_key in ("current", "selectedProfileId", "selectedProfileSelector", "value"):
+                nested = value.get(nested_key)
+                if nested:
+                    return str(nested)
+        elif value:
+            return str(value)
+    profile_path = gui_state.get("profilePath")
+    if profile_path:
+        return Path(str(profile_path)).name
+    return None
+
 
 def _gui_detected_mod_row_metadata(entry: dict[str, Any], *, prefix_column: str = "mod-state-prefix", focus_order: int | None = None) -> dict[str, Any]:
     enabled = bool(entry.get("active") or entry.get("enabledInProfile") or entry.get("enabled"))
@@ -5519,6 +5540,108 @@ def _gui_data_home() -> Path:
 def _gui_default_profile_path() -> Path:
     return (_gui_data_home() / APP_ID / "profiles" / "default").expanduser()
 
+def _gui_profiles_root() -> Path:
+    return _gui_default_profile_path().parent.expanduser()
+
+
+def _gui_safe_profile_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw or raw in {".", ".."} or raw.startswith("~"):
+        return None
+    if "/" in raw or "\\" in raw or Path(raw).is_absolute():
+        return None
+    if not PACKAGE_ID_RE.match(raw):
+        return None
+    return raw
+
+
+def _gui_profile_path_is_safe(profile_dir: Path, profiles_root: Path) -> bool:
+    resolved_root = profiles_root.expanduser().resolve(strict=False)
+    resolved_profile = profile_dir.expanduser().resolve(strict=False)
+    if _path_is_under_tmp(resolved_root) or _path_is_under_tmp(resolved_profile):
+        return False
+    return resolved_profile == resolved_root or resolved_path_is_within(resolved_profile, resolved_root)
+
+
+def _gui_resolve_profile_selector(selected_profile_selector: str | None = None) -> dict[str, Any]:
+    profiles_root = _gui_profiles_root()
+    default_profile_dir = _gui_default_profile_path()
+    raw_selector = str(selected_profile_selector or "").strip()
+    selector = raw_selector or "default"
+    base = {
+        "selector": raw_selector,
+        "requestedSelector": raw_selector,
+        "profilesRoot": str(profiles_root),
+        "defaultProfilePath": str(default_profile_dir),
+        "selectedProfileSelector": selector,
+        "selectedProfileId": "default",
+        "selectedProfilePath": str(default_profile_dir),
+        "valid": True,
+        "status": "selected",
+        "reason": None,
+        "matchedExisting": False,
+        "createCandidate": selector != "default",
+    }
+    if _path_is_under_tmp(profiles_root):
+        base.update({
+            "valid": False,
+            "status": "blocked",
+            "reason": f"Profiles root is under a temporary path: {profiles_root}",
+        })
+        return base
+
+    existing_profiles: list[dict[str, Any]] = []
+    if profiles_root.exists() and profiles_root.is_dir():
+        for child in sorted(profiles_root.iterdir(), key=lambda item: item.name):
+            if child.is_dir() and profile_json_path(child).exists() and _gui_profile_path_is_safe(child, profiles_root):
+                existing_profiles.append(profile_summary_for_card(child, default_profile_dir))
+    needle = selector.casefold()
+    for summary in existing_profiles:
+        profile_path_text = str(summary.get("path") or "")
+        candidates = {
+            str(summary.get("id") or "").strip(),
+            profile_path_text,
+            str(summary.get("profilePath") or "").strip(),
+            Path(profile_path_text).name if profile_path_text else "",
+        }
+        if any(candidate and candidate.casefold() == needle for candidate in candidates):
+            selected_path = Path(profile_path_text)
+            selected_id = str(summary.get("id") or selected_path.name)
+            base.update({
+                "selectedProfileSelector": selected_id,
+                "selectedProfileId": selected_id,
+                "selectedProfilePath": str(selected_path),
+                "matchedExisting": True,
+                "createCandidate": False,
+            })
+            return base
+
+    safe_profile_id = _gui_safe_profile_id(selector)
+    if safe_profile_id is None:
+        base.update({
+            "valid": False,
+            "status": "blocked",
+            "reason": "Profile id must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens.",
+        })
+        return base
+    selected_path = profiles_root / safe_profile_id
+    if not _gui_profile_path_is_safe(selected_path, profiles_root):
+        base.update({
+            "valid": False,
+            "status": "blocked",
+            "reason": f"Profile path must stay inside {profiles_root}.",
+        })
+        return base
+    base.update({
+        "selectedProfileSelector": safe_profile_id,
+        "selectedProfileId": safe_profile_id,
+        "selectedProfilePath": str(selected_path),
+        "createCandidate": not profile_json_path(selected_path).exists(),
+    })
+    return base
+
 
 def _gui_repo_root() -> Path:
     return APP_ROOT.parents[1] if len(APP_ROOT.parents) > 1 else APP_ROOT
@@ -5575,7 +5698,7 @@ def _gui_detect_install() -> dict[str, Any]:
     }
 
 
-def _gui_create_profile(profile_dir: Path, install: dict[str, Any]) -> dict[str, Any]:
+def _gui_create_profile(profile_dir: Path, install: dict[str, Any], *, profile_id_value: str | None = None) -> dict[str, Any]:
     if _path_is_under_tmp(profile_dir):
         raise ValueError(f"Refusing to use .tmp or system temp as the normal GUI profile path: {profile_dir}")
     bml_root = bml_profile_root(profile_dir)
@@ -5587,10 +5710,11 @@ def _gui_create_profile(profile_dir: Path, install: dict[str, Any]) -> dict[str,
         directory.mkdir(parents=True, exist_ok=True)
     now = utc_now()
     steam_install = dict(install) if isinstance(install, dict) and install.get("source") == "steam" else None
+    requested_profile_id = _gui_safe_profile_id(profile_id_value or "") or _gui_safe_profile_id(profile_dir.name) or "default"
     profile_payload = {
         "schemaVersion": SCHEMA_VERSION,
         "profile": {
-            "id": "default",
+            "id": requested_profile_id,
             "createdAt": now,
             "updatedAt": now,
         },
@@ -5620,15 +5744,15 @@ def _gui_create_profile(profile_dir: Path, install: dict[str, Any]) -> dict[str,
     return profile_payload
 
 
-def _gui_load_or_create_profile(profile_dir: Path, install: dict[str, Any], *, create_if_missing: bool) -> tuple[dict[str, Any] | None, dict[str, Any], list[str]]:
+def _gui_load_or_create_profile(profile_dir: Path, install: dict[str, Any], *, create_if_missing: bool, profile_id_value: str | None = None) -> tuple[dict[str, Any] | None, dict[str, Any], list[str]]:
     actions: list[str] = []
     if create_if_missing and not profile_json_path(profile_dir).exists():
-        profile = _gui_create_profile(profile_dir, install)
+        profile = _gui_create_profile(profile_dir, install, profile_id_value=profile_id_value)
         actions.append("created_profile")
     else:
         profile, _resolved_profile_dir, result = load_profile(str(profile_dir))
         if profile is None and create_if_missing:
-            profile = _gui_create_profile(profile_dir, install)
+            profile = _gui_create_profile(profile_dir, install, profile_id_value=profile_id_value)
             actions.append("created_profile")
         elif profile is not None:
             actions.append("selected_profile")
@@ -5636,7 +5760,9 @@ def _gui_load_or_create_profile(profile_dir: Path, install: dict[str, Any], *, c
             actions.append("profile_missing")
     profile_state = build_profile_state(profile_dir) if profile is not None else {"status": "not_selected", "path": str(profile_dir)}
     profile_state["path"] = str(profile_dir)
-    profile_state["stableDefault"] = True
+    profile_state["stableDefault"] = profile_dir.expanduser().resolve(strict=False) == _gui_default_profile_path().expanduser().resolve(strict=False)
+    profile_state["profilesRoot"] = str(_gui_profiles_root())
+    profile_state["selectedProfilePath"] = str(profile_dir)
     profile_state["tmpPathRejected"] = _path_is_under_tmp(profile_dir)
     if profile is not None:
         profile_state["status"] = "selected"
@@ -6800,7 +6926,7 @@ def _gui_build_concepts(
             "secondaryActions": [],
             "warnings": [],
             "blockers": profile_blockers,
-            "state": {"profile": profile_state, "profiles": profiles_list, "profileList": profiles_list, "activeMods": active_mods},
+            "state": {"profile": profile_state, "profiles": profiles_list, "profileList": profiles_list, "activeMods": active_mods, "selectedProfileId": profile_state.get("selectedProfileId") or profile_state.get("id") or profile_state.get("profileId"), "selectedProfilePath": profile_state.get("selectedProfilePath") or profile_state.get("path")},
         },
         {
             "key": "mods",
@@ -6993,14 +7119,24 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
     profiles = concept_map.get("profiles") if isinstance(concept_map.get("profiles"), dict) else {}
     if profiles:
         profile_state = profiles.get("state") if isinstance(profiles.get("state"), dict) else {}
+        selected_profile_state = profile_state.get("profile") if isinstance(profile_state.get("profile"), dict) else {}
         profile_active_mods = profile_state.get("activeMods") if isinstance(profile_state.get("activeMods"), list) else []
         profiles_list = profile_state.get("profiles") if isinstance(profile_state.get("profiles"), list) else []
+        selected_profile_id = str(selected_profile_state.get("selectedProfileId") or selected_profile_state.get("id") or selected_profile_state.get("profileId") or "default")
+        selected_profile_path = str(selected_profile_state.get("selectedProfilePath") or selected_profile_state.get("path") or selected_profile_state.get("profilePath") or "")
+        selector_values = [
+            str(profile.get("id") or Path(str(profile.get("path") or "")).name)
+            for profile in profiles_list
+            if isinstance(profile, dict) and (profile.get("id") or profile.get("path"))
+        ]
+        if selected_profile_id not in selector_values:
+            selector_values.insert(0, selected_profile_id)
         profile_rows = evidence_rows(profiles, {"Selected profile", "Profiles list", "Active mods"})
         visible_profile_rows = [
             {
                 "id": str(profile.get("id") or Path(str(profile.get("path") or "")).name),
-                "label": _gui_text(profile.get("id") or Path(str(profile.get("path") or "")).name),
-                "value": f"{profile.get('activeModCount', 0)} {'active mod' if profile.get('activeModCount') == 1 else 'active mods'}{' (selected)' if profile.get('selected') else ''}",
+                "label": str(profile.get("id") or Path(str(profile.get("path") or "")).name),
+                "value": f"{profile.get('activeModCount', 0)} {'active mod' if profile.get('activeModCount') == 1 else 'active mods'}",
                 "detail": f"{profile.get('activeModCount', 0)} {'active mod' if profile.get('activeModCount') == 1 else 'active mods'}",
                 "selected": bool(profile.get("selected")),
                 "status": "selected" if profile.get("selected") else profile.get("status"),
@@ -7025,6 +7161,23 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
                 "profileCount": len(profiles_list),
                 "count": len(profiles_list),
                 "profileActiveModCount": len(profile_active_mods),
+                "selectedProfileId": selected_profile_id,
+                "selectedProfilePath": selected_profile_path,
+                "selectedProfileSelector": selected_profile_id,
+                "profileSelectorValues": selector_values,
+                "selectorValues": selector_values,
+                "profileSelector": {
+                    "type": "ttk.Combobox",
+                    "native": True,
+                    "editable": True,
+                    "current": selected_profile_id,
+                    "selectedProfileId": selected_profile_id,
+                    "selectedProfilePath": selected_profile_path,
+                    "values": selector_values,
+                    "createAction": "create-select-profile",
+                    "selectEvent": "<<ComboboxSelected>>",
+                    "submitEvent": "<Return>",
+                },
                 "profiles": profiles_list,
                 "profileList": profiles_list,
                 "state": profile_state,
@@ -7060,12 +7213,32 @@ def build_profile_first_gui_state(
     activity_log: list[dict[str, Any]] | None = None,
     selected_mod_selector: str | None = None,
     selected_package_selector: str | None = None,
+    selected_profile_selector: str | None = None,
 ) -> dict[str, Any]:
-    profile_dir = _gui_default_profile_path()
+    profile_selection = _gui_resolve_profile_selector(selected_profile_selector)
+    profile_dir = Path(str(profile_selection.get("selectedProfilePath") or _gui_default_profile_path()))
     install = _gui_detect_install()
     action_log = [dict(item) for item in (activity_log or []) if isinstance(item, dict)]
-    create_profile = smoke_mode or action == "create-select-profile"
-    profile, profile_state, profile_actions = _gui_load_or_create_profile(profile_dir, install, create_if_missing=create_profile)
+    create_profile = (smoke_mode or action == "create-select-profile") and bool(profile_selection.get("valid"))
+    profile_id_value = str(profile_selection.get("selectedProfileId") or profile_dir.name)
+    profile, profile_state, profile_actions = _gui_load_or_create_profile(profile_dir, install, create_if_missing=create_profile, profile_id_value=profile_id_value)
+    if not profile_selection.get("valid"):
+        profile_actions.append("profile_selector_invalid")
+    if profile is not None and profile_id(profile):
+        profile_selection["selectedProfileId"] = profile_id(profile)
+        profile_selection["selectedProfileSelector"] = profile_id(profile)
+    profile_state.update({
+        "selectedProfileSelector": profile_selection.get("selectedProfileSelector"),
+        "selectedProfileId": profile_selection.get("selectedProfileId"),
+        "selectedProfilePath": profile_selection.get("selectedProfilePath"),
+        "profileSelectorStatus": profile_selection.get("status"),
+        "profileSelectorValid": bool(profile_selection.get("valid")),
+        "profileSelectorReason": profile_selection.get("reason"),
+        "profileSelectorMatchedExisting": bool(profile_selection.get("matchedExisting")),
+        "profileSelectorCreateCandidate": bool(profile_selection.get("createCandidate")),
+        "requestedProfileSelector": profile_selection.get("requestedSelector"),
+        "profilesRoot": profile_selection.get("profilesRoot"),
+    })
     requested_selector = (selected_mod_selector or selected_package_selector or "").strip() or None
     package_catalog, selected_package, selected_summary = _gui_scan_packages()
     if requested_selector:
@@ -7121,6 +7294,18 @@ def build_profile_first_gui_state(
             selected_mod_selector=requested_selector,
             selected_summary=selected_summary,
         )
+    profile_state.update({
+        "selectedProfileSelector": profile_selection.get("selectedProfileSelector"),
+        "selectedProfileId": profile_selection.get("selectedProfileId"),
+        "selectedProfilePath": profile_selection.get("selectedProfilePath"),
+        "profileSelectorStatus": profile_selection.get("status"),
+        "profileSelectorValid": bool(profile_selection.get("valid")),
+        "profileSelectorReason": profile_selection.get("reason"),
+        "profileSelectorMatchedExisting": bool(profile_selection.get("matchedExisting")),
+        "profileSelectorCreateCandidate": bool(profile_selection.get("createCandidate")),
+        "requestedProfileSelector": profile_selection.get("requestedSelector"),
+        "profilesRoot": profile_selection.get("profilesRoot"),
+    })
     readiness = _gui_refresh_readiness(install, profile, selected_package, profile_dir)
     launch_dry_run = _gui_launch_dry_run(profile, profile_dir, selected_package)
     if action == "launch-bml":
@@ -7203,17 +7388,29 @@ def build_profile_first_gui_state(
         )
     elif action == "create-select-profile":
         created = "created_profile" in profile_actions
+        invalid_selector = "profile_selector_invalid" in profile_actions
         selected = profile_state.get("status") == "selected"
+        status = "blocked" if invalid_selector else ("created" if created else ("selected" if selected else profile_state.get("status")))
+        summary = (
+            f"Profile selector rejected: {profile_state.get('profileSelectorReason')}"
+            if invalid_selector
+            else f"Profile {'created' if created else 'selected'} at {profile_state.get('path')}."
+        )
         action_log.append(
             _gui_action_log_entry(
                 action,
-                "created" if created else ("selected" if selected else profile_state.get("status")),
-                f"Stable profile {'created' if created else 'selected'} at {profile_state.get('path')}.",
+                status,
+                summary,
                 profilePath=profile_state.get("path"),
-                profileId=profile_state.get("id") or profile_state.get("profileId"),
+                profileId=profile_state.get("selectedProfileId") or profile_state.get("id") or profile_state.get("profileId"),
+                requestedProfileSelector=profile_state.get("requestedProfileSelector"),
+                selectedProfileSelector=profile_state.get("selectedProfileSelector"),
+                profilesRoot=profile_state.get("profilesRoot"),
                 stableDefault=profile_state.get("stableDefault"),
                 tmpPathRejected=profile_state.get("tmpPathRejected"),
-                visibleSummary="Profile selected",
+                profileSelectorValid=profile_state.get("profileSelectorValid"),
+                profileSelectorReason=profile_state.get("profileSelectorReason"),
+                visibleSummary="Profile selector rejected" if invalid_selector else "Profile selected",
             )
         )
     elif action == "scan-packages":
@@ -7358,6 +7555,17 @@ def build_profile_first_gui_state(
         "layout": "master-detail mods inspector",
         "title": f"{APP_ID} Mod Manager",
         "profilePath": str(profile_dir),
+        "selectedProfilePath": profile_state.get("selectedProfilePath") or str(profile_dir),
+        "selectedProfileId": profile_state.get("selectedProfileId") or profile_state.get("id") or profile_state.get("profileId"),
+        "selectedProfileSelector": profile_state.get("selectedProfileSelector"),
+        "profileSelector": {
+            "current": profile_state.get("selectedProfileSelector"),
+            "selectedProfileId": profile_state.get("selectedProfileId") or profile_state.get("id") or profile_state.get("profileId"),
+            "selectedProfilePath": profile_state.get("selectedProfilePath") or str(profile_dir),
+            "valid": profile_state.get("profileSelectorValid"),
+            "reason": profile_state.get("profileSelectorReason"),
+            "profilesRoot": profile_state.get("profilesRoot"),
+        },
         "profile": profile_state,
         "profiles": profile_state.get("profiles") if isinstance(profile_state.get("profiles"), list) else [],
         "profileList": profile_state.get("profileList") if isinstance(profile_state.get("profileList"), list) else profile_state.get("profiles", []),
@@ -7806,15 +8014,17 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             if key in state_ref["value"]
         }
 
-    def rebuild(action_id: str | None = None) -> None:
+    def rebuild(action_id: str | None = None, *, selected_profile_selector: str | None = None) -> None:
         prior_log = state_ref["value"].get("actionLog")
         selected_selector = _gui_state_selected_mod_selector(state_ref["value"])
+        profile_selector = selected_profile_selector if selected_profile_selector is not None else _gui_state_selected_profile_selector(state_ref["value"])
         no_autofocus = current_no_autofocus_state()
         instrumentation = current_redraw_instrumentation()
         state_ref["value"] = build_profile_first_gui_state(
             action=action_id,
             activity_log=prior_log if isinstance(prior_log, list) else None,
             selected_mod_selector=selected_selector,
+            selected_profile_selector=profile_selector,
         )
         state_ref["value"].update(no_autofocus)
         state_ref["value"].update(instrumentation)
@@ -7832,6 +8042,7 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
         state_ref["value"] = build_profile_first_gui_state(
             activity_log=prior_log if isinstance(prior_log, list) else None,
             selected_mod_selector=selector,
+            selected_profile_selector=_gui_state_selected_profile_selector(state_ref["value"]),
         )
         state_ref["value"].update(no_autofocus)
         state_ref["value"].update(instrumentation)
@@ -8127,6 +8338,24 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             status_text = _humanize_enum_label(_gui_text(card.get("status") or "not_selected"))
             ttk.Label(frame, text=status_text, style="Summary.TLabel").grid(row=row_cursor, column=0, columnspan=2, sticky="w", pady=(0, 4))
             row_cursor += 1
+            if card.get("key") == "profiles":
+                selector = card.get("profileSelector") if isinstance(card.get("profileSelector"), dict) else {}
+                selector_values = [str(value) for value in (selector.get("values") if isinstance(selector.get("values"), list) else []) if str(value).strip()]
+                selector_current = str(selector.get("current") or card.get("selectedProfileId") or "default")
+                selector_var = tk.StringVar(value=selector_current)
+                selector_frame = ttk.Frame(frame)
+                selector_frame.grid(row=row_cursor, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+                selector_frame.columnconfigure(1, weight=1)
+                ttk.Label(selector_frame, text="Profile:", style="Status.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
+                profile_combo = ttk.Combobox(selector_frame, textvariable=selector_var, values=selector_values, state="normal")
+                profile_combo.grid(row=0, column=1, sticky="ew")
+                profile_combo.bind("<<ComboboxSelected>>", lambda _event, var=selector_var: (rebuild(None, selected_profile_selector=var.get().strip()), "break")[1])
+                profile_combo.bind("<Return>", lambda _event, var=selector_var: (rebuild("create-select-profile", selected_profile_selector=var.get().strip()), "break")[1])
+                card["selectorRendered"] = True
+                card["profileSelector"]["rendered"] = True
+                card["profileSelector"]["widget"] = "ttk.Combobox"
+                card["profileSelector"]["current"] = selector_var.get()
+                row_cursor += 1
             for item in (card.get("rows") if isinstance(card.get("rows"), list) else [])[:3]:
                 if not isinstance(item, dict):
                     continue
@@ -8149,7 +8378,19 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             actions = card.get("actions") if isinstance(card.get("actions"), list) else []
             for action in actions[:5]:
                 if isinstance(action, dict):
-                    render_action_button(frame, action, row=row_cursor, column=0, primary=action.get("id") == (actions[0] or {}).get("id"), columnspan=2)
+                    if card.get("key") == "profiles" and action.get("id") == "create-select-profile":
+                        action_id = str(action.get("id"))
+                        button_options = {
+                            "text": str(action.get("label") or _humanize_enum_label(action_id)),
+                            "command": lambda item=action_id, var=selector_var: rebuild(item, selected_profile_selector=var.get().strip()),
+                            "style": "Primary.TButton" if action.get("enabled", True) else "TButton",
+                            "state": "normal" if action.get("enabled", True) else "disabled",
+                        }
+                        button = ttk.Button(frame, **button_options)
+                        button.grid(row=row_cursor, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+                        button_registry.setdefault(action_id, []).append(button)
+                    else:
+                        render_action_button(frame, action, row=row_cursor, column=0, primary=action.get("id") == (actions[0] or {}).get("id"), columnspan=2)
                     row_cursor += 1
 
     def render_sections(reason: str = "full-dashboard") -> None:
