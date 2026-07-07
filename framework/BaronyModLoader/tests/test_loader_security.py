@@ -574,7 +574,84 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertEqual(state["profile"]["selectedProfileId"], profile_id)
             self.assertEqual(created_profile["profile"]["id"], profile_id)
 
-    def test_profiles_concept_and_compact_card_contain_profiles_list(self) -> None:
+    def test_gui_profile_rename_action_moves_selected_profile_and_preserves_active_mods(self) -> None:
+        with self.isolated_gui_data_home() as data_home:
+            workspace = data_home.parent / "packages"
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            profiles_root = data_home / loader.APP_ID / "profiles"
+            original_dir = profiles_root / "default"
+            renamed_id = "challenge-renamed"
+            renamed_dir = profiles_root / renamed_id
+            active_mods = [
+                self.active_mod_entry_for_package(alpha_dir),
+                self.active_mod_entry_for_package(beta_dir),
+            ]
+            self.write_gui_profile(original_dir, "default", active_mods)
+
+            state = loader.build_profile_first_gui_state(action="rename-profile", selected_profile_selector="default", profile_rename_target=renamed_id)
+
+            self.assertFalse(original_dir.exists())
+            self.assertEqual(state["profilePath"], str(renamed_dir))
+            self.assertEqual(state["selectedProfilePath"], str(renamed_dir))
+            self.assertEqual(state["selectedProfileId"], renamed_id)
+            self.assertEqual(state["profile"]["selectedProfileId"], renamed_id)
+            renamed_profile = json.loads((renamed_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+            self.assertEqual(renamed_profile["profile"]["id"], renamed_id)
+            self.assertEqual(renamed_profile["paths"]["profileRoot"], str(renamed_dir))
+            self.assertEqual(renamed_profile["paths"]["bmlRoot"], str(renamed_dir / loader.APP_ID))
+            self.assertEqual([mod["id"] for mod in renamed_profile["activeMods"]], ["test.alpha", "test.beta"])
+            self.assertEqual([mod["id"] for mod in state["activeMods"]], ["test.alpha", "test.beta"])
+            active_mods_sidecar = json.loads((renamed_dir / loader.APP_ID / "active-mods.json").read_text(encoding="utf-8"))
+            self.assertEqual(active_mods_sidecar["profileId"], renamed_id)
+            self.assertEqual([mod["id"] for mod in active_mods_sidecar["mods"]], ["test.alpha", "test.beta"])
+
+    def test_gui_profile_delete_action_removes_selected_profile_and_selects_fallback(self) -> None:
+        with self.isolated_gui_data_home() as data_home:
+            workspace = data_home.parent / "packages"
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            profiles_root = data_home / loader.APP_ID / "profiles"
+            default_dir = profiles_root / "default"
+            challenge_dir = profiles_root / "challenge"
+            self.write_gui_profile(default_dir, "default", [self.active_mod_entry_for_package(alpha_dir)])
+            self.write_gui_profile(challenge_dir, "challenge", [self.active_mod_entry_for_package(beta_dir)])
+
+            state = loader.build_profile_first_gui_state(action="delete-profile", selected_profile_selector="challenge")
+
+            self.assertFalse(challenge_dir.exists())
+            self.assertTrue((default_dir / loader.APP_ID / "profile.json").is_file())
+            self.assertEqual(state["profilePath"], str(default_dir))
+            self.assertEqual(state["selectedProfilePath"], str(default_dir))
+            self.assertEqual(state["selectedProfileId"], "default")
+            self.assertEqual(state["profile"]["selectedProfileId"], "default")
+            self.assertEqual([mod["id"] for mod in state["activeMods"]], ["test.alpha"])
+            self.assertEqual([item["id"] for item in state["profileList"]], ["default"])
+
+    def test_gui_profile_delete_last_profile_keeps_ui_on_existing_safe_profile(self) -> None:
+        with self.isolated_gui_data_home() as data_home:
+            workspace = data_home.parent / "packages"
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            profiles_root = data_home / loader.APP_ID / "profiles"
+            default_dir = profiles_root / "default"
+            self.write_gui_profile(default_dir, "default", [self.active_mod_entry_for_package(alpha_dir)])
+
+            state = loader.build_profile_first_gui_state(action="delete-profile", selected_profile_selector="default")
+
+            selected_path = Path(state["selectedProfilePath"])
+            self.assertTrue((selected_path / loader.APP_ID / "profile.json").is_file())
+            self.assertEqual(selected_path.resolve(strict=False).parent, profiles_root.resolve(strict=False))
+            self.assertNotIn(".tmp", selected_path.parts)
+            self.assertGreaterEqual(state["profileCount"], 1)
+            self.assertIn(state["selectedProfileId"], [item["id"] for item in state["profileList"]])
+            self.assertEqual([mod["id"] for mod in state["activeMods"]], ["test.alpha"])
+
+    def test_profiles_concept_and_compact_card_contain_profiles_list_and_inline_crud_actions(self) -> None:
         profile_state = {
             "status": "selected",
             "id": "default",
@@ -605,6 +682,8 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         concept_map = {concept["key"]: concept for concept in concepts}
         profiles = concept_map["profiles"]
         self.assertEqual([item["id"] for item in profiles["state"]["profiles"]], ["default", "challenge"])
+        profiles_action_labels = [profiles["primaryAction"]["label"], *[action["label"] for action in profiles["secondaryActions"]]]
+        self.assertEqual(profiles_action_labels, ["New profile", "Rename profile", "Delete profile"])
         compact = loader._gui_compact_status_cards(concept_map)
         profiles_card = next(card for card in compact if card["key"] == "profiles")
         self.assertEqual(profiles_card["profileCount"], 2)
@@ -618,6 +697,10 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         self.assertEqual(profiles_card["profileSelector"]["current"], "default")
         self.assertEqual(profiles_card["profileSelector"]["selectedProfileId"], "default")
         self.assertEqual(profiles_card["profileSelector"]["values"], ["default", "challenge"])
+        self.assertEqual(profiles_card["profileSelector"]["renameAction"], "rename-profile")
+        self.assertEqual(profiles_card["profileSelector"]["deleteAction"], "delete-profile")
+        profiles_card_action_labels = [action["label"] for action in profiles_card["actions"]]
+        self.assertEqual(profiles_card_action_labels, ["New profile", "Rename profile", "Delete profile"])
         compact_row_texts = [loader._gui_compact_card_row_text(item) for item in profiles_card["rows"]]
         self.assertEqual(
             compact_row_texts,

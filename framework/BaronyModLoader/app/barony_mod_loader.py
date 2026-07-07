@@ -4089,6 +4089,8 @@ GUI_ENTITY_ICON_RENDER_ORDER = (
 GUI_ACTION_LABELS = {
     "detect-install": "Detect install",
     "create-select-profile": "New profile",
+    "rename-profile": "Rename profile",
+    "delete-profile": "Delete profile",
     "scan-packages": "Scan packages",
     "enable-package": "Enable selected mod",
     "disable-package": "Disable selected mod",
@@ -5615,6 +5617,113 @@ def _gui_create_select_profile_target(selected_profile_selector: Any, profiles_r
     if safe_selector is not None and safe_selector != "default" and _gui_profile_id_is_available(safe_selector, profiles_root, selector_values):
         return safe_selector
     return _gui_next_profile_id(profiles_root, selector_values)
+def _gui_rename_profile_target(
+    source_profile_id: str,
+    target_profile_id: str,
+    profiles_root: Path,
+    selector_values: Iterable[Any] = (),
+) -> tuple[str | None, str | None]:
+    """Return (source_path, target_path) for a safe rename, or (None, None) with a reason.
+
+    source_profile_id  – id of the currently-selected profile (the rename source)
+    target_profile_id  – typed text from the GUI combobox (the desired new id)
+    """
+    safe_source = _gui_safe_profile_id(source_profile_id)
+    safe_target = _gui_safe_profile_id(target_profile_id)
+    if safe_source is None:
+        return None, None
+    if safe_target is None or safe_target == safe_source:
+        return None, None
+    source_path = profiles_root / safe_source
+    target_path = profiles_root / safe_target
+    if not _gui_profile_path_is_safe(source_path, profiles_root):
+        return None, None
+    taken = _gui_selector_value_profile_ids(selector_values) | _gui_existing_profile_ids(profiles_root)
+    if safe_target in taken or target_path.exists():
+        return None, None
+    return str(source_path), str(target_path)
+
+
+def _gui_execute_profile_rename(
+    source_profile_dir: Path,
+    target_profile_dir: Path,
+    target_profile_id: str,
+) -> dict[str, Any]:
+    """Move a profile directory and update profile.json / active-mods.json ids in-place."""
+    source_resolved = source_profile_dir.expanduser().resolve(strict=False)
+    target_resolved = target_profile_dir.expanduser().resolve(strict=False)
+    if not source_resolved.exists() or not source_resolved.is_dir():
+        return {"status": "blocked", "changed": False, "reason": "Source profile directory does not exist."}
+    source_root = bml_profile_root(source_resolved)
+    profile_json = profile_json_path(source_resolved)
+    active_mods_json = active_mods_json_path(source_resolved)
+    if not profile_json.exists():
+        return {"status": "blocked", "changed": False, "reason": "Source profile.json is missing."}
+    # Read JSON data BEFORE moving any files
+    profile_data = parse_json_file(profile_json)
+    active_mods_data = parse_json_file(active_mods_json) if active_mods_json.exists() else None
+    # Move the tree
+    target_resolved.mkdir(parents=True, exist_ok=True)
+    target_root = bml_profile_root(target_resolved)
+    target_root.mkdir(parents=True, exist_ok=True)
+    for child in source_root.iterdir():
+        shutil.move(str(child), str(target_root / child.name))
+    # Remove source profile directory after move completes
+    shutil.rmtree(source_resolved, ignore_errors=True)
+    profile_data.setdefault("profile", {})["id"] = target_profile_id
+    profile_data.setdefault("paths", {})["profileRoot"] = str(target_resolved)
+    profile_data.setdefault("paths", {})["bmlRoot"] = str(target_root)
+    write_json_file(profile_json_path(target_resolved), profile_data)
+    # Update active-mods.json id
+    if active_mods_data is not None:
+        active_mods_data["profileId"] = target_profile_id
+        write_json_file(active_mods_json_path(target_resolved), active_mods_data)
+    return {"status": "renamed", "changed": True, "newProfileId": target_profile_id}
+
+
+def _gui_delete_profile_target(
+    source_profile_id: str,
+    profiles_root: Path,
+) -> str | None:
+    """Return the path to delete, or None if deletion must be blocked."""
+    safe_source = _gui_safe_profile_id(source_profile_id)
+    if safe_source is None:
+        return None
+    source_path = profiles_root / safe_source
+    if not _gui_profile_path_is_safe(source_path, profiles_root):
+        return None
+    # Block deleting the only remaining profile
+    existing = _gui_existing_profile_ids(profiles_root)
+    if safe_source not in existing or len(existing) <= 1:
+        return None
+    return str(source_path)
+
+
+def _gui_execute_profile_delete(profile_dir: Path) -> dict[str, Any]:
+    """Remove a profile directory and return the deleted path."""
+    resolved = profile_dir.expanduser().resolve(strict=False)
+    deleted_path = str(resolved)
+    try:
+        if resolved.exists() and resolved.is_dir():
+            shutil.rmtree(resolved)
+    except OSError as exc:
+        return {"status": "blocked", "changed": False, "reason": f"Could not remove profile directory: {exc}"}
+    return {"status": "deleted", "changed": True, "deletedProfilePath": deleted_path}
+
+
+def _gui_fallback_profile_after_delete(
+    deleted_profile_id: str,
+    profiles_root: Path,
+) -> tuple[str, Path]:
+    """Return (fallback_profile_id, fallback_path) after a deletion."""
+    existing = sorted(_gui_existing_profile_ids(profiles_root) - {deleted_profile_id})
+    fallback_id = next((pid for pid in existing if pid != deleted_profile_id), "default")
+    fallback_path = profiles_root / fallback_id
+    # Ensure default exists
+    if not fallback_path.exists() and fallback_id != deleted_profile_id:
+        fallback_path.mkdir(parents=True, exist_ok=True)
+        (bml_profile_root(fallback_path) / "profile.json").parent.mkdir(parents=True, exist_ok=True)
+    return fallback_id, fallback_path
 
 
 
@@ -6989,7 +7098,10 @@ def _gui_build_concepts(
             "statusSummary": profiles_summary,
             "evidence": profiles_evidence,
             "primaryAction": _gui_action("create-select-profile", profile_state.get("status") or "available"),
-            "secondaryActions": [],
+            "secondaryActions": [
+                _gui_action("rename-profile", profile_state.get("status") or "available"),
+                _gui_action("delete-profile", profile_state.get("status") or "available"),
+            ],
             "warnings": [],
             "blockers": profile_blockers,
             "state": {"profile": profile_state, "profiles": profiles_list, "profileList": profiles_list, "activeMods": active_mods, "selectedProfileId": profile_state.get("selectedProfileId") or profile_state.get("id") or profile_state.get("profileId"), "selectedProfilePath": profile_state.get("selectedProfilePath") or profile_state.get("path")},
@@ -7241,6 +7353,8 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
                     "selectedProfilePath": selected_profile_path,
                     "values": selector_values,
                     "createAction": "create-select-profile",
+                    "renameAction": "rename-profile",
+                    "deleteAction": "delete-profile",
                     "selectEvent": "<<ComboboxSelected>>",
                     "submitEvent": "<Return>",
                 },
@@ -7280,7 +7394,10 @@ def build_profile_first_gui_state(
     selected_mod_selector: str | None = None,
     selected_package_selector: str | None = None,
     selected_profile_selector: str | None = None,
+    profile_rename_target: str | None = None,
 ) -> dict[str, Any]:
+    rename_result: dict[str, Any] | None = None
+    delete_result: dict[str, Any] | None = None
     profile_selection = _gui_resolve_profile_selector(selected_profile_selector)
     if action == "create-select-profile" and profile_selection.get("valid"):
         original_profile_selector = (
@@ -7309,6 +7426,37 @@ def build_profile_first_gui_state(
         else:
             profile_selection["profileButtonTargetId"] = target_profile_id
             profile_selection["profileButtonOriginalSelector"] = original_profile_selector
+    elif action in ("rename-profile", "delete-profile"):
+        # Resolve current selected profile path BEFORE any mutation
+        current_profile_path = Path(str(profile_selection.get("selectedProfilePath") or _gui_default_profile_path()))
+        profiles_root = Path(str(profile_selection.get("profilesRoot") or _gui_profiles_root()))
+        selector_values = profile_selection.get("selectorValues") if isinstance(profile_selection.get("selectorValues"), list) else []
+        current_profile_id = str(profile_selection.get("selectedProfileId") or current_profile_path.name)
+        if action == "rename-profile":
+            target_text = str(profile_rename_target or selected_profile_selector or "").strip()
+            source_path_str, target_path_str = _gui_rename_profile_target(
+                current_profile_id,
+                target_text,
+                profiles_root,
+                selector_values,
+            )
+            if source_path_str and target_path_str:
+                rename_result = _gui_execute_profile_rename(Path(source_path_str), Path(target_path_str), Path(target_path_str).name)
+                if rename_result.get("changed"):
+                    # Switch to renamed profile
+                    profile_selection = _gui_resolve_profile_selector(Path(target_path_str).name)
+            else:
+                rename_result = {"status": "blocked", "changed": False, "reason": "Rename target is invalid or already exists."}
+        elif action == "delete-profile":
+            delete_path_str = _gui_delete_profile_target(current_profile_id, profiles_root)
+            if delete_path_str:
+                delete_result = _gui_execute_profile_delete(Path(delete_path_str))
+                if delete_result.get("changed"):
+                    # Select fallback
+                    fallback_id, fallback_path = _gui_fallback_profile_after_delete(current_profile_id, profiles_root)
+                    profile_selection = _gui_resolve_profile_selector(fallback_id)
+            else:
+                delete_result = {"status": "blocked", "changed": False, "reason": "Cannot delete the last remaining profile."}
     profile_dir = Path(str(profile_selection.get("selectedProfilePath") or _gui_default_profile_path()))
     install = _gui_detect_install()
     action_log = [dict(item) for item in (activity_log or []) if isinstance(item, dict)]
@@ -7382,6 +7530,14 @@ def build_profile_first_gui_state(
             active_result = disable_profile_mod(profile_dir, str(action_target_mod.get("packageId")))
             profile, profile_state, _profile_actions = _gui_load_or_create_profile(profile_dir, install, create_if_missing=False)
 
+    # After a successful rename or delete, reload state from the new target path
+    if action == "rename-profile" and rename_result is not None and rename_result.get("changed"):
+        new_profile_id = rename_result.get("newProfileId")
+        new_profile_dir = Path(profile_selection.get("selectedProfilePath") or profile_dir)
+        profile, profile_state, _pa = _gui_load_or_create_profile(new_profile_dir, install, create_if_missing=False, profile_id_value=new_profile_id)
+    elif action == "delete-profile" and delete_result is not None and delete_result.get("changed"):
+        new_profile_dir = Path(profile_selection.get("selectedProfilePath") or profile_dir)
+        profile, profile_state, _pa = _gui_load_or_create_profile(new_profile_dir, install, create_if_missing=False)
     if action in {"enable-package", "disable-package"}:
         active_mods = profile_authoritative_mods(profile, profile_dir) if profile is not None else []
         detected_inventory = _gui_detected_mod_inventory(
@@ -7510,6 +7666,43 @@ def build_profile_first_gui_state(
                 profileSelectorValid=profile_state.get("profileSelectorValid"),
                 profileSelectorReason=profile_state.get("profileSelectorReason"),
                 visibleSummary="Profile selector rejected" if invalid_selector else ("Profile created" if created else "Profile selected"),
+            )
+        )
+    elif action == "rename-profile":
+        result = rename_result if "rename_result" in dir() else None
+        status = (result or {}).get("status") or "blocked"
+        new_id = (result or {}).get("newProfileId")
+        visible = (
+            f"Renamed to {new_id}" if new_id
+            else "Rename profile blocked"
+        )
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                status,
+                f"Profile rename result: {status}{'; new id=' + new_id if new_id else ''}.",
+                renamedTo=new_id,
+                renameResult=result,
+                newProfileId=new_id,
+                visibleSummary=visible,
+            )
+        )
+    elif action == "delete-profile":
+        result = delete_result if "delete_result" in dir() else None
+        status = (result or {}).get("status") or "blocked"
+        deleted_path = (result or {}).get("deletedProfilePath")
+        visible = (
+            f"Deleted profile" if status == "deleted"
+            else "Delete profile blocked"
+        )
+        action_log.append(
+            _gui_action_log_entry(
+                action,
+                status,
+                f"Profile delete result: {status}{'; deleted=' + str(deleted_path) if deleted_path else ''}.",
+                deletedProfilePath=deleted_path,
+                deleteResult=result,
+                visibleSummary=visible,
             )
         )
     elif action == "scan-packages":
@@ -8116,17 +8309,18 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             if key in state_ref["value"]
         }
 
-    def rebuild(action_id: str | None = None, *, selected_profile_selector: str | None = None) -> None:
+    def rebuild(action_id: str | None = None, *, selected_profile_selector: str | None = None, profile_rename_target: str | None = None) -> None:
         prior_log = state_ref["value"].get("actionLog")
         selected_selector = _gui_state_selected_mod_selector(state_ref["value"])
-        profile_selector = selected_profile_selector if selected_profile_selector is not None else _gui_state_selected_profile_selector(state_ref["value"])
+        profile_sel = selected_profile_selector if selected_profile_selector is not None else _gui_state_selected_profile_selector(state_ref["value"])
         no_autofocus = current_no_autofocus_state()
         instrumentation = current_redraw_instrumentation()
         state_ref["value"] = build_profile_first_gui_state(
             action=action_id,
             activity_log=prior_log if isinstance(prior_log, list) else None,
             selected_mod_selector=selected_selector,
-            selected_profile_selector=profile_selector,
+            selected_profile_selector=profile_sel,
+            profile_rename_target=profile_rename_target,
         )
         state_ref["value"].update(no_autofocus)
         state_ref["value"].update(instrumentation)
@@ -8480,8 +8674,8 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             actions = card.get("actions") if isinstance(card.get("actions"), list) else []
             for action in actions[:5]:
                 if isinstance(action, dict):
-                    if card.get("key") == "profiles" and action.get("id") == "create-select-profile":
-                        action_id = str(action.get("id"))
+                    action_id = str(action.get("id") or "")
+                    if card.get("key") == "profiles" and action_id == "create-select-profile":
                         button_options = {
                             "text": str(action.get("label") or _humanize_enum_label(action_id)),
                             "command": lambda item=action_id, var=selector_var: rebuild(item, selected_profile_selector=var.get().strip()),
@@ -8491,8 +8685,28 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
                         button = ttk.Button(frame, **button_options)
                         button.grid(row=row_cursor, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
                         button_registry.setdefault(action_id, []).append(button)
+                    elif card.get("key") == "profiles" and action_id == "rename-profile":
+                        button_options = {
+                            "text": str(action.get("label") or _humanize_enum_label(action_id)),
+                            "command": lambda item=action_id, var=selector_var, source=str(card.get("selectedProfileId") or "").strip(): rebuild(item, selected_profile_selector=source, profile_rename_target=var.get().strip()),
+                            "style": "TButton",
+                            "state": "normal" if action.get("enabled", True) else "disabled",
+                        }
+                        button = ttk.Button(frame, **button_options)
+                        button.grid(row=row_cursor, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+                        button_registry.setdefault(action_id, []).append(button)
+                    elif card.get("key") == "profiles" and action_id == "delete-profile":
+                        button_options = {
+                            "text": str(action.get("label") or _humanize_enum_label(action_id)),
+                            "command": lambda item=action_id, source=str(card.get("selectedProfileId") or "").strip(): rebuild(item, selected_profile_selector=source),
+                            "style": "TButton",
+                            "state": "normal" if action.get("enabled", True) else "disabled",
+                        }
+                        button = ttk.Button(frame, **button_options)
+                        button.grid(row=row_cursor, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+                        button_registry.setdefault(action_id, []).append(button)
                     else:
-                        render_action_button(frame, action, row=row_cursor, column=0, primary=action.get("id") == (actions[0] or {}).get("id"), columnspan=2)
+                        render_action_button(frame, action, row=row_cursor, column=0, primary=action_id == (actions[0] or {}).get("id"), columnspan=2)
                     row_cursor += 1
 
     def render_sections(reason: str = "full-dashboard") -> None:
