@@ -3664,94 +3664,275 @@ def _gui_copy_for_ai_context(gui_state: dict[str, Any]) -> dict[str, Any]:
 
 def _gui_system_clipboard_copy(text: str, *, timeout: float = 3.0) -> dict[str, Any]:
     """Copy text through a user-visible system clipboard tool when available."""
-    candidates: list[tuple[str, list[str], bool]] = []
-    wayland_display = bool(os.environ.get("WAYLAND_DISPLAY"))
-    x11_display = bool(os.environ.get("DISPLAY"))
+    mime_text_plain = "text/plain"
+    base_env = os.environ.copy()
+    backends: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+
+    def stderr_snippet(value: str | bytes | None) -> str:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        snippet = " ".join((value or "").split())
+        return textwrap.shorten(snippet, width=160, placeholder="…") if snippet else ""
+
+    def backend_record(
+        backend: str,
+        *,
+        available: bool,
+        attempted: bool,
+        env_display: str | None,
+        mime_type: str | None,
+        status: str,
+        succeeded: bool,
+        stderr: str | bytes | None = None,
+        display_source: str | None = None,
+        xdg_runtime_dir: str | None = None,
+        tool_found: bool | None = None,
+    ) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "backend": backend,
+            "name": backend,
+            "available": available,
+            "attempted": attempted,
+            "envDisplay": env_display,
+            "mimeType": mime_type,
+            "status": status,
+            "succeeded": succeeded,
+            "stderrSnippet": stderr_snippet(stderr),
+        }
+        if display_source is not None:
+            record["displaySource"] = display_source
+        if xdg_runtime_dir is not None:
+            record["xdgRuntimeDir"] = xdg_runtime_dir
+        if tool_found is not None:
+            record["toolFound"] = tool_found
+        return record
+
+    def wayland_display_candidates() -> tuple[list[dict[str, str]], str | None]:
+        configured_display = os.environ.get("WAYLAND_DISPLAY")
+        configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
+        fallback_runtime = f"/run/user/{getattr(os, 'getuid', lambda: 0)()}"
+        runtime_dir = configured_runtime or fallback_runtime
+        if configured_display:
+            return (
+                [
+                    {
+                        "display": configured_display,
+                        "source": "env:WAYLAND_DISPLAY",
+                        "xdgRuntimeDir": configured_runtime or "",
+                    }
+                ],
+                None,
+            )
+
+        runtime_path = Path(runtime_dir)
+        try:
+            discovered = sorted(
+                path
+                for path in runtime_path.glob("wayland-*")
+                if not path.name.endswith(".lock") and (path.is_socket() or path.is_file())
+            )
+        except OSError as exc:
+            return [], f"unable to scan {runtime_path}: {exc}"
+
+        return (
+            [
+                {
+                    "display": path.name,
+                    "source": f"discovered:{runtime_path}",
+                    "xdgRuntimeDir": str(runtime_path),
+                }
+                for path in discovered
+            ],
+            None,
+        )
 
     wl_copy = shutil.which("wl-copy")
-    if wayland_display and wl_copy:
-        sh = shutil.which("sh")
-        wl_copy_command = (
-            [
-                sh,
-                "-c",
-                'exec "$1" --type "$2" >/dev/null 2>/dev/null',
-                "sh",
-                wl_copy,
-                "text/plain;charset=utf-8",
-            ]
-            if sh
-            else [wl_copy, "--type", "text/plain;charset=utf-8"]
+    wayland_displays, wayland_scan_error = wayland_display_candidates()
+    if wl_copy and wayland_displays:
+        for display in wayland_displays:
+            env = base_env.copy()
+            env["WAYLAND_DISPLAY"] = display["display"]
+            if display.get("xdgRuntimeDir"):
+                env["XDG_RUNTIME_DIR"] = display["xdgRuntimeDir"]
+            candidates.append(
+                {
+                    "backend": "wl-copy",
+                    "command": [wl_copy, "--type", mime_text_plain],
+                    "env": env,
+                    "envDisplay": display["display"],
+                    "displaySource": display["source"],
+                    "xdgRuntimeDir": display.get("xdgRuntimeDir") or os.environ.get("XDG_RUNTIME_DIR") or "",
+                    "mimeType": mime_text_plain,
+                }
+            )
+    else:
+        status = "unavailable: wl-copy not found"
+        if wl_copy and wayland_scan_error:
+            status = f"unavailable: {wayland_scan_error}"
+        elif wl_copy:
+            status = "unavailable: no Wayland display found"
+        backends.append(
+            backend_record(
+                "wl-copy",
+                available=False,
+                attempted=False,
+                env_display=os.environ.get("WAYLAND_DISPLAY"),
+                mime_type=mime_text_plain,
+                status=status,
+                succeeded=False,
+                display_source="env:WAYLAND_DISPLAY" if os.environ.get("WAYLAND_DISPLAY") else "discovery",
+                xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{getattr(os, 'getuid', lambda: 0)()}",
+                tool_found=bool(wl_copy),
+            )
         )
-        candidates.append(("wl-copy", wl_copy_command, True))
 
+    x11_display = os.environ.get("DISPLAY")
     xclip = shutil.which("xclip")
-    if x11_display and xclip:
-        candidates.append(("xclip", [xclip, "-selection", "clipboard", "-in"], True))
+    if xclip and x11_display:
+        candidates.append(
+            {
+                "backend": "xclip",
+                "command": [xclip, "-selection", "clipboard", "-in"],
+                "env": base_env,
+                "envDisplay": x11_display,
+                "displaySource": "env:DISPLAY",
+                "xdgRuntimeDir": os.environ.get("XDG_RUNTIME_DIR") or "",
+                "mimeType": mime_text_plain,
+            }
+        )
+    else:
+        backends.append(
+            backend_record(
+                "xclip",
+                available=False,
+                attempted=False,
+                env_display=x11_display,
+                mime_type=mime_text_plain,
+                status="unavailable: xclip not found" if not xclip else "unavailable: DISPLAY unset",
+                succeeded=False,
+                display_source="env:DISPLAY",
+                xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR") or "",
+                tool_found=bool(xclip),
+            )
+        )
 
     xsel = shutil.which("xsel")
-    if x11_display and xsel:
-        candidates.append(("xsel", [xsel, "--clipboard", "--input"], True))
-
-    backends: list[dict[str, Any]] = []
-    if not candidates:
-        status = "unavailable: no system clipboard tool found"
-        return {
-            "status": status,
-            "used": None,
-            "succeeded": False,
-            "clipboardBackends": backends,
-        }
-
-    for name, command, preferred in candidates:
-        backend: dict[str, Any] = {"name": name, "preferred": preferred, "available": True}
-        try:
-            result = subprocess.run(
-                command,
-                input=text,
-                text=True,
-                timeout=timeout,
-                capture_output=True,
+    if xsel and x11_display:
+        candidates.append(
+            {
+                "backend": "xsel",
+                "command": [xsel, "--clipboard", "--input"],
+                "env": base_env,
+                "envDisplay": x11_display,
+                "displaySource": "env:DISPLAY",
+                "xdgRuntimeDir": os.environ.get("XDG_RUNTIME_DIR") or "",
+                "mimeType": mime_text_plain,
+            }
+        )
+    else:
+        backends.append(
+            backend_record(
+                "xsel",
+                available=False,
+                attempted=False,
+                env_display=x11_display,
+                mime_type=mime_text_plain,
+                status="unavailable: xsel not found" if not xsel else "unavailable: DISPLAY unset",
+                succeeded=False,
+                display_source="env:DISPLAY",
+                xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR") or "",
+                tool_found=bool(xsel),
             )
-        except subprocess.TimeoutExpired:
+        )
+
+    for candidate in candidates:
+        name = str(candidate["backend"])
+        record = backend_record(
+            name,
+            available=True,
+            attempted=True,
+            env_display=str(candidate.get("envDisplay") or ""),
+            mime_type=str(candidate.get("mimeType") or ""),
+            status="attempted",
+            succeeded=False,
+            display_source=str(candidate.get("displaySource") or ""),
+            xdg_runtime_dir=str(candidate.get("xdgRuntimeDir") or ""),
+            tool_found=True,
+        )
+        stderr_output: str | bytes | None = None
+        try:
             if name == "wl-copy":
-                backend.update({"status": "ok", "succeeded": True, "note": "persistent clipboard owner"})
-                backends.append(backend)
-                return {
-                    "status": "ok: wl-copy",
-                    "used": name,
-                    "succeeded": True,
-                    "clipboardBackends": backends,
-                }
-            backend.update({"status": "timeout", "succeeded": False})
+                with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file, tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+                    result = subprocess.run(
+                        candidate["command"],
+                        input=text,
+                        text=True,
+                        timeout=timeout,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        env=candidate["env"],
+                    )
+                    stdout_file.seek(0)
+                    stderr_file.seek(0)
+                    stderr_output = stderr_file.read() or stdout_file.read()
+            else:
+                result = subprocess.run(
+                    candidate["command"],
+                    input=text,
+                    text=True,
+                    timeout=timeout,
+                    capture_output=True,
+                    env=candidate["env"],
+                )
+                stderr_output = result.stderr or result.stdout
+        except subprocess.TimeoutExpired as exc:
+            record.update({"status": "timeout", "succeeded": False, "stderrSnippet": stderr_snippet(exc.stderr or exc.output)})
         except OSError as exc:
-            backend.update({"status": f"error: {exc}", "succeeded": False})
+            record.update({"status": f"error: {exc}", "succeeded": False, "stderrSnippet": stderr_snippet(str(exc))})
         else:
+            stderr = stderr_output
             if result.returncode == 0:
-                backend.update({"status": "ok", "succeeded": True})
-                backends.append(backend)
+                record.update({"status": "ok", "succeeded": True, "stderrSnippet": stderr_snippet(stderr)})
+                backends.append(record)
                 return {
                     "status": f"ok: {name}",
                     "used": name,
                     "succeeded": True,
+                    "available": True,
+                    "attempted": True,
+                    "systemBackendAvailable": True,
+                    "systemBackendAttempted": True,
+                    "envDisplay": record.get("envDisplay"),
+                    "mimeType": record.get("mimeType"),
                     "clipboardBackends": backends,
                 }
-            stderr = " ".join((result.stderr or result.stdout or "").split())
-            if stderr:
-                stderr = textwrap.shorten(stderr, width=160, placeholder="…")
-            backend.update(
+            stderr_text = stderr_snippet(stderr)
+            record.update(
                 {
-                    "status": f"error: exit {result.returncode}" + (f": {stderr}" if stderr else ""),
+                    "status": f"error: exit {result.returncode}" + (f": {stderr_text}" if stderr_text else ""),
                     "succeeded": False,
+                    "stderrSnippet": stderr_text,
                 }
             )
-        backends.append(backend)
+        backends.append(record)
 
-    status = backends[-1]["status"] if backends else "unavailable: no system clipboard tool found"
+    attempted = any(bool(backend.get("attempted")) for backend in backends)
+    available = any(bool(backend.get("available")) for backend in backends)
+    status = next(
+        (str(backend.get("status")) for backend in reversed(backends) if backend.get("attempted")),
+        "unavailable: no system clipboard backend available",
+    )
     return {
         "status": status,
         "used": None,
         "succeeded": False,
+        "available": available,
+        "attempted": attempted,
+        "systemBackendAvailable": available,
+        "systemBackendAttempted": attempted,
+        "envDisplay": None,
+        "mimeType": None,
         "clipboardBackends": backends,
     }
 
@@ -6270,14 +6451,44 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
         system_clipboard = _gui_system_clipboard_copy(copy_text)
         system_clipboard_status = system_clipboard.get("status") or "unavailable"
         system_succeeded = bool(system_clipboard.get("succeeded"))
+        system_available = bool(system_clipboard.get("systemBackendAvailable") or system_clipboard.get("available"))
+        system_attempted = bool(system_clipboard.get("systemBackendAttempted") or system_clipboard.get("attempted"))
+        system_used = system_clipboard.get("used")
         clipboard_backends = [
-            {"name": "tk", "status": tk_clipboard_status, "succeeded": tk_succeeded, "available": True},
+            {
+                "backend": "tk",
+                "name": "tk",
+                "available": True,
+                "attempted": True,
+                "envDisplay": None,
+                "mimeType": "text/plain",
+                "status": tk_clipboard_status,
+                "succeeded": tk_succeeded,
+                "stderrSnippet": "",
+            },
             *system_clipboard.get("clipboardBackends", []),
         ]
-        copied = tk_succeeded or system_succeeded
-        clipboard_status = "ok" if copied else f"error: tk={tk_clipboard_status}; system={system_clipboard_status}"
-        visible_summary = "Copied AI issue context" if copied else "Copy AI issue context failed"
-        log_summary = visible_summary if copied else f"{visible_summary}: {system_clipboard_status}"
+        linux_clipboard_requires_system = sys.platform.startswith("linux") and (system_available or system_attempted)
+        if system_succeeded:
+            clipboard_status = f"ok: system clipboard ({system_used or 'system'})"
+            visible_summary = "Copied AI issue context"
+            log_summary = visible_summary
+        elif linux_clipboard_requires_system:
+            if tk_succeeded:
+                clipboard_status = f"partial: tk ok; system={system_clipboard_status}"
+                visible_summary = "Copy AI issue context partial: system clipboard failed"
+            else:
+                clipboard_status = f"error: tk={tk_clipboard_status}; system={system_clipboard_status}"
+                visible_summary = "Copy AI issue context failed"
+            log_summary = f"{visible_summary}: {system_clipboard_status}"
+        elif tk_succeeded:
+            clipboard_status = f"ok: tk fallback; system={system_clipboard_status}"
+            visible_summary = "Copied AI issue context (Tk clipboard fallback)"
+            log_summary = f"{visible_summary}: no system clipboard backend available"
+        else:
+            clipboard_status = f"error: tk={tk_clipboard_status}; system={system_clipboard_status}"
+            visible_summary = "Copy AI issue context failed"
+            log_summary = f"{visible_summary}: {system_clipboard_status}"
         log_entry = _gui_action_log_entry(
             "copy-for-ai",
             clipboard_status,
@@ -6288,6 +6499,9 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             clipboardStatus=clipboard_status,
             tkClipboardStatus=tk_clipboard_status,
             systemClipboardStatus=system_clipboard_status,
+            systemClipboardDetails=system_clipboard,
+            systemClipboardAvailable=system_available,
+            systemClipboardAttempted=system_attempted,
             clipboardBackends=clipboard_backends,
             visibleSummary=visible_summary,
         )
@@ -6302,6 +6516,9 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             "status": clipboard_status,
             "tkClipboardStatus": tk_clipboard_status,
             "systemClipboardStatus": system_clipboard_status,
+            "systemClipboardDetails": system_clipboard,
+            "systemClipboardAvailable": system_available,
+            "systemClipboardAttempted": system_attempted,
             "clipboardBackends": clipboard_backends,
             "charCount": ctx.get("charCount"),
             "byteCount": ctx.get("byteCount"),

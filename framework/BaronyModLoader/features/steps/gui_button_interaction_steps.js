@@ -29,6 +29,7 @@ const LAUNCH_ACTIONS = [
 ];
 
 const CLIPBOARD_PROBE_MAX_BUFFER = 16 * 1024 * 1024;
+const CLIPBOARD_TEXT_MIME = "text/plain";
 const COPY_FOR_AI_VISIBLE_SUMMARY = "Copied AI issue context";
 
 function findExecutable(commandName, searchPath = process.env.PATH || "") {
@@ -568,11 +569,20 @@ function copyStatusSucceeded(value) {
 function copyForAiBackendMetadata(report) {
   const lastCopy = copyForAiLastCopyMetadata(report);
   if (!lastCopy) {
-    return { lastCopy: null, backendEntries: [], tkStatuses: [], systemStatuses: [] };
+    return {
+      lastCopy: null,
+      backendEntries: [],
+      tkStatuses: [],
+      systemStatuses: [],
+      mimeEntries: [],
+      displayEnvEntries: [],
+    };
   }
   const backendEntries = [];
   const tkStatuses = [];
   const systemStatuses = [];
+  const mimeEntries = [];
+  const displayEnvEntries = [];
   walk(lastCopy.value, (node, pathParts) => {
     if (node === undefined || node === null || String(node).trim() === "") return;
     const key = pathParts[pathParts.length - 1] || "";
@@ -586,31 +596,133 @@ function copyForAiBackendMetadata(report) {
     if (/^(systemClipboardStatus|externalClipboardStatus|persistentClipboardStatus|waylandClipboardStatus|wlCopyStatus)$/i.test(key) || /(system|external|persistent|wayland|wl-copy|wlCopy).*clipboard.*(status|result|error|reason|copied|written)|clipboard.*(system|external|persistent|wayland|wl-copy|wlCopy)/i.test(pathText)) {
       systemStatuses.push({ value: node, path: pathText });
     }
+    if (/^(mimeType|mime|contentType|clipboardMimeType|systemClipboardMimeType|waylandClipboardMimeType|wlCopyMimeType)$/i.test(key) || (/^type$/i.test(key) && /\//.test(String(node))) || /(mime|contentType|content-type)/i.test(pathText)) {
+      mimeEntries.push({ value: node, path: pathText });
+    }
+    if (/(WAYLAND_DISPLAY|XDG_RUNTIME_DIR|waylandDisplay|display|runtimeDir|socket|environment|env)/i.test(key) || /(WAYLAND_DISPLAY|XDG_RUNTIME_DIR|waylandDisplay|display|runtimeDir|socket|environment|env)/i.test(pathText)) {
+      displayEnvEntries.push({ value: node, path: pathText });
+    }
   });
-  return { lastCopy, backendEntries, tkStatuses, systemStatuses };
+  return { lastCopy, backendEntries, tkStatuses, systemStatuses, mimeEntries, displayEnvEntries };
 }
 
-function waylandWlPasteProbeEligibility() {
-  const waylandDisplay = process.env.WAYLAND_DISPLAY || "";
-  if (!waylandDisplay) return { eligible: false, reason: "WAYLAND_DISPLAY is not set", wlPastePath: null, waylandDisplay };
-  const wlPastePath = findExecutable("wl-paste", `/usr/bin:${process.env.PATH || ""}`);
-  if (!wlPastePath) return { eligible: false, reason: "wl-paste is not on PATH", wlPastePath: null, waylandDisplay };
-  return { eligible: true, reason: "wl-paste available on Wayland", wlPastePath, waylandDisplay };
+function entriesText(entries) {
+  return entries.map((entry) => `${entry.path}=${textForEntry(entry.value)}`).join("\n");
+}
+
+function copyForAiTextPlainMimeRecorded(backendMetadata) {
+  return backendMetadata.mimeEntries.some((entry) => new RegExp(`\\b${CLIPBOARD_TEXT_MIME.replace("/", "\\/")}\\b`, "i").test(textForEntry(entry.value)));
+}
+
+function copyForAiWaylandDisplayMetadataRecorded(backendMetadata, probe) {
+  if (!backendMetadata.displayEnvEntries.length) return false;
+  const text = entriesText(backendMetadata.displayEnvEntries);
+  const expectedNeedles = [
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "waylandDisplay",
+    "display",
+    "runtimeDir",
+    "socket",
+    "environment",
+    "env",
+    probe && probe.waylandDisplay,
+    probe && probe.effectiveEnv && probe.effectiveEnv.WAYLAND_DISPLAY,
+    probe && probe.xdgRuntimeDir,
+    probe && probe.socketPath,
+  ].filter(Boolean);
+  return expectedNeedles.some((needle) => text.includes(String(needle)));
+}
+
+function copyForAiWaylandSystemMetadataFailures(backendMetadata, probe) {
+  const failures = [];
+  const systemSucceeded = backendMetadata.systemStatuses.some((entry) => copyStatusSucceeded(entry.value));
+  if (!systemSucceeded) failures.push("system/external clipboard backend was not reported as successful despite Wayland wl-paste being available");
+  if (!copyForAiTextPlainMimeRecorded(backendMetadata)) failures.push(`lastCopyForAi does not record ${CLIPBOARD_TEXT_MIME} MIME metadata for the system clipboard backend`);
+  if (!copyForAiWaylandDisplayMetadataRecorded(backendMetadata, probe)) failures.push("lastCopyForAi does not record attempted Wayland display/env metadata for the system clipboard backend");
+  return failures;
+}
+
+function waylandSocketCandidates(baseEnv = process.env) {
+  const runtimeDir = baseEnv.XDG_RUNTIME_DIR || "";
+  if (!runtimeDir) return [];
+  let names;
+  try {
+    names = fs.readdirSync(runtimeDir);
+  } catch (_error) {
+    return [];
+  }
+  return names
+    .filter((name) => /^wayland-\d+$/.test(name))
+    .map((display) => {
+      const socketPath = path.join(runtimeDir, display);
+      try {
+        if (!fs.statSync(socketPath).isSocket()) return null;
+      } catch (_error) {
+        return null;
+      }
+      return { display, socketPath };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.display.localeCompare(right.display, "en", { numeric: true }));
+}
+
+function envWithToolPath(baseEnv = process.env) {
+  return { ...baseEnv, PATH: `/usr/bin:${baseEnv.PATH || process.env.PATH || ""}` };
+}
+
+function waylandWlPasteProbeEligibility(baseEnv = process.env) {
+  const probeEnv = envWithToolPath(baseEnv);
+  const wlPastePath = findExecutable("wl-paste", probeEnv.PATH);
+  const wlCopyPath = findExecutable("wl-copy", probeEnv.PATH);
+  const discoveredSockets = waylandSocketCandidates(probeEnv);
+  let waylandDisplay = probeEnv.WAYLAND_DISPLAY || "";
+  let socketPath = "";
+  let displaySource = waylandDisplay ? "WAYLAND_DISPLAY" : "";
+  if (!waylandDisplay && discoveredSockets.length) {
+    waylandDisplay = discoveredSockets[0].display;
+    socketPath = discoveredSockets[0].socketPath;
+    displaySource = "XDG_RUNTIME_DIR socket discovery";
+  } else if (waylandDisplay) {
+    const matched = discoveredSockets.find((candidate) => candidate.display === waylandDisplay);
+    socketPath = matched ? matched.socketPath : "";
+  }
+  const base = {
+    wlPastePath,
+    wlCopyPath,
+    waylandDisplay,
+    xdgRuntimeDir: probeEnv.XDG_RUNTIME_DIR || "",
+    socketPath,
+    displaySource,
+    discoveredDisplays: discoveredSockets.map((candidate) => candidate.display),
+    mimeType: CLIPBOARD_TEXT_MIME,
+    effectiveEnv: {
+      WAYLAND_DISPLAY: waylandDisplay,
+      XDG_RUNTIME_DIR: probeEnv.XDG_RUNTIME_DIR || "",
+    },
+  };
+  if (!waylandDisplay) return { ...base, eligible: false, reason: "WAYLAND_DISPLAY is not set and no XDG_RUNTIME_DIR/wayland-* socket is discoverable" };
+  if (!wlPastePath) return { ...base, eligible: false, reason: "wl-paste is not on PATH" };
+  return { ...base, eligible: true, reason: "wl-paste available with a Wayland display", wlPastePath, waylandDisplay };
 }
 
 function normalizeClipboardProbeText(value) {
   return String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/g, "");
 }
 
-function probeWaylandClipboardAfterCopy(world) {
-  const eligibility = waylandWlPasteProbeEligibility();
+function probeWaylandClipboardAfterCopy(world, baseEnv = process.env) {
+  const eligibility = waylandWlPasteProbeEligibility(baseEnv);
+  world.copyForAiWlPasteProbeBaseEnv = baseEnv;
   if (!eligibility.eligible) {
     world.copyForAiWlPasteProbe = { ...eligibility, skipped: true };
     return world.copyForAiWlPasteProbe;
   }
-  const probe = spawnSync(eligibility.wlPastePath, ["--no-newline"], {
+  const probeEnv = envWithToolPath(baseEnv);
+  probeEnv.WAYLAND_DISPLAY = eligibility.waylandDisplay;
+  const args = ["--type", CLIPBOARD_TEXT_MIME, "--no-newline"];
+  const probe = spawnSync(eligibility.wlPastePath, args, {
     cwd: REPO_ROOT,
-    env: { ...process.env, PATH: `/usr/bin:${process.env.PATH || ""}` },
+    env: probeEnv,
     encoding: "utf8",
     timeout: 3000,
     maxBuffer: CLIPBOARD_PROBE_MAX_BUFFER,
@@ -618,6 +730,7 @@ function probeWaylandClipboardAfterCopy(world) {
   world.copyForAiWlPasteProbe = {
     ...eligibility,
     skipped: false,
+    args,
     status: probe.error && probe.error.code === "ETIMEDOUT" ? 124 : probe.status,
     signal: probe.signal,
     error: probe.error ? `${probe.error.code || probe.error.name || "error"}: ${probe.error.message}` : "",
@@ -706,6 +819,39 @@ When("I run the BaronyModLoader GUI with Copy for AI smoke button click", functi
     this.guiButtonInteractionCommand.status = 124;
   }
   probeWaylandClipboardAfterCopy(this);
+});
+
+When("I run the BaronyModLoader GUI with Copy for AI smoke button click and no WAYLAND_DISPLAY", function () {
+  const args = ["gui", "--smoke-clicks", COPY_FOR_AI_ACTION_ID, "--smoke-report", this.guiButtonInteractionReportPath];
+  const appEnv = envWithToolPath(process.env);
+  delete appEnv.WAYLAND_DISPLAY;
+  const probeEligibility = waylandWlPasteProbeEligibility(appEnv);
+  const skippedReasons = [];
+  if (!probeEligibility.eligible) skippedReasons.push(probeEligibility.reason);
+  if (!probeEligibility.wlCopyPath) skippedReasons.push("wl-copy is not on PATH");
+  this.copyForAiWaylandDisplayAbsent = {
+    appEnvHadWaylandDisplay: Boolean(process.env.WAYLAND_DISPLAY),
+    skipped: skippedReasons.length > 0,
+    reason: skippedReasons.join("; "),
+    probeEligibility,
+    appEnvWaylandDisplay: appEnv.WAYLAND_DISPLAY || "",
+    xdgRuntimeDir: appEnv.XDG_RUNTIME_DIR || "",
+  };
+  this.guiButtonInteractionCommandLine = `env -u WAYLAND_DISPLAY ${BML_BIN} ${args.join(" ")}`;
+  if (this.copyForAiWaylandDisplayAbsent.skipped) {
+    this.copyForAiWlPasteProbe = { ...probeEligibility, skipped: true };
+    return;
+  }
+  this.guiButtonInteractionCommand = spawnSync(BML_BIN, args, {
+    cwd: REPO_ROOT,
+    env: appEnv,
+    encoding: "utf8",
+    timeout: 90000,
+  });
+  if (this.guiButtonInteractionCommand.error && this.guiButtonInteractionCommand.error.code === "ETIMEDOUT") {
+    this.guiButtonInteractionCommand.status = 124;
+  }
+  probeWaylandClipboardAfterCopy(this, appEnv);
 });
 
 When("I run the BaronyModLoader GUI with mocked launch button clicks", function () {
@@ -946,15 +1092,14 @@ Then("the Copy for AI smoke report proves backend clipboard persistence when ava
   const backendMetadata = copyForAiBackendMetadata(report);
   const failures = [];
   const tkSucceeded = backendMetadata.tkStatuses.some((entry) => copyStatusSucceeded(entry.value));
-  const systemSucceeded = backendMetadata.systemStatuses.some((entry) => copyStatusSucceeded(entry.value));
   if (!tkSucceeded) failures.push("Tk clipboard backend was not reported as successful");
   if (!backendMetadata.systemStatuses.length) failures.push("system/external clipboard backend was not attempted or reported");
-  let probe = this.copyForAiWlPasteProbe || waylandWlPasteProbeEligibility();
+  let probe = this.copyForAiWlPasteProbe || waylandWlPasteProbeEligibility(this.copyForAiWlPasteProbeBaseEnv || process.env);
   if (probe.eligible && !probe.skipped) {
     const expected = normalizeClipboardProbeText(payload.text);
     let actual = normalizeClipboardProbeText(probe.stdout);
     if (probe.status !== 0 || actual !== expected) {
-      const refreshedProbe = probeWaylandClipboardAfterCopy(this);
+      const refreshedProbe = probeWaylandClipboardAfterCopy(this, this.copyForAiWlPasteProbeBaseEnv || process.env);
       const refreshedActual = normalizeClipboardProbeText(refreshedProbe.stdout);
       if (refreshedProbe.status === 0 && refreshedActual === expected) {
         probe = refreshedProbe;
@@ -962,26 +1107,71 @@ Then("the Copy for AI smoke report proves backend clipboard persistence when ava
       }
     }
     if (probe.status !== 0) {
-      failures.push(`wl-paste failed after smoke click (status ${probe.status === null || probe.status === undefined ? "<unset>" : probe.status})`);
+      failures.push(`wl-paste --type ${CLIPBOARD_TEXT_MIME} failed after smoke click (status ${probe.status === null || probe.status === undefined ? "<unset>" : probe.status})`);
     }
     if (actual === COPY_FOR_AI_VISIBLE_SUMMARY) {
-      failures.push("wl-paste returned only the visible summary instead of the AI issue context");
+      failures.push(`wl-paste --type ${CLIPBOARD_TEXT_MIME} returned only the visible summary instead of the AI issue context`);
     }
     if (actual !== expected) {
-      failures.push(`wl-paste did not return the full report payload (expected ${expected.length} chars, got ${actual.length} chars)`);
+      failures.push(`wl-paste --type ${CLIPBOARD_TEXT_MIME} did not return the full report payload (expected ${expected.length} chars, got ${actual.length} chars)`);
     }
-    if (!systemSucceeded) failures.push("system/external clipboard backend was not reported as successful despite Wayland wl-paste being available");
+    failures.push(...copyForAiWaylandSystemMetadataFailures(backendMetadata, probe));
   }
   if (failures.length) {
     contractGap(
       this,
-      "Copy for AI smoke did not prove persistent user-visible clipboard behavior.",
+      "Copy for AI smoke did not prove persistent user-visible text/plain clipboard behavior.",
       [
         `FAILURES:\n${failures.join("\n")}`,
         `WL-PASTE PROBE: ${textForEntry(probe)}`,
         `LAST COPY: ${backendMetadata.lastCopy ? textForEntry(backendMetadata.lastCopy.value) : "<none>"}`,
+        `SYSTEM STATUS: ${entriesText(backendMetadata.systemStatuses) || "<none>"}`,
+        `MIME METADATA: ${entriesText(backendMetadata.mimeEntries) || "<none>"}`,
+        `DISPLAY/ENV METADATA: ${entriesText(backendMetadata.displayEnvEntries) || "<none>"}`,
         `PAYLOAD PATH: ${payload.path}`,
       ].join("\n")
+    );
+  }
+});
+
+Then(/^the no-WAYLAND_DISPLAY Copy for AI smoke either gracefully skips on unavailable Wayland probing or records text\/plain system clipboard success$/, function () {
+  const attempt = this.copyForAiWaylandDisplayAbsent;
+  if (!attempt) {
+    contractGap(this, "No-WAYLAND_DISPLAY Copy for AI smoke step did not record its Wayland probing decision.");
+  }
+  if (attempt.skipped) {
+    if (!/(WAYLAND_DISPLAY|XDG_RUNTIME_DIR|wayland|socket|wl-paste|wl-copy)/i.test(attempt.reason || "")) {
+      contractGap(this, "No-WAYLAND_DISPLAY Copy for AI smoke skipped for a reason unrelated to Wayland/wl-copy/wl-paste availability.", textForEntry(attempt));
+    }
+    return;
+  }
+  if (attempt.appEnvWaylandDisplay) {
+    contractGap(this, "No-WAYLAND_DISPLAY Copy for AI smoke did not actually remove WAYLAND_DISPLAY from the app environment.", textForEntry(attempt));
+  }
+  const report = ensureReport(this);
+  const backendMetadata = copyForAiBackendMetadata(report);
+  const probe = this.copyForAiWlPasteProbe || {};
+  const failures = copyForAiWaylandSystemMetadataFailures(backendMetadata, probe);
+  if (failures.length || !probe.eligible || probe.skipped) {
+    contractGap(
+      this,
+      "Copy for AI did not prove Wayland socket discovery and text/plain system clipboard success when WAYLAND_DISPLAY was absent.",
+      [
+        `FAILURES:\n${failures.join("\n") || "<none>"}`,
+        `NO-WAYLAND ATTEMPT: ${textForEntry(attempt)}`,
+        `WL-PASTE PROBE: ${textForEntry(probe)}`,
+        `LAST COPY: ${backendMetadata.lastCopy ? textForEntry(backendMetadata.lastCopy.value) : "<none>"}`,
+      ].join("\n")
+    );
+  }
+  const payload = copyForAiPayloadInfo(this);
+  const expected = normalizeClipboardProbeText(payload.text);
+  const actual = normalizeClipboardProbeText(probe.stdout);
+  if (probe.status !== 0 || actual !== expected) {
+    contractGap(
+      this,
+      `Copy for AI no-WAYLAND_DISPLAY smoke did not leave ${CLIPBOARD_TEXT_MIME} raw clipboard text available through wl-paste.`,
+      `WL-PASTE PROBE: ${textForEntry(probe)}\nExpected chars: ${expected.length}\nActual chars: ${actual.length}`
     );
   }
 });

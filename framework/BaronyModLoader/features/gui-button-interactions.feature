@@ -22,6 +22,11 @@ Feature: Profile-first GUI button interactions
     And the Copy for AI smoke report proves backend clipboard persistence when available
     And copied AI issue context includes issue-fix essentials and rejects useless payloads
 
+  @gui-button-interactions @copy-for-ai @wayland-discovery @safe-specific
+  Scenario: Copy for AI smoke click writes text/plain when WAYLAND_DISPLAY is absent but a Wayland socket is discoverable
+    When I run the BaronyModLoader GUI with Copy for AI smoke button click and no WAYLAND_DISPLAY
+    Then the no-WAYLAND_DISPLAY Copy for AI smoke either gracefully skips on unavailable Wayland probing or records text/plain system clipboard success
+
   @gui-button-interactions @environment @mocked-launch
   Scenario: Environment launch buttons start mocked BML and vanilla launches through Tk buttons
     When I run the BaronyModLoader GUI with mocked launch button clicks
