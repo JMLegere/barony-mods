@@ -5967,17 +5967,103 @@ def _gui_runtime_info_for_package(package: LoadedPackage | None) -> dict[str, An
     }
 
 
+def _gui_runtime_capability_entries_for_modlist_plan(plan: ModlistCompatibilityPlan) -> list[dict[str, Any]]:
+    capabilities: dict[str, dict[str, Any]] = {}
+    for package in modlist_plan_ordered_packages(plan):
+        for entry in package_required_capabilities(package.manifest):
+            cap_id = entry.get("id")
+            if not isinstance(cap_id, str) or not cap_id:
+                continue
+            requested_version = entry.get("version") if isinstance(entry.get("version"), str) and entry.get("version") else None
+            capability = capabilities.setdefault(cap_id, {"id": cap_id, "required": True})
+            if requested_version is None:
+                continue
+            current_version = capability.get("version")
+            if not isinstance(current_version, str):
+                capability["version"] = requested_version
+            elif is_semverish(current_version) and is_semverish(requested_version) and semver_key(requested_version) > semver_key(current_version):
+                capability["version"] = requested_version
+    return [capabilities[cap_id] for cap_id in sorted(capabilities)]
+
+
+def _gui_runtime_info_for_modlist_plan(plan: ModlistCompatibilityPlan) -> dict[str, Any]:
+    return {
+        "runtimeId": "barony-bml-runtime-gui-dry-run",
+        "runtimeVersion": APP_VERSION,
+        "contract": {"id": RUNTIME_CONTRACT_ID, "version": RUNTIME_CONTRACT_VERSION},
+        "capabilities": _gui_runtime_capability_entries_for_modlist_plan(plan),
+        "platforms": [current_platform_id(), "linux-x86_64"],
+        "strategy": RUNTIME_STRATEGY_INSTALLED_HOOK,
+        "verificationStatus": "dry_run_metadata_only",
+    }
+
+
+def _gui_modlist_runtime_manifest_plan(
+    profile: dict[str, Any],
+    profile_dir: Path,
+    plan: ModlistCompatibilityPlan,
+    runtime_info: dict[str, Any],
+    out_path: Path | None = None,
+    *,
+    runtime_executable: Path | None = None,
+    runtime_registration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    manifest_path = Path(out_path or (bml_profile_root(profile_dir) / "manifests" / "runtime-manifest.json")).expanduser()
+    manifest = build_runtime_manifest_for_modlist(profile, profile_dir, plan, runtime_info, runtime_executable, runtime_registration)
+    blockers = [issue.message for issue in plan.blocking_issues]
+    warnings = [issue.message for issue in plan.non_blocking_issues]
+    plan_dto = modlist_compatibility_plan_dto(plan)
+    return {
+        "runtimeManifestPath": str(manifest_path),
+        "manifestPath": str(manifest_path),
+        "outputPath": str(manifest_path),
+        "manifest": manifest,
+        "runtimeManifest": manifest,
+        "modlistPlan": plan_dto,
+        "launchable": plan.launchable,
+        "blockers": blockers,
+        "warnings": warnings,
+        "disabledReasons": blockers,
+        "sideEffects": {"processLaunch": False, "filesystemWrite": False},
+        "processLaunched": False,
+    }
+
+
 def _gui_refresh_readiness(install: dict[str, Any], profile: dict[str, Any] | None, package: LoadedPackage | None, profile_dir: Path) -> dict[str, Any]:
+    plan: ModlistCompatibilityPlan | None = None
+    plan_dto: dict[str, Any] | None = None
+    manifest_plan: dict[str, Any] | None = None
     runtime_info = _gui_runtime_info_for_package(package)
-    return build_launch_readiness_state(
+    package_state: dict[str, Any] | None = {"status": "valid"} if package is not None else None
+    disabled_reasons: list[str] = []
+    if profile is not None:
+        plan = build_modlist_compatibility_plan(profile, profile_dir)
+        plan_dto = modlist_compatibility_plan_dto(plan)
+        runtime_info = _gui_runtime_info_for_modlist_plan(plan)
+        package_state = {"status": "valid" if plan.packages else "blocked", "modCount": len(plan.packages), "modlistPlan": plan_dto}
+        manifest_plan = _gui_modlist_runtime_manifest_plan(profile, profile_dir, plan, runtime_info)
+        disabled_reasons.extend(manifest_plan["disabledReasons"])
+    readiness = build_readiness_matrix(
         install=install,
-        profile=profile,
-        profile_dir=profile_dir,
-        package=package,
-        runtime_info=runtime_info,
+        profile={"status": "selected"} if profile is not None else None,
+        package=package_state,
+        runtime={"platform": current_platform_id(), "verificationStatus": "verified" if runtime_info is not None else ""},
         platform=current_platform_id(),
-        dry_run=True,
     )
+    disabled_reasons = _gui_compact_texts([*readiness.get("disabledReasons", []), *disabled_reasons])
+    readiness = {**readiness, "status": "ready" if not disabled_reasons else "blocked", "disabledReasons": disabled_reasons, "disabled_reasons": disabled_reasons, "blockers": disabled_reasons}
+    return {
+        "section": "launch readiness",
+        "readiness": readiness,
+        "plan": manifest_plan,
+        "runtimeManifestPlan": manifest_plan,
+        "modlistPlan": plan_dto,
+        "launchable": plan.launchable if plan is not None else None,
+        "dryRun": True,
+        "processLaunched": False,
+        "playableClaimBoundary": "dry-run only; no playable/live game claim without production runtime evidence",
+        "disabledReasons": disabled_reasons,
+    }
 
 
 def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, package: LoadedPackage | None) -> dict[str, Any]:
@@ -5994,38 +6080,26 @@ def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, packa
             "sideEffects": {"processLaunch": False, "filesystemWrite": False},
         }
 
-    launch_package, active_mods, combined = resolve_profile_launch_package(profile, profile_dir, package)
-    active_package_ids = active_mod_package_ids(active_mods)
+    plan = build_modlist_compatibility_plan(profile, profile_dir)
+    plan_dto = modlist_compatibility_plan_dto(plan)
+    runtime_info = _gui_runtime_info_for_modlist_plan(plan)
+    manifest_plan = _gui_modlist_runtime_manifest_plan(profile, profile_dir, plan, runtime_info)
+    combined = ValidationResult("GUI BaronyModLoader dry-run validation")
+    combined.problems.extend(plan.issues)
+    active_package_ids = active_mod_package_ids(plan.enabled_mods)
     selected_package_id = package.manifest.get("id") if package is not None else None
-    if launch_package is None:
-        return {
-            "status": "blocked",
-            "dryRun": True,
-            "processStarted": False,
-            "processLaunched": False,
-            "wouldStartBarony": False,
-            "registry": str(registry_path),
-            "activePackageIds": active_package_ids,
-            "selectedPackageId": selected_package_id,
-            "disabledReasons": _validation_disabled_reasons(combined),
-            "problems": _validation_problems(combined),
-            "sideEffects": {"processLaunch": False, "filesystemWrite": False},
-        }
-
-    runtime_info = _gui_runtime_info_for_package(launch_package)
-    plan = plan_runtime_manifest(profile, profile_dir, launch_package, runtime_info, bml_profile_root(profile_dir) / "manifests" / "runtime-manifest.json")
     registry, registry_result = load_runtime_registry(registry_path, missing_ok=False)
     combined.extend(registry_result)
     combined.extend(validate_profile_steam_install(profile))
-    if registry_result.ok:
-        _selected_runtime, _selected_runtime_info, _runtime_info_path, _runtime_executable, selection_result = select_registered_runtime(
+    if registry_result.ok and plan.launchable:
+        _selected_runtime, _selected_runtime_info, _runtime_info_path, _runtime_executable, selection_result = select_registered_runtime_for_modlist(
             registry,
             profile,
-            launch_package,
+            plan,
             None,
         )
         combined.extend(selection_result)
-    disabled_reasons = [*plan.get("disabledReasons", []), *(_validation_disabled_reasons(combined) if not combined.ok else [])]
+    disabled_reasons = _gui_compact_texts([*manifest_plan.get("disabledReasons", []), *(_validation_disabled_reasons(combined) if not combined.ok else [])])
     return {
         "status": "ready" if not disabled_reasons else "blocked",
         "dryRun": True,
@@ -6033,13 +6107,20 @@ def _gui_launch_dry_run(profile: dict[str, Any] | None, profile_dir: Path, packa
         "processLaunched": False,
         "wouldStartBarony": False,
         "registry": str(registry_path),
-        "launchPackageId": launch_package.manifest.get("id"),
+        "launchable": plan.launchable,
+        "modlistPlan": plan_dto,
         "selectedPackageId": selected_package_id,
         "activePackageIds": active_package_ids,
-        "runtimeManifestPath": plan.get("runtimeManifestPath"),
-        "manifestPath": plan.get("manifestPath"),
-        "manifest": plan.get("manifest"),
-        "sideEffects": plan.get("sideEffects"),
+        "enabledModIds": plan_dto["enabledModIds"],
+        "loadOrder": plan_dto["loadOrder"],
+        "issues": plan_dto["issues"],
+        "blockingIssues": plan_dto["blockingIssues"],
+        "warnings": plan_dto["warnings"],
+        "nonBlockingIssues": plan_dto["nonBlockingIssues"],
+        "runtimeManifestPath": manifest_plan.get("runtimeManifestPath"),
+        "manifestPath": manifest_plan.get("manifestPath"),
+        "manifest": manifest_plan.get("manifest"),
+        "sideEffects": manifest_plan.get("sideEffects"),
         "disabledReasons": disabled_reasons,
         "problems": _validation_problems(combined),
     }
@@ -6176,17 +6257,17 @@ def _gui_start_launch_process(
 def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: LoadedPackage | None) -> dict[str, Any]:
     combined = ValidationResult("GUI BaronyModLoader launch validation")
     mocked = _gui_launch_mocked()
-    launch_package = package
-    active_mods: list[dict[str, Any]] = []
     selected_package_id = package.manifest.get("id") if package is not None else None
+    plan: ModlistCompatibilityPlan | None = None
+    plan_dto: dict[str, Any] | None = None
+    active_package_ids: list[str] = []
     if profile is None:
         combined.add("BML_GUI_PROFILE_MISSING", "fatal", "Create or select a profile before launching BaronyModLoader.")
-        if package is None:
-            combined.add("BML_GUI_PACKAGE_MISSING", "fatal", "Select a local BML package before launching BaronyModLoader.")
     else:
-        launch_package, active_mods, active_result = resolve_profile_launch_package(profile, profile_dir, package)
-        combined.extend(active_result)
-    active_package_ids = active_mod_package_ids(active_mods)
+        plan = build_modlist_compatibility_plan(profile, profile_dir)
+        plan_dto = modlist_compatibility_plan_dto(plan)
+        combined.problems.extend(plan.issues)
+        active_package_ids = active_mod_package_ids(plan.enabled_mods)
 
     registry_path = runtime_registry_path(None)
     registry: dict[str, Any] = {}
@@ -6203,12 +6284,13 @@ def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: 
     runtime_info: dict[str, Any] | None = None
     runtime_info_path: Path | None = None
     runtime_executable: Path | None = None
-    if mocked and profile is not None and launch_package is not None:
+    if mocked and profile is not None and plan is not None and plan.launchable:
         steam = profile_steam_install(profile) or {}
         executable_value = steam.get("executable") or _gui_default_barony_executable()
         runtime_executable = Path(str(executable_value)).expanduser().resolve(strict=False)
-        runtime_info = _gui_runtime_info_for_package(launch_package)
+        runtime_info = _gui_runtime_info_for_modlist_plan(plan)
         runtime_info_path = bml_profile_root(profile_dir) / "mock-runtime-info.json"
+        write_json_file(runtime_info_path, runtime_info)
         target = current_platform_target()
         mock_hook_name = WINDOWS_HOOK_LIBRARY_NAME if sys.platform == "win32" else "libbarony_bml.so"
         selected_runtime = {
@@ -6218,11 +6300,11 @@ def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: 
             "steamExecutable": str(runtime_executable),
             "hookLibrary": str(bml_profile_root(profile_dir) / "mock" / mock_hook_name),
         }
-    elif profile is not None and launch_package is not None and registry_result.ok:
-        selected_runtime, runtime_info, runtime_info_path, runtime_executable, selection_result = select_registered_runtime(
+    elif profile is not None and plan is not None and plan.launchable and registry_result.ok:
+        selected_runtime, runtime_info, runtime_info_path, runtime_executable, selection_result = select_registered_runtime_for_modlist(
             registry,
             profile,
-            launch_package,
+            plan,
             None,
         )
         combined.extend(selection_result)
@@ -6234,19 +6316,27 @@ def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: 
             combined,
             registry=str(registry_path),
             runtimeManifestPath=str(out_path),
+            modlistPlan=plan_dto,
+            launchable=plan.launchable if plan is not None else False,
             activePackageIds=active_package_ids,
             selectedPackageId=selected_package_id,
-            launchPackageId=launch_package.manifest.get("id") if launch_package is not None else None,
+            enabledModIds=plan_dto["enabledModIds"] if plan_dto is not None else [],
+            loadOrder=plan_dto["loadOrder"] if plan_dto is not None else [],
+            issues=plan_dto["issues"] if plan_dto is not None else [],
+            blockingIssues=plan_dto["blockingIssues"] if plan_dto is not None else [],
+            warnings=plan_dto["warnings"] if plan_dto is not None else [],
+            nonBlockingIssues=plan_dto["nonBlockingIssues"] if plan_dto is not None else [],
         )
 
     assert profile is not None
-    assert launch_package is not None
+    assert plan is not None
+    assert plan_dto is not None
     assert selected_runtime is not None
     assert runtime_info is not None
     assert runtime_info_path is not None
     assert runtime_executable is not None
 
-    manifest, active_mods_path = write_launch_artifacts(profile, profile_dir, launch_package, runtime_info, out_path, runtime_executable, selected_runtime)
+    manifest, active_mods_path, validation_report_path = write_modlist_launch_artifacts(profile, profile_dir, plan, runtime_info, out_path, runtime_executable, selected_runtime)
     command = [str(runtime_executable)]
     cwd = launch_working_directory(profile, runtime_executable)
     env = launch_environment(profile, profile_dir, out_path, selected_runtime)
@@ -6264,9 +6354,17 @@ def _gui_launch_bml(profile: dict[str, Any] | None, profile_dir: Path, package: 
             "runtimeManifestPath": str(out_path),
             "runtimeManifest": str(out_path),
             "activeMods": str(active_mods_path),
+            "validationReport": str(validation_report_path),
+            "launchable": plan.launchable,
+            "modlistPlan": plan_dto,
             "activePackageIds": active_package_ids,
+            "enabledModIds": plan_dto["enabledModIds"],
+            "loadOrder": plan_dto["loadOrder"],
+            "issues": plan_dto["issues"],
+            "blockingIssues": plan_dto["blockingIssues"],
+            "warnings": plan_dto["warnings"],
+            "nonBlockingIssues": plan_dto["nonBlockingIssues"],
             "selectedPackageId": selected_package_id,
-            "launchPackageId": launch_package.manifest.get("id"),
             "createdAt": manifest["launch"]["createdAt"],
         },
     )
@@ -8850,19 +8948,27 @@ def build_runtime_manifest_for_modlist(
     }
 
 
-def validation_report_for_modlist_plan(plan: ModlistCompatibilityPlan) -> dict[str, Any]:
+def modlist_compatibility_plan_dto(plan: ModlistCompatibilityPlan) -> dict[str, Any]:
+    enabled_mods = [dict(mod) for mod in plan.enabled_mods if isinstance(mod, dict)]
     issues = [problem_to_dict(issue) for issue in plan.issues]
     blocking_issues = [problem_to_dict(issue) for issue in plan.blocking_issues]
     non_blocking_issues = [problem_to_dict(issue) for issue in plan.non_blocking_issues]
+    enabled_mod_ids = active_mod_package_ids(enabled_mods)
     return {
         "launchable": plan.launchable,
+        "enabledMods": enabled_mods,
+        "enabledModIds": enabled_mod_ids,
+        "activePackageIds": enabled_mod_ids,
+        "loadOrder": [dict(entry) for entry in plan.load_order if isinstance(entry, dict)],
         "issues": issues,
         "blockingIssues": blocking_issues,
-        "nonBlockingIssues": non_blocking_issues,
         "warnings": non_blocking_issues,
-        "enabledMods": [dict(mod) for mod in plan.enabled_mods if isinstance(mod, dict)],
-        "loadOrder": [dict(entry) for entry in plan.load_order if isinstance(entry, dict)],
+        "nonBlockingIssues": non_blocking_issues,
     }
+
+
+def validation_report_for_modlist_plan(plan: ModlistCompatibilityPlan) -> dict[str, Any]:
+    return modlist_compatibility_plan_dto(plan)
 
 
 def _active_mods_entry_for_modlist_package(package: LoadedPackage, runtime_manifest_path: Path, load_order: int) -> dict[str, Any]:
@@ -9032,8 +9138,19 @@ def build_package_library_state(*roots: Any, mods_root: Any = None, profile_dir:
     disabled: list[str] = []
     if duplicate_ids:
         disabled.append(f"Duplicate package versions are present for: {', '.join(str(item) for item in duplicate_ids)}.")
-    if len(active_mods) > 1:
-        disabled.append("Multiple active packages are enabled; this app slice allows one active package at a time.")
+    modlist_plan: dict[str, Any] | None = None
+    modlist_warnings: list[dict[str, Any]] = []
+    modlist_blockers: list[dict[str, Any]] = []
+    if profile_dir is not None:
+        resolved_profile_dir = Path(str(profile_dir)).expanduser().resolve()
+        if resolved_profile_dir.exists():
+            profile, _profile_dir, profile_result = load_profile(str(resolved_profile_dir))
+            if profile is not None:
+                plan = build_modlist_compatibility_plan(profile, resolved_profile_dir)
+                modlist_plan = modlist_compatibility_plan_dto(plan)
+                modlist_warnings = modlist_plan["warnings"]
+                modlist_blockers = modlist_plan["blockingIssues"]
+                disabled.extend(issue["message"] for issue in modlist_blockers if isinstance(issue.get("message"), str))
     selected_summary = package_summary_from_path(Path(selected_package)) if selected_package is not None else None
     return {
         **catalog,
@@ -9044,7 +9161,11 @@ def build_package_library_state(*roots: Any, mods_root: Any = None, profile_dir:
         "activeMods": active_mods,
         "activeModCount": len(active_mods),
         "duplicatePackageIds": duplicate_ids,
-        "disabledReasons": disabled,
+        "modlistPlan": modlist_plan,
+        "launchable": modlist_plan.get("launchable") if isinstance(modlist_plan, dict) else None,
+        "modlistWarnings": modlist_warnings,
+        "modlistBlockers": modlist_blockers,
+        "disabledReasons": _gui_compact_texts(disabled),
         "validationCards": [
             {"packageId": item.get("id"), "status": item.get("validationStatus"), "problems": item.get("problems", [])}
             for item in packages

@@ -34,8 +34,8 @@ Feature: Package Library Contract
     When I ask the Package Library API to scan two Runebound Elixirs versions
     Then the Package Library returns one semantic card per Runebound version without clobbering paths
 
-  @package-library @multiple-active-guard
-  Scenario: Multiple active package guard
+  @package-library @multiple-active-modlist
+  Scenario: Multiple active packages produce launchable modlist state
     Given a Package Library temp profile with multiple active packages
-    When I ask the Package Library API to evaluate the active-package guard
-    Then the Package Library blocks profiles with multiple active packages before launch
+    When I ask the Package Library API to evaluate the compatible multi-active modlist state
+    Then the Package Library represents multiple active packages as launchable modlist state

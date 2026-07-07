@@ -412,6 +412,17 @@ function hasRunebound(mods) {
   return mods.some((mod) => /jml\.runebound-elixirs|runebound:\s*elixirs|runebound-elixirs/i.test(String(mod)));
 }
 
+function packageIdsFromValue(value) {
+  const ids = new Set();
+  walk(value, (node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const key of ["id", "packageId", "modId"]) {
+      if (typeof node[key] === "string") ids.add(node[key]);
+    }
+  });
+  return [...ids];
+}
+
 function packageManifest(packagePath) {
   return JSON.parse(fs.readFileSync(path.join(packagePath, "bml-package.json"), "utf8"));
 }
@@ -1324,59 +1335,64 @@ Then("mocked launch feedback reports BML and Vanilla process launch metadata wit
   }
 });
 
-Then("the BML launch smoke blocks on multiple active profile packages before process launch", function () {
+Then("the BML launch smoke accepts the compatible multi-active profile without a multiple-package blocker", function () {
   const { evidence, text } = requireLaunchBmlEvidence(this);
   const invokedEntries = evidence.filter((entry) => entry && typeof entry === "object" && entry.id === "launch-bml");
   if (!invokedEntries.some((entry) => entry.invoked === true || /tk button\.invoke|button\.invoke|invoked/i.test(textForEntry(entry)))) {
     contractGap(this, "Expected Launch BML Barony to be invoked through its Tk button.", `ACTION EVIDENCE:\n${text}`);
   }
-  if (!/\bblocked\b/i.test(text)) {
-    contractGap(this, "Launch BML Barony did not report blocked status for multiple active profile packages.", `ACTION EVIDENCE:\n${text}`);
+  if (/multiple active|more than one active|one active package|one package at a time|disable all but one|only one package/i.test(text)) {
+    contractGap(this, "Launch BML Barony still reports the retired multiple-active-package blocker.", `ACTION EVIDENCE:\n${text}`);
   }
-  const trueProcessFields = evidence.flatMap((entry) =>
-    booleanFieldEvidence(entry, /^processStarted$|^processLaunched$|baronyStarted|gameStarted|startedProcess/i, true)
-  );
-  if (trueProcessFields.length) {
-    contractGap(this, "Launch BML Barony reported a process launch despite multiple active profile packages.", `TRUE PROCESS FIELDS:\n${trueProcessFields.join("\n")}\nACTION EVIDENCE:\n${text}`);
+  if (/\bblocked\b/i.test(text)) {
+    contractGap(this, "Compatible Stash + Runebound profile should not be blocked merely because multiple packages are active.", `ACTION EVIDENCE:\n${text}`);
   }
-  const falseStarted = evidence.flatMap((entry) => booleanFieldEvidence(entry, /^processStarted$/i, false));
-  const falseLaunched = evidence.flatMap((entry) => booleanFieldEvidence(entry, /^processLaunched$/i, false));
-  if (!falseStarted.length || !falseLaunched.length) {
-    contractGap(this, "Launch BML Barony must explicitly report processStarted=false and processLaunched=false.", `ACTION EVIDENCE:\n${text}`);
-  }
+  requireActionBooleanEvidence(this, "launch-bml", /^mocked$/i, true, "mocked");
 });
 
-Then("the BML launch blocker visibly lists Stash and Runebound active package ids", function () {
+Then("the BML launch smoke writes a multi-mod runtime manifest for Stash and Runebound", function () {
   const { report, text } = requireLaunchBmlEvidence(this);
-  const activity = visibleActivityText(report);
-  const combined = `${text}\n${activity}`;
-  for (const packageId of [STASH_ID, RUNEBOUND_ID]) {
-    if (!combined.includes(packageId)) {
-      contractGap(this, `Launch BML Barony blocker does not visibly list active package id ${packageId}.`, `ACTION/ACTIVITY EVIDENCE:\n${combined}`);
-    }
-  }
-  if (!/multiple|more than one|disable all but one|disable .* one|only one|select.*enable|enable.*selected/i.test(combined)) {
-    contractGap(this, "Launch BML Barony blocker does not clearly instruct the user how to resolve multiple active packages.", `ACTION/ACTIVITY EVIDENCE:\n${combined}`);
-  }
-});
-
-Then("the BML launch smoke does not write a misleading one-mod runtime manifest", function () {
   const fixture = this.multipleActiveProfileFixture || {};
-  const manifestPath = fixture.runtimeManifestPath;
-  if (manifestPath && fs.existsSync(manifestPath)) {
+  const candidatePaths = [
+    fixture.runtimeManifestPath,
+    fixture.bmlRoot && path.join(fixture.bmlRoot, "manifests", "runtime-manifest.json"),
+    ...collectPathStrings(report).filter((candidate) => /runtime-manifest\.json$/i.test(candidate)),
+  ].filter(Boolean);
+  const seenPaths = new Set();
+  const manifests = [];
+  for (const candidate of candidatePaths) {
+    const manifestPath = path.resolve(String(candidate));
+    if (seenPaths.has(manifestPath) || !fs.existsSync(manifestPath)) continue;
+    seenPaths.add(manifestPath);
     const raw = fs.readFileSync(manifestPath, "utf8");
-    let manifest = null;
     try {
-      manifest = JSON.parse(raw);
+      manifests.push({ path: manifestPath, payload: JSON.parse(raw), raw });
     } catch (_error) {
-      // Non-JSON is still a launch artifact at the blocked boundary.
+      manifests.push({ path: manifestPath, payload: null, raw });
     }
-    const mods = manifest && Array.isArray(manifest.mods) ? manifest.mods.map((entry) => String(entry.id || entry.packageId || entry)) : [];
+  }
+  const matchingManifest = manifests.find((manifest) => {
+    const ids = packageIdsFromValue(manifest.payload);
+    return ids.includes(STASH_ID) && ids.includes(RUNEBOUND_ID);
+  });
+  if (!matchingManifest) {
     contractGap(
       this,
-      "Launch BML Barony wrote a runtime manifest even though multiple active profile packages should block before manifest generation.",
-      `Runtime manifest path: ${manifestPath}\nManifest mods: ${JSON.stringify(mods)}\nManifest preview:\n${raw.slice(0, 4000)}`
+      "Launch BML Barony did not write a runtime manifest representing both active packages.",
+      `Candidate paths: ${JSON.stringify([...seenPaths])}\nManifest previews: ${JSON.stringify(manifests.map((manifest) => ({ path: manifest.path, ids: packageIdsFromValue(manifest.payload), preview: manifest.raw.slice(0, 1000) })), null, 2)}\nACTION EVIDENCE:\n${text}`
     );
+  }
+
+  const activeModsPath = fixture.activeModsPath;
+  if (!activeModsPath || !fs.existsSync(activeModsPath)) {
+    contractGap(this, "Launch BML Barony did not preserve/write active-mods modlist evidence.", `activeModsPath: ${activeModsPath || "<missing>"}\nACTION EVIDENCE:\n${text}`);
+  }
+  const activeMods = JSON.parse(fs.readFileSync(activeModsPath, "utf8"));
+  const activeIds = packageIdsFromValue(activeMods);
+  for (const packageId of [STASH_ID, RUNEBOUND_ID]) {
+    if (!activeIds.includes(packageId)) {
+      contractGap(this, `Launch BML Barony active-mods modlist evidence does not include ${packageId}.`, `activeModsPath: ${activeModsPath}\nactiveIds: ${JSON.stringify(activeIds)}\nPayload:\n${JSON.stringify(activeMods, null, 2)}`);
+    }
   }
 });
 

@@ -1002,6 +1002,43 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             self.assertCountEqual(self.plan_package_ids(plan.packages), ["test.alpha", "test.beta"])
             self.assertCountEqual(self.plan_package_ids(plan.enabled_mods), ["test.alpha", "test.beta"])
 
+
+    def test_package_library_state_exposes_launchable_modlist_for_multiple_active_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir, load_order=10),
+                self.active_mod_entry_for_package(beta_dir, load_order=20),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+
+            state = loader.build_package_library_state(alpha_dir, beta_dir, profile_dir=profile_dir, selected_package=alpha_dir)
+
+            self.assertCountEqual(self.plan_package_ids(state.get("activeMods", [])), ["test.alpha", "test.beta"])
+            disabled_text = "\n".join(str(reason) for reason in state.get("disabledReasons", []))
+            self.assertNotRegex(
+                disabled_text,
+                r"multiple active|more than one active|one active package|one package at a time|disable all but one",
+            )
+            plan = state.get("modlistPlan")
+            self.assertIsInstance(plan, dict, state)
+            self.assertIs(plan.get("launchable"), True, plan)
+            plan_mod_ids = self.plan_package_ids(
+                plan.get("enabledMods")
+                or plan.get("enabled_mods")
+                or plan.get("loadOrder")
+                or plan.get("load_order")
+                or []
+            )
+            self.assertCountEqual(plan_mod_ids, ["test.alpha", "test.beta"])
+            self.assertEqual(plan.get("blocking") or plan.get("blockingIssues") or plan.get("blocking_issues") or [], [])
+
     def test_modlist_compatibility_plan_uses_active_mod_load_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)

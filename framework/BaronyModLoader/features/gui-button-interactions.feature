@@ -45,12 +45,11 @@ Feature: Profile-first GUI button interactions
     And mocked launch button metadata includes generated BML and vanilla Barony icon paths
 
 
-  @gui-button-interactions @mocked-launch @profile-active-guard
-  Scenario: Launch BML Barony blocks when the active profile has multiple BML packages
+  @gui-button-interactions @mocked-launch @multi-active-modlist
+  Scenario: Launch BML Barony emits a multi-mod manifest when compatible packages are active
     When I run the BaronyModLoader GUI Launch BML smoke with Stash and Runebound active but Runebound selected
-    Then the BML launch smoke blocks on multiple active profile packages before process launch
-    And the BML launch blocker visibly lists Stash and Runebound active package ids
-    And the BML launch smoke does not write a misleading one-mod runtime manifest
+    Then the BML launch smoke accepts the compatible multi-active profile without a multiple-package blocker
+    And the BML launch smoke writes a multi-mod runtime manifest for Stash and Runebound
 
   @gui-button-interactions @profiles
   Scenario: Profiles button creates and selects a stable profile outside .tmp

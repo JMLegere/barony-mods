@@ -248,6 +248,67 @@ function isRunebound(item) {
   return itemId(item) === "jml.runebound-elixirs" || String(item?.name || "").includes("Runebound");
 }
 
+function collectStrings(value) {
+  const strings = [];
+  const visit = (node) => {
+    if (node == null) return;
+    if (typeof node === "string") {
+      strings.push(node);
+      return;
+    }
+    if (typeof node === "number" || typeof node === "boolean") {
+      strings.push(String(node));
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (typeof node === "object") {
+      Object.values(node).forEach(visit);
+    }
+  };
+  visit(value);
+  return strings;
+}
+
+function collectPackageIds(value) {
+  const ids = new Set();
+  const visit = (node) => {
+    if (node == null) return;
+    if (typeof node === "string") {
+      if (/^[a-z0-9_.-]+$/i.test(node)) ids.add(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (typeof node === "object") {
+      for (const key of ["id", "packageId", "modId"]) {
+        if (typeof node[key] === "string") ids.add(node[key]);
+      }
+      Object.values(node).forEach(visit);
+    }
+  };
+  visit(value);
+  return [...ids];
+}
+
+function profileActiveModsFromState(state) {
+  return (
+    state?.activeMods ||
+    state?.active_mods ||
+    state?.profile?.activeMods ||
+    state?.profile?.active_mods ||
+    []
+  );
+}
+
+function modlistPlanFromState(state) {
+  return state?.modlistPlan || state?.modlist_plan || state?.compatibilityPlan || state?.compatibility_plan;
+}
+
 Given("a clean Package Library staging directory", function () {
   this.packageLibraryStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "bml-package-library-"));
 });
@@ -439,8 +500,8 @@ except Exception as exc:
   this.packageLibraryProfileDir = result.profileDir;
 });
 
-When("I ask the Package Library API to evaluate the active-package guard", function () {
-  if (!this.packageLibraryProfileDir) throw new Error("Package Library profile was not created before evaluating the active-package guard.");
+When("I ask the Package Library API to evaluate the compatible multi-active modlist state", function () {
+  if (!this.packageLibraryProfileDir) throw new Error("Package Library profile was not created before evaluating compatible multi-active modlist state.");
   runPackageLibraryPython(pyPrelude(this.packageLibraryStagingDir) + `
 try:
     profile_dir = Path(${JSON.stringify(this.packageLibraryProfileDir)})
@@ -448,45 +509,20 @@ try:
     if not result.ok:
         emit({
             "ok": False,
-            "contract": "Package Library multiple active package guard",
-            "message": "Profile setup did not load cleanly before guard evaluation.",
+            "contract": "Package Library compatible multi-active modlist state",
+            "message": "Profile setup did not load cleanly before state evaluation.",
             "details": {"profileProblems": [to_plain(problem) for problem in result.problems]},
         })
     else:
-        candidates = (
-            "validate_single_active_package",
-            "validate_profile_active_package_guard",
-            "build_active_package_guard",
-            "package_library_active_package_guard",
-            "validate_package_library_profile_selection",
-            "guard_multiple_active_packages",
-        )
-        name, fn = public_callable(candidates)
-        if fn is None:
-            semantic_gap(
-                "Package Library multiple active package guard",
-                "Missing semantic API that rejects profiles with multiple active packages before launch.",
-                candidates,
-                {"activePackageIds": [entry.get("id") for entry in active_mods]},
-            )
-        else:
-            label, response = call_first_success(fn, [
-                ("profile-dir", lambda: fn(profile_dir)),
-                ("profile-dir-string", lambda: fn(str(profile_dir))),
-                ("profile-and-dir", lambda: fn(profile, loaded_dir)),
-                ("active-mods", lambda: fn(active_mods)),
-                ("keywords", lambda: fn(profile=profile, profile_dir=loaded_dir, active_mods=active_mods)),
-            ])
-            emit({
-                "ok": True,
-                "contract": "Package Library multiple active package guard",
-                "apiName": name,
-                "callVariant": label,
-                "response": to_plain(response),
-                "activeMods": to_plain(active_mods),
-            })
+        state = mod.build_package_library_state(ELIXIRS_PKG, STASH_PKG, profile_dir=profile_dir, selected_package=ELIXIRS_PKG)
+        emit({
+            "ok": True,
+            "contract": "Package Library compatible multi-active modlist state",
+            "state": to_plain(state),
+            "activeMods": to_plain(active_mods),
+        })
 except Exception as exc:
-    emit({"ok": False, "contract": "Package Library multiple active package guard", "message": str(exc)})
+    emit({"ok": False, "contract": "Package Library compatible multi-active modlist state", "message": str(exc)})
 `, this);
 });
 
@@ -579,16 +615,32 @@ Then("the Package Library returns one semantic card per Runebound version withou
   }
 });
 
-Then("the Package Library blocks profiles with multiple active packages before launch", function () {
+Then("the Package Library represents multiple active packages as launchable modlist state", function () {
   const result = assertPackageLibraryOk(this);
-  const response = result.response || {};
-  const text = JSON.stringify(response).toLowerCase();
-  const blocked = response.allowed === false || response.ok === false || response.blocked === true || response.status === "blocked" || response.validationStatus === "blocked" || text.includes("multiple active") || text.includes("more than one active");
-  if (!blocked) {
-    throw new Error(`Multiple-active guard did not block the profile: ${JSON.stringify(result, null, 2)}`);
+  const state = result.state || {};
+  const activeIds = collectPackageIds(profileActiveModsFromState(state));
+  for (const packageId of ["jml.runebound-elixirs", "jml.stash"]) {
+    if (!activeIds.includes(packageId)) {
+      throw new Error(`Package Library state does not expose active package id ${packageId}: ${JSON.stringify(state, null, 2)}`);
+    }
   }
-  const activeIds = (result.activeMods || []).map(mod => mod && mod.id).filter(Boolean);
-  if (activeIds.length < 2) {
-    throw new Error(`Guard scenario did not exercise multiple active packages: ${JSON.stringify(result, null, 2)}`);
+
+  const disabledText = collectStrings(state.disabledReasons || state.disabled_reasons || []).join("\n");
+  if (/multiple active|more than one active|one active package|one package at a time|disable all but one/i.test(disabledText)) {
+    throw new Error(`Package Library state still exposes the retired one-active-package disabled reason: ${disabledText}`);
+  }
+
+  const plan = modlistPlanFromState(state);
+  if (!plan || typeof plan !== "object") {
+    throw new Error(`Package Library state must expose modlistPlan for multi-active profiles: ${JSON.stringify(state, null, 2)}`);
+  }
+  if (plan.launchable !== true) {
+    throw new Error(`Compatible multi-active package state must be launchable: ${JSON.stringify(plan, null, 2)}`);
+  }
+  const planIds = collectPackageIds(plan.enabledMods || plan.enabled_mods || plan.activeMods || plan.active_mods || plan.loadOrder || plan.load_order || plan.packages || plan);
+  for (const packageId of ["jml.runebound-elixirs", "jml.stash"]) {
+    if (!planIds.includes(packageId)) {
+      throw new Error(`modlistPlan does not represent active package id ${packageId}: ${JSON.stringify(plan, null, 2)}`);
+    }
   }
 });
