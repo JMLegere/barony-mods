@@ -10,6 +10,7 @@ explicit launch commands or GUI launch actions.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -580,6 +581,53 @@ def version_satisfies(provided: str | None, requested: str | None) -> bool:
         return False
     return semver_key(provided) >= semver_key(requested)
 
+def normalize_semver_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if is_semverish(text):
+        return text
+    if text.startswith("v") and is_semverish(text[1:]):
+        return text[1:]
+    return None
+
+
+def version_constraint_is_supported(requested: Any) -> bool:
+    if not isinstance(requested, str) or not requested.strip():
+        return False
+    for token in requested.split():
+        version = token
+        if token.startswith(">="):
+            version = token[2:]
+        elif token.startswith("<"):
+            version = token[1:]
+        if normalize_semver_text(version) is None:
+            return False
+    return True
+
+
+def version_constraint_satisfies(provided: str | None, requested: str | None) -> bool:
+    if not requested:
+        return True
+    provided_version = normalize_semver_text(provided)
+    if provided_version is None or not version_constraint_is_supported(requested):
+        return False
+    provided_key = semver_key(provided_version)
+    for token in requested.split():
+        if token.startswith(">="):
+            requested_version = normalize_semver_text(token[2:])
+            if requested_version is None or provided_key < semver_key(requested_version):
+                return False
+        elif token.startswith("<"):
+            requested_version = normalize_semver_text(token[1:])
+            if requested_version is None or provided_key >= semver_key(requested_version):
+                return False
+        else:
+            requested_version = normalize_semver_text(token)
+            if requested_version is None or provided_key != semver_key(requested_version):
+                return False
+    return True
+
 
 def parse_contract(value: Any) -> tuple[str | None, str | None]:
     if isinstance(value, str):
@@ -684,7 +732,8 @@ def package_capability_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]
     capabilities = engine.get("capabilities") if isinstance(engine, dict) else None
     for raw in as_list(capabilities):
         cap_id, version, required = capability_id_and_version(raw)
-        entries.append({"id": cap_id, "version": version, "required": required, "source": "engine.capabilities"})
+        exclusive = isinstance(raw, dict) and bool(raw.get("exclusive", False))
+        entries.append({"id": cap_id, "version": version, "required": required, "exclusive": exclusive, "source": "engine.capabilities"})
     return entries
 
 
@@ -2803,11 +2852,216 @@ def modlist_load_order_entry(package: LoadedPackage, mod: dict[str, Any]) -> dic
     return entry
 
 
+def modlist_dependency_entries(manifest: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    return [(index, item) for index, item in enumerate(as_list(manifest.get("dependencies"))) if isinstance(item, dict)]
+
+
+def modlist_conflict_entries(manifest: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    return [(index, item) for index, item in enumerate(as_list(manifest.get("conflicts"))) if isinstance(item, dict)]
+
+def modlist_conflict_id_matches(pattern: str, candidate_id: str) -> bool:
+    if "*" not in pattern:
+        return pattern == candidate_id
+    return fnmatch.fnmatchcase(candidate_id, pattern)
+
+
+def modlist_matching_package_record_indices(
+    pattern: str,
+    id_to_record_indices: dict[str, list[int]],
+    order_records: list[dict[str, Any]],
+) -> list[int]:
+    if "*" not in pattern:
+        return list(id_to_record_indices.get(pattern, []))
+    matches: list[int] = []
+    for record_index, record in enumerate(order_records):
+        candidate_id = str(record["package"].manifest.get("id") or "")
+        if candidate_id and modlist_conflict_id_matches(pattern, candidate_id):
+            matches.append(record_index)
+    return matches
+
+
+def modlist_exclusive_owner_candidate_ids(package_id: str, owner: dict[str, Any]) -> set[str]:
+    capability_id = owner.get("capability")
+    if not isinstance(capability_id, str) or not capability_id:
+        return set()
+    candidates = {capability_id}
+    if package_id:
+        candidates.add(f"{package_id}.{capability_id}")
+        source = owner.get("source")
+        if isinstance(source, str) and source:
+            candidates.add(f"{package_id}.{source}.{capability_id}")
+    return candidates
+
+
+def modlist_matching_exclusive_owners(
+    pattern: str,
+    owners_by_candidate_id: dict[str, list[dict[str, Any]]],
+    current_record_index: int,
+) -> list[dict[str, Any]]:
+    target_owners: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any, Any]] = set()
+    for candidate_id, owners in owners_by_candidate_id.items():
+        if not modlist_conflict_id_matches(pattern, candidate_id):
+            continue
+        for owner in owners:
+            if owner.get("recordIndex") == current_record_index:
+                continue
+            key = (owner.get("packageId"), owner.get("recordIndex"), owner.get("source"))
+            if key in seen:
+                continue
+            seen.add(key)
+            target_owners.append(owner)
+    return target_owners
+
+
+def modlist_dependency_required(dependency: dict[str, Any]) -> bool:
+    return dependency.get("required") is not False
+
+
+def modlist_dependency_problem_severity(dependency: dict[str, Any]) -> str:
+    return "error" if modlist_dependency_required(dependency) else "warning"
+
+
+def modlist_dependency_context(package: LoadedPackage, dependency: dict[str, Any], dependency_index: int) -> dict[str, Any]:
+    return {
+        "packageId": package.manifest.get("id"),
+        "packageVersion": package.manifest.get("version"),
+        "dependencyIndex": dependency_index,
+        "dependency": dependency,
+    }
+
+
+def modlist_load_order_sort_key(package: LoadedPackage, mod: dict[str, Any], entry: dict[str, Any]) -> tuple[bool, int | float, str, str, str]:
+    load_order = active_mod_numeric_load_order(mod)
+    return (
+        load_order is None,
+        load_order if load_order is not None else 0,
+        str(package.manifest.get("id") or ""),
+        str(package.manifest.get("version") or ""),
+        str(entry.get("path") or ""),
+    )
+
+
+def modlist_profile_game_version(profile: dict[str, Any]) -> str | None:
+    candidates: list[Any] = []
+    for key in ("game", "barony"):
+        value = profile.get(key)
+        if isinstance(value, dict):
+            candidates.extend([value.get("version"), value.get("gameVersion"), value.get("gameVersionString")])
+    runtime = profile.get("runtime")
+    if isinstance(runtime, dict):
+        steam = runtime.get("steamInstall")
+        if isinstance(steam, dict):
+            candidates.extend([steam.get("gameVersion"), steam.get("gameVersionString")])
+    for candidate in candidates:
+        normalized = normalize_semver_text(candidate)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def modlist_checked_dependency_version(kind: str, dependency_id: str, profile: dict[str, Any]) -> tuple[str | None, bool]:
+    if kind == "app":
+        if dependency_id in {APP_ID, "bml.app", "app"}:
+            return APP_VERSION, True
+        return None, False
+    if kind == "engine-runtime":
+        if dependency_id in {"bml.runtime", RUNTIME_CONTRACT_ID, RUNTIME_CONTRACT}:
+            return RUNTIME_CONTRACT_VERSION, True
+        return None, False
+    if kind == "game":
+        if dependency_id in {"barony", STEAM_BARONY_APP_ID, f"steam:{STEAM_BARONY_APP_ID}"}:
+            return modlist_profile_game_version(profile), True
+        return None, False
+    return None, False
+
+
+def evaluate_modlist_fact_dependency(issues: list[Problem], package: LoadedPackage, dependency: dict[str, Any], dependency_index: int, profile: dict[str, Any]) -> None:
+    kind = dependency.get("kind")
+    dependency_id = dependency.get("id")
+    requested_version = dependency.get("version")
+    if kind not in {"app", "game", "engine-runtime"} or not isinstance(dependency_id, str) or not dependency_id:
+        return
+    context = modlist_dependency_context(package, dependency, dependency_index)
+    if not isinstance(requested_version, str) or not version_constraint_is_supported(requested_version):
+        issues.append(
+            Problem(
+                "BML_MODLIST_DEPENDENCY_VERSION_CONSTRAINT_INVALID",
+                modlist_dependency_problem_severity(dependency),
+                f"Package dependency {dependency_id!r} declares an unsupported version constraint.",
+                context,
+            )
+        )
+        return
+    provided_version, known_target = modlist_checked_dependency_version(kind, dependency_id, profile)
+    if not known_target:
+        issues.append(
+            Problem(
+                "BML_MODLIST_DEPENDENCY_UNSUPPORTED_TARGET",
+                modlist_dependency_problem_severity(dependency),
+                f"Package dependency target {dependency_id!r} is not a first-pass checkable {kind} fact.",
+                context,
+            )
+        )
+        return
+    if provided_version is None:
+        issues.append(
+            Problem(
+                "BML_MODLIST_DEPENDENCY_FACT_UNAVAILABLE",
+                "warning",
+                f"Package dependency {dependency_id!r} cannot be verified because the current {kind} version fact is unavailable.",
+                context,
+            )
+        )
+        return
+    if not version_constraint_satisfies(provided_version, requested_version):
+        detail = dict(context)
+        detail["providedVersion"] = provided_version
+        issues.append(
+            Problem(
+                "BML_MODLIST_DEPENDENCY_VERSION_UNSATISFIED",
+                modlist_dependency_problem_severity(dependency),
+                f"Package dependency {dependency_id!r} requires {requested_version}, but the current {kind} version is {provided_version}.",
+                detail,
+            )
+        )
+
+
+def modlist_module_exclusive_capability_owners(package: LoadedPackage) -> list[dict[str, Any]]:
+    owners: list[dict[str, Any]] = []
+    for capability in package_capability_entries(package.manifest):
+        cap_id = capability.get("id")
+        if isinstance(cap_id, str) and cap_id and capability.get("exclusive"):
+            owners.append({"capability": cap_id, "source": capability.get("source")})
+    modules = package.manifest.get("modules")
+    if not isinstance(modules, dict):
+        return owners
+    module_capabilities = {
+        "persistentStorage": "persistent_storage",
+        "persistentInventories": "persistent_inventory",
+        "voidChestBindings": "void_chest_binding",
+        "multiplayer": "multiplayer_version_metadata",
+    }
+    for module_name, capability_id in module_capabilities.items():
+        module_value = modules.get(module_name)
+        module_items = module_value if isinstance(module_value, list) else [module_value]
+        for item_index, item in enumerate(module_items):
+            if isinstance(item, dict) and item.get("exclusive") is True:
+                owners.append({"capability": capability_id, "source": f"modules.{module_name}[{item_index}]"})
+    for item_index, item in enumerate(as_list(modules.get("placements"))):
+        if not isinstance(item, dict) or item.get("exclusive") is not True:
+            continue
+        hook = item.get("hook")
+        capability_id = f"placement_{hook}" if isinstance(hook, str) and f"placement_{hook}" in RECOGNIZED_CAPABILITIES else "placement"
+        owners.append({"capability": capability_id, "source": f"modules.placements[{item_index}]"})
+    return owners
+
+
 def build_modlist_compatibility_plan(profile: dict[str, Any], profile_dir: Path) -> ModlistCompatibilityPlan:
     enabled_mods = profile_authoritative_mods(profile, profile_dir)
     issues: list[Problem] = []
     packages: list[LoadedPackage] = []
-    order_candidates: list[tuple[bool, int | float, str, str, str, dict[str, Any]]] = []
+    order_records: list[dict[str, Any]] = []
 
     active_package_ids = active_mod_package_ids(enabled_mods)
     if not enabled_mods:
@@ -2926,20 +3180,216 @@ def build_modlist_compatibility_plan(profile: dict[str, Any], profile_dir: Path)
         validate_enabled_package_path(path_result, mod, package, package_id, package_version)
         issues.extend(path_result.problems)
 
-        load_order = active_mod_numeric_load_order(mod)
         load_order_entry = modlist_load_order_entry(package, mod)
-        order_candidates.append(
-            (
-                load_order is None,
-                load_order if load_order is not None else 0,
-                package_id,
-                package_version,
-                load_order_entry["path"],
-                load_order_entry,
-            )
+        order_records.append(
+            {
+                "package": package,
+                "mod": mod,
+                "entry": load_order_entry,
+                "sortKey": modlist_load_order_sort_key(package, mod, load_order_entry),
+                "activeModIndex": active_index,
+            }
         )
 
-    load_order = [entry for *_sort_fields, entry in sorted(order_candidates, key=lambda candidate: candidate[:5])]
+    id_to_record_indices: dict[str, list[int]] = {}
+    for record_index, record in enumerate(order_records):
+        package_id = str(record["package"].manifest.get("id") or "")
+        if package_id:
+            id_to_record_indices.setdefault(package_id, []).append(record_index)
+
+    graph_edges: set[tuple[int, int]] = set()
+    graph_edge_details: list[dict[str, Any]] = []
+
+    def add_graph_edge(before_index: int, after_index: int, reason: str, source_package_id: str, target_package_id: str) -> None:
+        graph_edges.add((before_index, after_index))
+        graph_edge_details.append({"before": target_package_id, "after": source_package_id, "reason": reason})
+
+    for record_index, record in enumerate(order_records):
+        package = record["package"]
+        package_id = str(package.manifest.get("id") or "")
+        for dependency_index, dependency in modlist_dependency_entries(package.manifest):
+            kind = dependency.get("kind")
+            dependency_id = dependency.get("id")
+            requested_version = dependency.get("version")
+            if kind == "package" and isinstance(dependency_id, str) and dependency_id:
+                context = modlist_dependency_context(package, dependency, dependency_index)
+                matches = id_to_record_indices.get(dependency_id, [])
+                if not isinstance(requested_version, str) or not version_constraint_is_supported(requested_version):
+                    issues.append(
+                        Problem(
+                            "BML_MODLIST_DEPENDENCY_VERSION_CONSTRAINT_INVALID",
+                            modlist_dependency_problem_severity(dependency),
+                            f"Package dependency {dependency_id!r} declares an unsupported version constraint.",
+                            context,
+                        )
+                    )
+                    continue
+                if not matches:
+                    if modlist_dependency_required(dependency):
+                        issues.append(
+                            Problem(
+                                "BML_MODLIST_REQUIRED_PACKAGE_DEPENDENCY_MISSING",
+                                "error",
+                                f"Package {package_id!r} requires active package {dependency_id!r}, but it is not enabled.",
+                                context,
+                            )
+                        )
+                    else:
+                        issues.append(
+                            Problem(
+                                "BML_MODLIST_OPTIONAL_PACKAGE_DEPENDENCY_MISSING",
+                                "warning",
+                                f"Package {package_id!r} optionally integrates with package {dependency_id!r}, but it is not enabled.",
+                                context,
+                            )
+                        )
+                    continue
+                satisfied_indices: list[int] = []
+                for target_index in matches:
+                    target_package = order_records[target_index]["package"]
+                    target_version = str(target_package.manifest.get("version") or "")
+                    if version_constraint_satisfies(target_version, requested_version):
+                        satisfied_indices.append(target_index)
+                if not satisfied_indices:
+                    detail = dict(context)
+                    detail["availableVersions"] = [order_records[target_index]["package"].manifest.get("version") for target_index in matches]
+                    issues.append(
+                        Problem(
+                            "BML_MODLIST_PACKAGE_DEPENDENCY_VERSION_UNSATISFIED",
+                            modlist_dependency_problem_severity(dependency),
+                            f"Package {package_id!r} requires package {dependency_id!r} version {requested_version}, but no enabled version satisfies it.",
+                            detail,
+                        )
+                    )
+                if modlist_dependency_required(dependency):
+                    for target_index in matches:
+                        add_graph_edge(target_index, record_index, "required-package-dependency", package_id, dependency_id)
+            else:
+                evaluate_modlist_fact_dependency(issues, package, dependency, dependency_index, profile)
+
+        for target_id in as_list(package.manifest.get("loadAfter")):
+            if not isinstance(target_id, str) or not target_id:
+                continue
+            target_indices = id_to_record_indices.get(target_id, [])
+            if not target_indices:
+                issues.append(
+                    Problem(
+                        "BML_MODLIST_LOAD_HINT_TARGET_MISSING",
+                        "warning",
+                        f"Package {package_id!r} requests loadAfter {target_id!r}, but that package is not enabled.",
+                        {"packageId": package_id, "targetPackageId": target_id, "field": "loadAfter"},
+                    )
+                )
+                continue
+            for target_index in target_indices:
+                add_graph_edge(target_index, record_index, "loadAfter", package_id, target_id)
+
+        for target_id in as_list(package.manifest.get("loadBefore")):
+            if not isinstance(target_id, str) or not target_id:
+                continue
+            target_indices = id_to_record_indices.get(target_id, [])
+            if not target_indices:
+                issues.append(
+                    Problem(
+                        "BML_MODLIST_LOAD_HINT_TARGET_MISSING",
+                        "warning",
+                        f"Package {package_id!r} requests loadBefore {target_id!r}, but that package is not enabled.",
+                        {"packageId": package_id, "targetPackageId": target_id, "field": "loadBefore"},
+                    )
+                )
+                continue
+            for target_index in target_indices:
+                add_graph_edge(record_index, target_index, "loadBefore", package_id, target_id)
+
+    for record_index, record in enumerate(order_records):
+        package = record["package"]
+        package_id = str(package.manifest.get("id") or "")
+        for conflict_index, conflict in modlist_conflict_entries(package.manifest):
+            conflict_id = conflict.get("id")
+            conflict_kind = conflict.get("kind")
+            if not isinstance(conflict_id, str) or not conflict_id:
+                continue
+            if conflict_kind == "package":
+                requested_version = conflict.get("version")
+                for target_index in modlist_matching_package_record_indices(conflict_id, id_to_record_indices, order_records):
+                    if target_index == record_index:
+                        continue
+                    target_package = order_records[target_index]["package"]
+                    target_package_id = str(target_package.manifest.get("id") or "")
+                    target_version = str(target_package.manifest.get("version") or "")
+                    if isinstance(requested_version, str) and version_constraint_is_supported(requested_version) and not version_constraint_satisfies(target_version, requested_version):
+                        continue
+                    issues.append(
+                        Problem(
+                            "BML_MODLIST_PACKAGE_CONFLICT",
+                            "error",
+                            f"Package {package_id!r} conflicts with enabled package {target_package_id!r}.",
+                            {"packageId": package_id, "conflictIndex": conflict_index, "conflict": conflict, "targetPackageId": target_package_id, "targetVersion": target_version},
+                        )
+                    )
+
+    exclusive_owners_by_candidate_id: dict[str, list[dict[str, Any]]] = {}
+    for record_index, record in enumerate(order_records):
+        package = record["package"]
+        package_id = str(package.manifest.get("id") or "")
+        for owner in modlist_module_exclusive_capability_owners(package):
+            owner_record = {"packageId": package_id, "recordIndex": record_index, "source": owner.get("source")}
+            for candidate_id in modlist_exclusive_owner_candidate_ids(package_id, owner):
+                exclusive_owners_by_candidate_id.setdefault(candidate_id, []).append(owner_record)
+
+
+    for record_index, record in enumerate(order_records):
+        package = record["package"]
+        package_id = str(package.manifest.get("id") or "")
+        for conflict_index, conflict in modlist_conflict_entries(package.manifest):
+            conflict_id = conflict.get("id")
+            if conflict.get("kind") != "exclusive-capability-owner" or not isinstance(conflict_id, str) or not conflict_id:
+                continue
+            target_owners = modlist_matching_exclusive_owners(conflict_id, exclusive_owners_by_candidate_id, record_index)
+            if target_owners:
+                issues.append(
+                    Problem(
+                        "BML_MODLIST_EXCLUSIVE_CAPABILITY_CONFLICT",
+                        "error",
+                        f"Package {package_id!r} conflicts with exclusive owner(s) of capability {conflict_id!r}.",
+                        {"packageId": package_id, "conflictIndex": conflict_index, "conflict": conflict, "owners": target_owners},
+                    )
+                )
+
+    fallback_record_indices = sorted(range(len(order_records)), key=lambda index: order_records[index]["sortKey"])
+    incoming: dict[int, set[int]] = {index: set() for index in range(len(order_records))}
+    outgoing: dict[int, set[int]] = {index: set() for index in range(len(order_records))}
+    for before_index, after_index in graph_edges:
+        outgoing.setdefault(before_index, set()).add(after_index)
+        incoming.setdefault(after_index, set()).add(before_index)
+
+    ready = [index for index in fallback_record_indices if not incoming.get(index)]
+    planned_indices: list[int] = []
+    while ready:
+        current = ready.pop(0)
+        planned_indices.append(current)
+        for after_index in sorted(outgoing.get(current, set()), key=lambda index: order_records[index]["sortKey"]):
+            incoming[after_index].discard(current)
+            if not incoming[after_index] and after_index not in planned_indices and after_index not in ready:
+                ready.append(after_index)
+        ready.sort(key=lambda index: order_records[index]["sortKey"])
+
+    if len(planned_indices) != len(order_records):
+        remaining = [index for index in fallback_record_indices if index not in planned_indices]
+        issues.append(
+            Problem(
+                "BML_MODLIST_LOAD_ORDER_CYCLE",
+                "error",
+                "Active package load-order requirements contain a cycle.",
+                {
+                    "cyclePackageIds": [order_records[index]["package"].manifest.get("id") for index in remaining],
+                    "edges": graph_edge_details,
+                },
+            )
+        )
+        planned_indices = fallback_record_indices
+
+    load_order = [order_records[index]["entry"] for index in planned_indices]
     return ModlistCompatibilityPlan(enabled_mods=enabled_mods, packages=packages, load_order=load_order, issues=issues)
 
 

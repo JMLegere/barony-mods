@@ -349,6 +349,74 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         manifest["name"] = name or package_id
         write_json(manifest_path, manifest)
 
+    def package_dependency(self, package_id: str, *, required: bool = True, version: str = ">=0.1.0") -> dict:
+        return {"id": package_id, "kind": "package", "version": version, "required": required}
+
+    def package_conflict(self, package_id: str, reason: str = "Declared package conflict for test coverage.") -> dict:
+        return {"id": package_id, "kind": "package", "reason": reason}
+
+    def set_package_manifest_compatibility(
+        self,
+        package_dir: Path,
+        *,
+        package_dependencies: list[dict] | None = None,
+        conflicts: list[dict] | None = None,
+        load_after: list[str] | None = None,
+        load_before: list[str] | None = None,
+    ) -> None:
+        manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if package_dependencies is not None:
+            non_package_dependencies = [
+                dependency for dependency in manifest.get("dependencies", []) if dependency.get("kind") != "package"
+            ]
+            manifest["dependencies"] = [*non_package_dependencies, *package_dependencies]
+        if conflicts is not None:
+            manifest["conflicts"] = conflicts
+        if load_after is not None:
+            manifest["loadAfter"] = load_after
+        if load_before is not None:
+            manifest["loadBefore"] = load_before
+        write_json(manifest_path, manifest)
+
+    def neutralize_package_compatibility(self, *package_dirs: Path) -> None:
+        for package_dir in package_dirs:
+            manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["conflicts"] = []
+            engine = manifest.get("engine")
+            if isinstance(engine, dict):
+                for capability in engine.get("capabilities", []):
+                    if isinstance(capability, dict):
+                        capability.pop("exclusive", None)
+            modules = manifest.get("modules")
+            if isinstance(modules, dict):
+                for module_name in ("persistentStorage", "persistentInventories", "voidChestBindings", "multiplayer", "placements"):
+                    module_value = modules.get(module_name)
+                    module_items = module_value if isinstance(module_value, list) else [module_value]
+                    for module_item in module_items:
+                        if isinstance(module_item, dict):
+                            module_item.pop("exclusive", None)
+            write_json(manifest_path, manifest)
+
+    def assert_issue_mentions(self, issues: list[loader.Problem], token: str) -> loader.Problem:
+        token_lower = token.casefold()
+        for problem in issues:
+            haystack = " ".join(
+                (
+                    problem.code,
+                    problem.message,
+                    json.dumps(problem.details, sort_keys=True, default=str),
+                )
+            ).casefold()
+            if token_lower in haystack:
+                return problem
+        summaries = [
+            {"code": problem.code, "severity": problem.severity, "message": problem.message, "details": problem.details}
+            for problem in issues
+        ]
+        self.fail(f"Expected an issue mentioning {token!r}; got {summaries!r}")
+
     def plan_item_package_id(self, item: object) -> str | None:
         if isinstance(item, str):
             return item
@@ -725,6 +793,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             beta_dir = self.make_package(workspace, "beta-package")
             self.set_package_identity(alpha_dir, "test.alpha")
             self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
             profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
             mods = [
                 self.active_mod_entry_for_package(alpha_dir),
@@ -747,6 +816,7 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             beta_dir = self.make_package(workspace, "beta-package")
             self.set_package_identity(alpha_dir, "test.alpha")
             self.set_package_identity(beta_dir, "test.beta")
+            self.neutralize_package_compatibility(alpha_dir, beta_dir)
             profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
             mods = [
                 self.active_mod_entry_for_package(alpha_dir, load_order=20),
@@ -759,6 +829,231 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
 
             self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
             self.assertEqual(self.plan_package_ids(plan.load_order), ["test.beta", "test.alpha"])
+
+
+    def test_modlist_compatibility_plan_orders_required_package_dependency_before_dependent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            library_dir = self.make_package(workspace, "library-package")
+            consumer_dir = self.make_package(workspace, "consumer-package")
+            self.set_package_identity(library_dir, "test.library")
+            self.set_package_identity(consumer_dir, "test.consumer")
+            self.set_package_manifest_compatibility(library_dir, conflicts=[])
+            self.set_package_manifest_compatibility(
+                consumer_dir,
+                package_dependencies=[self.package_dependency("test.library")],
+                conflicts=[],
+            )
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, consumer_dir)
+            mods = [
+                self.active_mod_entry_for_package(consumer_dir, load_order=10),
+                self.active_mod_entry_for_package(library_dir, load_order=20),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertEqual(plan.blocking_issues, [])
+            self.assertEqual(self.plan_package_ids(plan.load_order), ["test.library", "test.consumer"])
+
+    def test_modlist_compatibility_plan_blocks_missing_required_package_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            consumer_dir = self.make_package(workspace, "consumer-package")
+            self.set_package_identity(consumer_dir, "test.consumer")
+            self.set_package_manifest_compatibility(
+                consumer_dir,
+                package_dependencies=[self.package_dependency("test.library")],
+                conflicts=[],
+            )
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, consumer_dir)
+            mods = [self.active_mod_entry_for_package(consumer_dir)]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertFalse(plan.launchable)
+            issue = self.assert_issue_mentions(plan.blocking_issues, "test.library")
+            self.assertTrue(issue.is_error)
+
+    def test_modlist_compatibility_plan_warns_for_missing_optional_package_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            consumer_dir = self.make_package(workspace, "consumer-package")
+            self.set_package_identity(consumer_dir, "test.consumer")
+            self.set_package_manifest_compatibility(
+                consumer_dir,
+                package_dependencies=[self.package_dependency("test.library", required=False)],
+                conflicts=[],
+            )
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, consumer_dir)
+            mods = [self.active_mod_entry_for_package(consumer_dir)]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertEqual(plan.blocking_issues, [])
+            issue = self.assert_issue_mentions(plan.non_blocking_issues, "test.library")
+            self.assertEqual(issue.severity, "warning")
+
+    def test_modlist_compatibility_plan_applies_load_after_and_load_before_ordering(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            gamma_dir = self.make_package(workspace, "gamma-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.set_package_identity(gamma_dir, "test.gamma")
+            self.set_package_manifest_compatibility(alpha_dir, conflicts=[], load_after=["test.beta"])
+            self.set_package_manifest_compatibility(beta_dir, conflicts=[])
+            self.set_package_manifest_compatibility(gamma_dir, conflicts=[], load_before=["test.beta"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir, load_order=10),
+                self.active_mod_entry_for_package(beta_dir, load_order=20),
+                self.active_mod_entry_for_package(gamma_dir, load_order=30),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertEqual(plan.blocking_issues, [])
+            self.assertEqual(self.plan_package_ids(plan.load_order), ["test.gamma", "test.beta", "test.alpha"])
+
+    def test_modlist_compatibility_plan_blocks_load_order_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.set_package_manifest_compatibility(alpha_dir, conflicts=[], load_after=["test.beta"])
+            self.set_package_manifest_compatibility(beta_dir, conflicts=[], load_after=["test.alpha"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir),
+                self.active_mod_entry_for_package(beta_dir),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertFalse(plan.launchable)
+            self.assertTrue(plan.blocking_issues, [problem.code for problem in plan.issues])
+
+    def test_modlist_compatibility_plan_blocks_declared_package_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.set_package_manifest_compatibility(
+                alpha_dir,
+                conflicts=[self.package_conflict("test.beta", "Alpha and beta both own the same gameplay surface.")],
+            )
+            self.set_package_manifest_compatibility(beta_dir, conflicts=[])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir),
+                self.active_mod_entry_for_package(beta_dir),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertFalse(plan.launchable)
+            issue = self.assert_issue_mentions(plan.blocking_issues, "test.beta")
+            self.assertTrue(issue.is_error)
+
+
+    def test_modlist_compatibility_plan_blocks_wildcard_package_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta.overhaul")
+            self.set_package_manifest_compatibility(
+                alpha_dir,
+                conflicts=[self.package_conflict("test.beta.*", "Alpha rejects beta-family overhauls.")],
+            )
+            self.set_package_manifest_compatibility(beta_dir, conflicts=[])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir),
+                self.active_mod_entry_for_package(beta_dir),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertFalse(plan.launchable)
+            issue = self.assert_issue_mentions(plan.blocking_issues, "test.beta.overhaul")
+            self.assertEqual(issue.code, "BML_MODLIST_PACKAGE_CONFLICT")
+            self.assertTrue(issue.is_error)
+
+    def test_modlist_compatibility_plan_blocks_package_qualified_wildcard_exclusive_owner_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            self.set_package_manifest_compatibility(
+                alpha_dir,
+                conflicts=[
+                    {
+                        "id": "test.beta.*.void_chest_binding",
+                        "kind": "exclusive-capability-owner",
+                        "reason": "Alpha cannot share authoritative Void Chest binding owners.",
+                    }
+                ],
+            )
+            self.set_package_manifest_compatibility(beta_dir, conflicts=[])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir),
+                self.active_mod_entry_for_package(beta_dir),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertFalse(plan.launchable)
+            issue = self.assert_issue_mentions(plan.blocking_issues, "test.beta")
+            self.assertEqual(issue.code, "BML_MODLIST_EXCLUSIVE_CAPABILITY_CONFLICT")
+            self.assertTrue(issue.is_error)
+
+    def test_modlist_compatibility_plan_warns_for_missing_load_order_target_without_blocking_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_manifest_compatibility(alpha_dir, conflicts=[], load_after=["test.missing"])
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [self.active_mod_entry_for_package(alpha_dir)]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertEqual(plan.blocking_issues, [])
+            issue = self.assert_issue_mentions(plan.non_blocking_issues, "test.missing")
+            self.assertEqual(issue.severity, "warning")
 
     def test_modlist_compatibility_plan_blocks_active_package_path_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
