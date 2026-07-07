@@ -57,7 +57,7 @@ python framework/BaronyModLoader/app/barony_mod_loader.py package install .tmp/S
 python framework/BaronyModLoader/app/barony_mod_loader.py profile create .tmp/bml-profile --id default --steam
 python framework/BaronyModLoader/app/barony_mod_loader.py profile enable .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0
 python framework/BaronyModLoader/app/barony_mod_loader.py profile inspect .tmp/bml-profile
-python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --package .tmp/bml-package-store/jml.stash/0.1.0 --runtime-info framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
+python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan .tmp/bml-profile --runtime-info framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json --out .tmp/bml-profile/BaronyModLoader/runtime-manifest.json
 python framework/BaronyModLoader/app/barony_mod_loader.py profile disable .tmp/bml-profile --mod-id jml.stash
 ```
 
@@ -68,7 +68,7 @@ Install rules:
 - `profile enable` records a profile activation that points at the installed package path; it must not mutate the archive or the unpacked source package.
 - `profile disable` removes the package from the active profile set without deleting unrelated Barony content, unrelated packages, or profile-scoped Stash storage.
 - `profile inspect` is the human-readable support surface for active package ids, package paths, selected runtime metadata, and launch readiness.
-- `launch-plan` should consume the installed package path so the runtime manifest is tied to the same package bytes that validation and profile activation saw.
+- `launch-plan` consumes the profile's active modlist, not an ad-hoc package target. Its optional `--package` flag only asserts that the named package is already active, so the runtime manifest is tied to the same package bytes that validation and profile activation saw.
 
 This workflow proves package management behavior only. It does not assert that the installed executable plus BML hook runtime has run Stash gameplay scenarios until installed-game verification evidence exists.
 
@@ -302,11 +302,16 @@ Packages can depend on other packages, the Barony runtime, app versions, and cap
 }
 ```
 
-Dependency semantics:
+Compatibility semantics:
 
-- Required dependencies block activation if missing.
-- Optional dependencies must declare what changes when absent.
-- Conflicts block activation unless the user disables one side or a compatibility package resolves the conflict.
+- Package-declared `dependencies`, `conflicts`, `loadAfter`, and `loadBefore` are the first-pass declarative compatibility contract for a profile modlist.
+- Required package dependencies are blockers when the dependency is missing or no enabled version satisfies the requested range.
+- Optional package dependencies are non-blocking warnings when absent; they must still declare what changes when absent.
+- Package conflicts and exclusive-capability conflicts are blockers unless the user disables one side or a compatibility package resolves the conflict.
+- Required dependency edges, `loadAfter`, and `loadBefore` participate in deterministic load-order planning. Load-order cycles are blockers because the app cannot prove a safe order.
+- Missing `loadAfter`/`loadBefore` targets are warnings for this first scope: the app records the unsatisfied hint and continues with deterministic fallback ordering.
+- When declarative edges do not fully order the modlist, the app uses a stable deterministic fallback order rather than trying to infer compatibility from package contents.
+- A full automatic resolver that installs, disables, upgrades, or synthesizes compatibility packages is out of first scope. The app explains blockers and warnings; the user or pack maintainer changes the active modlist.
 - Runtime capability conflicts are stronger than file conflicts; two packages may not both own the same exclusive engine binding.
 
 ## Migrations
@@ -531,10 +536,11 @@ The app should not mutate packages during activation. It writes a profile-specif
 ```text
 <profile>/BaronyModLoader/active-mods.json
 <profile>/BaronyModLoader/runtime-manifest.json
+<profile>/BaronyModLoader/validation-report.json
 <profile>/BaronyModLoader/logs/app-validation.log
 ```
 
-The package remains immutable. The activation record captures selected versions, load order, resolved capabilities, checksum results, and the installed-executable hook runtime selected for launch.
+The package remains immutable. The activation record captures selected versions, load order, resolved capabilities, checksum results, and the installed-executable hook runtime selected for launch. `validation-report.json` is the serialized modlist compatibility plan: it records whether the modlist is launchable, the resolved load order, blocking issues, and non-blocking warnings.
 
 ## Validation stages
 
@@ -542,11 +548,11 @@ The package remains immutable. The activation record captures selected versions,
 2. Verify package id/version/format compatibility.
 3. Verify archive paths are normalized and remain inside the package root.
 4. Verify checksums and optional signatures.
-5. Resolve dependencies, conflicts, and load order.
-6. Match requested engine capabilities to the selected runtime.
+5. Build the active-profile modlist compatibility plan: dependencies, conflicts, exclusive capability ownership, and load order.
+6. Match requested engine capabilities for every launchable enabled package to the selected runtime.
 7. Verify native patch/build metadata if native support is required.
 8. Verify migrations needed for the selected profile/save can be applied.
-9. Write the activation record and runtime manifest.
+9. Write `active-mods.json`, `runtime-manifest.json`, and `validation-report.json`.
 10. Launch Barony only after the app has a complete, validated runtime plan.
 
 ## Error model

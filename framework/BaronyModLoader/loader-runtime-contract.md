@@ -1,15 +1,15 @@
 # BaronyModLoader App-to-Engine Runtime Contract Draft
 
-BaronyModLoader is a standalone app paired with a small Barony engine runtime/framework patch. The app owns package installation, profile activation, dependency resolution, validation, launch, and logs. The engine runtime owns safe gameplay hooks and authoritative game-state behavior.
+BaronyModLoader is a standalone app paired with a small Barony engine runtime/framework patch. The app owns package installation, profile activation, pre-launch modlist compatibility planning, validation, launch artifact generation, launch, and logs. The engine runtime owns safe gameplay hooks and authoritative game-state behavior.
 
 This contract keeps those responsibilities separate so mods remain clean packages instead of hidden executable forks.
 
 ## Contract principles
 
 - The app never edits gameplay state directly while Barony is running.
-- The engine runtime never scans arbitrary package folders for behavior.
-- Packages declare requested capabilities; the app resolves them; the engine confirms or rejects them.
-- Runtime manifests are generated per profile/launch and treated as read-only input by the engine.
+- The engine runtime never scans arbitrary package folders for behavior and never resolves package dependencies, conflicts, or load order.
+- Packages declare requested capabilities and compatibility metadata; the app resolves them into a pre-launch modlist compatibility plan; the engine confirms or rejects the final manifest.
+- Runtime manifests are generated per profile/launch for all enabled launchable packages and treated as read-only input by the engine.
 - Engine-owned hooks are narrow, data-driven, and capability-gated.
 - Failures are reported before gameplay when possible and are explicit when discovered at runtime.
 
@@ -21,10 +21,11 @@ The app is responsible for:
 
 - discovering Barony installs and available engine runtime builds;
 - importing `.bmlpkg` archives or unpacked development packages;
-- verifying manifests, checksums, signatures, dependencies, conflicts, and migrations;
+- verifying manifests, checksums, signatures, dependencies, conflicts, load hints, exclusive capability ownership, and migrations;
 - managing user profiles and mod activation sets;
-- selecting the correct Barony executable/runtime for a profile;
-- writing launch-time runtime manifests;
+- building the pre-launch modlist compatibility plan for the active profile;
+- selecting the correct Barony executable/runtime for the planned modlist;
+- writing complete launch artifacts: `runtime-manifest.json`, `active-mods.json`, and `validation-report.json`;
 - launching Barony with the correct environment/arguments;
 - collecting app logs and engine runtime reports.
 
@@ -34,6 +35,7 @@ The engine runtime is the paired Barony patch/framework layer. It is responsible
 
 - reading the app-written runtime manifest at startup;
 - validating the manifest against compiled-in supported contract/capability versions;
+- accepting only the already planned `mods[]` entries in the manifest, without loading or resolving packages itself;
 - activating safe gameplay hooks for accepted mods;
 - owning persistence, named inventories, placement, and multiplayer metadata;
 - writing runtime load reports, warnings, and errors;
@@ -55,9 +57,9 @@ sequenceDiagram
 
   User->>App: Enable mods for profile
   App->>Package: Parse manifests and verify checksums
-  App->>App: Resolve dependencies, conflicts, migrations, capabilities
+  App->>App: Build modlist compatibility plan: dependencies, conflicts, load order, capabilities
   App->>App: Select compatible installed-executable hook runtime
-  App->>App: Write runtime-manifest.json and active-mods.json
+  App->>App: Write runtime-manifest.json, active-mods.json, and validation-report.json
   App->>Runtime: Launch installed Barony executable with hook environment
   Runtime->>Runtime: Validate executable provenance, contract, app version, capabilities
   Runtime->>Game: Register accepted engine-owned hooks
@@ -83,9 +85,17 @@ Activation is profile-scoped. Enabling a mod for one profile must not mutate ano
 
 Activation must fail closed. If a package requests an unknown required capability, owns a conflicting exclusive binding, or requires an unverified native runtime, the app disables activation and records a clear validation error.
 
+## Pre-launch modlist compatibility plan
+
+Before every `launch-plan` or `launch`, the app rebuilds the compatibility plan from the active profile modlist. The plan is the app-owned compatibility boundary between packages and the engine runtime. It records enabled packages, resolved load order, blocking issues, and non-blocking warnings.
+
+Blocking issues include required missing package dependencies, unsatisfied required dependency versions, package conflicts, exclusive-capability conflicts, unsupported required capabilities, invalid active package records, and load-order cycles. Non-blocking warnings include optional missing package dependencies and missing non-required `loadAfter`/`loadBefore` hint targets. If declarative edges do not fully order the modlist, the app uses deterministic fallback ordering rather than asking the runtime to infer package compatibility.
+
+The app writes the complete `runtime-manifest.json`, `active-mods.json`, and `validation-report.json` before launch. A launchable plan is the only input the engine runtime should receive; the runtime still validates the manifest against compiled-in support, but it does not resolve packages, inspect package stores, or repair modlist compatibility.
+
 ## Runtime manifest
 
-Before launch, the app writes one complete runtime manifest for the selected profile and Barony executable.
+Before launch, the app writes one complete runtime manifest for the selected profile, Barony executable, runtime, and active launchable modlist.
 
 Suggested path:
 
@@ -136,7 +146,7 @@ BML_HOOK_LIBRARY=<libbarony_bml.so>
 }
 ```
 
-The runtime manifest should include only resolved, validated package data. It should not include unchecked archive paths, untrusted comments, disabled mods, or package fields the engine runtime does not need.
+The runtime manifest should include only resolved, validated package data for every enabled launchable package in the selected profile. It should not include unchecked archive paths, untrusted comments, disabled mods, non-launchable packages, or package fields the engine runtime does not need.
 
 ## Runtime manifest invariants
 
@@ -325,6 +335,8 @@ The app owns these profile-local files:
 ```
 
 The app may delete and regenerate these files when the activation set changes.
+
+`validation-report.json` is the serialized pre-launch modlist compatibility plan that produced the manifest. It is app-owned evidence for UI/support and is not a runtime resolver input.
 
 ## Engine-written files
 

@@ -138,19 +138,23 @@ python framework/BaronyModLoader/app/barony_mod_loader.py runtime register \
   --runtime-info framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json
 ```
 
-Launch should then execute the installed game executable with BML hook environment rather than executing a source-built `barony-bml.x86_64` sidecar:
+Launch planning and launch then operate on the active profile modlist. They should execute the installed game executable with the BML hook environment rather than executing a source-built `barony-bml.x86_64` sidecar:
 
 ```sh
+python framework/BaronyModLoader/app/barony_mod_loader.py launch-plan \
+  .tmp/bml-steam-profile \
+  --runtime-info framework/BaronyModLoader/fixtures/runtime-info.installed-hook.stash.json \
+  --out .tmp/bml-steam-profile/BaronyModLoader/runtime-manifest.json
+
 python framework/BaronyModLoader/app/barony_mod_loader.py launch \
   .tmp/bml-steam-profile \
-  --package .tmp/bml-package-store/jml.stash/0.1.0 \
   --registry .tmp/bml-runtime-registry.json \
   --runtime steam-linux-371970-22630456-hook-dev \
   --dry-run \
   -- --example-barony-arg
 ```
 
-`package install` stores the package under the selected package store and prints the installed package path. The `profile enable`, `launch-plan`, and `launch` examples intentionally use that installed package directory instead of the source `mods/stash` tree so the launch contract reflects the archived, installed package bytes. This slice validates package/runtime metadata, writes profile activation state, writes runtime-manifest/active-mods artifacts, and dry-runs the installed-executable hook launch.
+`package install` stores the package under the selected package store and prints the installed package path. `profile enable` records that installed package path in the profile's active modlist. `launch-plan` and `launch` read the active profile modlist as the launch target; their optional `--package` flag is only an assertion that a package is already active, so it fails validation if the package is absent instead of selecting a different launch target. This slice validates package/runtime metadata, writes profile activation state, regenerates `runtime-manifest.json`, `active-mods.json`, and `validation-report.json`, and dry-runs the installed-executable hook launch.
 
 Steam preflight: dry-run launch and launch-plan commands do not require the Steam client to be running. Any non-dry-run Steam launch or live Steam/Linux quickstart must be run after the Steam client has started and finished initializing; otherwise the launcher should fail before starting the game process.
 
