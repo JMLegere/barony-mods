@@ -119,6 +119,30 @@ def clone_package(source, destination, *, version=None, package_id=None):
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
     return destination
 
+def manifest_for(package_dir):
+    return json.loads((Path(package_dir) / "bml-package.json").read_text(encoding="utf-8"))
+
+def write_manifest(package_dir, manifest):
+    manifest_path = Path(package_dir) / "bml-package.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+
+def mutate_manifest(package_dir, mutator):
+    manifest = manifest_for(package_dir)
+    mutator(manifest)
+    write_manifest(package_dir, manifest)
+    return manifest
+
+def active_mod_entry(package_dir, enabled_at, **extra):
+    manifest = manifest_for(package_dir)
+    entry = {
+        "id": manifest["id"],
+        "version": manifest["version"],
+        "packagePath": str(package_dir),
+        "enabledAt": enabled_at,
+    }
+    entry.update(extra)
+    return entry
+
 def write_fake_executable(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
@@ -307,6 +331,51 @@ function profileActiveModsFromState(state) {
 
 function modlistPlanFromState(state) {
   return state?.modlistPlan || state?.modlist_plan || state?.compatibilityPlan || state?.compatibility_plan;
+}
+
+function compatibilityPlanFromResult(result) {
+  const plan = result?.plan || modlistPlanFromState(result?.state || {});
+  if (!plan || typeof plan !== "object") {
+    throw new Error(`Package Library state must expose a modlist compatibility plan: ${JSON.stringify(result, null, 2)}`);
+  }
+  return plan;
+}
+
+function issueCode(issue) {
+  return issue && String(issue.code || issue.errorCode || issue.id || "");
+}
+
+function issueSeverity(issue) {
+  return String(issue?.severity || issue?.level || "").toLowerCase();
+}
+
+function planBlockingIssues(plan) {
+  if (Array.isArray(plan.blockingIssues)) return plan.blockingIssues;
+  if (Array.isArray(plan.blocking_issues)) return plan.blocking_issues;
+  return (plan.issues || []).filter(issue => ["error", "fatal"].includes(issueSeverity(issue)));
+}
+
+function planWarnings(plan) {
+  if (Array.isArray(plan.warnings)) return plan.warnings;
+  if (Array.isArray(plan.nonBlockingIssues)) return plan.nonBlockingIssues;
+  if (Array.isArray(plan.non_blocking_issues)) return plan.non_blocking_issues;
+  return (plan.issues || []).filter(issue => !["error", "fatal"].includes(issueSeverity(issue)));
+}
+
+function requirePlanIssue(issues, expectedCode, expectedText) {
+  const found = (issues || []).find(issue => {
+    if (issueCode(issue) !== expectedCode) return false;
+    if (!expectedText) return true;
+    return collectStrings(issue).join("\n").includes(expectedText);
+  });
+  if (!found) {
+    throw new Error(`Expected issue ${expectedCode}${expectedText ? ` mentioning ${expectedText}` : ""}: ${JSON.stringify(issues, null, 2)}`);
+  }
+  return found;
+}
+
+function planLoadOrderIds(plan) {
+  return (plan.loadOrder || plan.load_order || []).map(entry => itemId(entry)).filter(Boolean);
 }
 
 Given("a clean Package Library staging directory", function () {
@@ -526,6 +595,188 @@ except Exception as exc:
 `, this);
 });
 
+Given("a Package Library temp profile with compatible staged active packages", function () {
+  if (!this.packageLibraryStagingDir) {
+    this.packageLibraryStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "bml-package-library-"));
+  }
+  runPackageLibraryPython(pyPrelude(this.packageLibraryStagingDir) + `
+try:
+    packages_root = STAGING_DIR / "compatible-multi-mod"
+    elixirs_pkg = clone_package(ELIXIRS_PKG, packages_root / "runebound-elixirs")
+    stash_pkg = clone_package(STASH_PKG, packages_root / "stash")
+    profile_dir = STAGING_DIR / "compatible-multi-mod-profile"
+    profile, loaded_dir = create_profile(profile_dir)
+    now = mod.utc_now()
+    active_mods = [
+        active_mod_entry(elixirs_pkg, now),
+        active_mod_entry(stash_pkg, now),
+    ]
+    mod.write_profile_active_mods(loaded_dir, profile, active_mods, now)
+    reloaded, reloaded_dir, result, mods = active_mods_for(profile_dir)
+    emit({
+        "ok": result.ok,
+        "contract": "Package Library compatible staged multi-mod setup",
+        "profileDir": str(profile_dir),
+        "packageRoots": [str(elixirs_pkg), str(stash_pkg)],
+        "activeMods": to_plain(mods),
+        "profileProblems": [to_plain(problem) for problem in result.problems],
+    })
+except Exception as exc:
+    emit({"ok": False, "contract": "Package Library compatible staged multi-mod setup", "message": str(exc)})
+`, this);
+  const result = assertPackageLibraryOk(this);
+  this.packageLibraryProfileDir = result.profileDir;
+  this.packageLibraryPackageRoots = result.packageRoots;
+});
+
+Given("a Package Library temp profile with a staged package requiring a missing package", function () {
+  if (!this.packageLibraryStagingDir) {
+    this.packageLibraryStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "bml-package-library-"));
+  }
+  runPackageLibraryPython(pyPrelude(this.packageLibraryStagingDir) + `
+try:
+    package_root = STAGING_DIR / "required-dependency-blocking"
+    dependent_pkg = clone_package(ELIXIRS_PKG, package_root / "dependent", package_id="jml.requires-missing")
+    def add_required_dependency(manifest):
+        manifest.setdefault("dependencies", []).append({
+            "id": "jml.missing-required",
+            "kind": "package",
+            "version": ">=1.0.0",
+            "required": True,
+        })
+    mutate_manifest(dependent_pkg, add_required_dependency)
+    profile_dir = STAGING_DIR / "required-dependency-blocking-profile"
+    profile, loaded_dir = create_profile(profile_dir)
+    now = mod.utc_now()
+    active_mods = [active_mod_entry(dependent_pkg, now)]
+    mod.write_profile_active_mods(loaded_dir, profile, active_mods, now)
+    reloaded, reloaded_dir, result, mods = active_mods_for(profile_dir)
+    emit({
+        "ok": result.ok,
+        "contract": "Package Library required dependency blocking setup",
+        "profileDir": str(profile_dir),
+        "packageRoots": [str(dependent_pkg)],
+        "activeMods": to_plain(mods),
+        "profileProblems": [to_plain(problem) for problem in result.problems],
+    })
+except Exception as exc:
+    emit({"ok": False, "contract": "Package Library required dependency blocking setup", "message": str(exc)})
+`, this);
+  const result = assertPackageLibraryOk(this);
+  this.packageLibraryProfileDir = result.profileDir;
+  this.packageLibraryPackageRoots = result.packageRoots;
+});
+
+Given("a Package Library temp profile with a staged package missing optional compatibility targets", function () {
+  if (!this.packageLibraryStagingDir) {
+    this.packageLibraryStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "bml-package-library-"));
+  }
+  runPackageLibraryPython(pyPrelude(this.packageLibraryStagingDir) + `
+try:
+    package_root = STAGING_DIR / "warning-only-launchable"
+    optional_pkg = clone_package(ELIXIRS_PKG, package_root / "optional-targets", package_id="jml.warning-only")
+    def add_optional_targets(manifest):
+        manifest.setdefault("dependencies", []).append({
+            "id": "jml.optional-addon",
+            "kind": "package",
+            "version": ">=1.0.0",
+            "required": False,
+        })
+        manifest["loadAfter"] = ["jml.optional-load-target"]
+    mutate_manifest(optional_pkg, add_optional_targets)
+    profile_dir = STAGING_DIR / "warning-only-launchable-profile"
+    profile, loaded_dir = create_profile(profile_dir)
+    now = mod.utc_now()
+    active_mods = [active_mod_entry(optional_pkg, now)]
+    mod.write_profile_active_mods(loaded_dir, profile, active_mods, now)
+    reloaded, reloaded_dir, result, mods = active_mods_for(profile_dir)
+    emit({
+        "ok": result.ok,
+        "contract": "Package Library warning-only compatibility setup",
+        "profileDir": str(profile_dir),
+        "packageRoots": [str(optional_pkg)],
+        "activeMods": to_plain(mods),
+        "profileProblems": [to_plain(problem) for problem in result.problems],
+    })
+except Exception as exc:
+    emit({"ok": False, "contract": "Package Library warning-only compatibility setup", "message": str(exc)})
+`, this);
+  const result = assertPackageLibraryOk(this);
+  this.packageLibraryProfileDir = result.profileDir;
+  this.packageLibraryPackageRoots = result.packageRoots;
+});
+
+Given("a Package Library temp profile with staged packages that declare load ordering", function () {
+  if (!this.packageLibraryStagingDir) {
+    this.packageLibraryStagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "bml-package-library-"));
+  }
+  runPackageLibraryPython(pyPrelude(this.packageLibraryStagingDir) + `
+try:
+    package_root = STAGING_DIR / "deterministic-load-order"
+    base_pkg = clone_package(STASH_PKG, package_root / "base", package_id="jml.order-base")
+    dependent_pkg = clone_package(ELIXIRS_PKG, package_root / "dependent", package_id="jml.order-dependent")
+    def add_load_after(manifest):
+        manifest["loadAfter"] = ["jml.order-base"]
+    mutate_manifest(dependent_pkg, add_load_after)
+    profile_dir = STAGING_DIR / "deterministic-load-order-profile"
+    profile, loaded_dir = create_profile(profile_dir)
+    now = mod.utc_now()
+    active_mods = [
+        active_mod_entry(dependent_pkg, now),
+        active_mod_entry(base_pkg, now),
+    ]
+    mod.write_profile_active_mods(loaded_dir, profile, active_mods, now)
+    reloaded, reloaded_dir, result, mods = active_mods_for(profile_dir)
+    emit({
+        "ok": result.ok,
+        "contract": "Package Library deterministic load-order setup",
+        "profileDir": str(profile_dir),
+        "packageRoots": [str(dependent_pkg), str(base_pkg)],
+        "expectedLoadOrder": ["jml.order-base", "jml.order-dependent"],
+        "activeMods": to_plain(mods),
+        "profileProblems": [to_plain(problem) for problem in result.problems],
+    })
+except Exception as exc:
+    emit({"ok": False, "contract": "Package Library deterministic load-order setup", "message": str(exc)})
+`, this);
+  const result = assertPackageLibraryOk(this);
+  this.packageLibraryProfileDir = result.profileDir;
+  this.packageLibraryPackageRoots = result.packageRoots;
+  this.packageLibraryExpectedLoadOrder = result.expectedLoadOrder;
+});
+
+When("I ask the Package Library API to evaluate the staged modlist compatibility state", function () {
+  if (!this.packageLibraryProfileDir) throw new Error("Package Library profile was not created before evaluating staged modlist compatibility state.");
+  if (!Array.isArray(this.packageLibraryPackageRoots) || this.packageLibraryPackageRoots.length === 0) {
+    throw new Error("Package Library staged package roots were not recorded before evaluating modlist compatibility state.");
+  }
+  runPackageLibraryPython(pyPrelude(this.packageLibraryStagingDir) + `
+try:
+    profile_dir = Path(${JSON.stringify(this.packageLibraryProfileDir)})
+    roots = [Path(item) for item in ${JSON.stringify(this.packageLibraryPackageRoots)}]
+    profile, loaded_dir, result, active_mods = active_mods_for(profile_dir)
+    if not result.ok:
+        emit({
+            "ok": False,
+            "contract": "Package Library staged modlist compatibility state",
+            "message": "Profile setup did not load cleanly before state evaluation.",
+            "details": {"profileProblems": [to_plain(problem) for problem in result.problems]},
+        })
+    else:
+        state = mod.build_package_library_state(*roots, profile_dir=profile_dir, selected_package=roots[0])
+        plan = mod.build_modlist_compatibility_plan(profile, profile_dir)
+        emit({
+            "ok": True,
+            "contract": "Package Library staged modlist compatibility state",
+            "state": to_plain(state),
+            "plan": to_plain(mod.modlist_compatibility_plan_dto(plan)),
+            "activeMods": to_plain(active_mods),
+        })
+except Exception as exc:
+    emit({"ok": False, "contract": "Package Library staged modlist compatibility state", "message": str(exc)})
+`, this);
+});
+
 Then("the Package Library scan returns a semantic card for Runebound Elixirs", function () {
   const result = assertPackageLibraryOk(this);
   const cards = result.items || [];
@@ -642,5 +893,76 @@ Then("the Package Library represents multiple active packages as launchable modl
     if (!planIds.includes(packageId)) {
       throw new Error(`modlistPlan does not represent active package id ${packageId}: ${JSON.stringify(plan, null, 2)}`);
     }
+  }
+});
+
+Then("the Package Library compatibility plan accepts the multi-mod launch", function () {
+  const result = assertPackageLibraryOk(this);
+  const plan = compatibilityPlanFromResult(result);
+  if (plan.launchable !== true) {
+    throw new Error(`Compatible staged multi-mod plan must be launchable: ${JSON.stringify(plan, null, 2)}`);
+  }
+  const blockers = planBlockingIssues(plan);
+  if (blockers.length) {
+    throw new Error(`Compatible staged multi-mod plan must not expose blocking issues: ${JSON.stringify(blockers, null, 2)}`);
+  }
+  const planIds = collectPackageIds(plan.enabledMods || plan.enabled_mods || plan.activeMods || plan.active_mods || plan.loadOrder || plan.load_order || plan);
+  for (const packageId of ["jml.runebound-elixirs", "jml.stash"]) {
+    if (!planIds.includes(packageId)) {
+      throw new Error(`Compatible staged modlist plan omits active package ${packageId}: ${JSON.stringify(plan, null, 2)}`);
+    }
+  }
+});
+
+Then("the Package Library compatibility plan blocks launch for the missing required dependency", function () {
+  const result = assertPackageLibraryOk(this);
+  const state = result.state || {};
+  const plan = compatibilityPlanFromResult(result);
+  if (state.launchable !== false) {
+    throw new Error(`Package Library state should report unlaunchable for missing required dependency: ${JSON.stringify(state, null, 2)}`);
+  }
+  if (plan.launchable !== false) {
+    throw new Error(`Compatibility plan should block launch for missing required dependency: ${JSON.stringify(plan, null, 2)}`);
+  }
+  const blockers = planBlockingIssues(plan);
+  requirePlanIssue(blockers, "BML_MODLIST_REQUIRED_PACKAGE_DEPENDENCY_MISSING", "jml.missing-required");
+});
+
+Then("the Package Library compatibility plan remains launchable with visible compatibility warnings", function () {
+  const result = assertPackageLibraryOk(this);
+  const state = result.state || {};
+  const plan = compatibilityPlanFromResult(result);
+  if (state.launchable !== true) {
+    throw new Error(`Package Library state should report launchable when only optional compatibility targets are missing: ${JSON.stringify(state, null, 2)}`);
+  }
+  if (plan.launchable !== true) {
+    throw new Error(`Compatibility plan should remain launchable when only optional compatibility targets are missing: ${JSON.stringify(plan, null, 2)}`);
+  }
+  const blockers = planBlockingIssues(plan);
+  if (blockers.length) {
+    throw new Error(`Warning-only compatibility plan must not expose blocking issues: ${JSON.stringify(blockers, null, 2)}`);
+  }
+  const warnings = planWarnings(plan);
+  requirePlanIssue(warnings, "BML_MODLIST_OPTIONAL_PACKAGE_DEPENDENCY_MISSING", "jml.optional-addon");
+  requirePlanIssue(warnings, "BML_MODLIST_LOAD_HINT_TARGET_MISSING", "jml.optional-load-target");
+  const visibleWarnings = state.modlistWarnings || state.modlist_warnings || [];
+  requirePlanIssue(visibleWarnings, "BML_MODLIST_OPTIONAL_PACKAGE_DEPENDENCY_MISSING", "jml.optional-addon");
+  requirePlanIssue(visibleWarnings, "BML_MODLIST_LOAD_HINT_TARGET_MISSING", "jml.optional-load-target");
+});
+
+Then("the Package Library compatibility plan returns the deterministic staged load order", function () {
+  const result = assertPackageLibraryOk(this);
+  const plan = compatibilityPlanFromResult(result);
+  if (plan.launchable !== true) {
+    throw new Error(`Deterministic load-order plan must be launchable: ${JSON.stringify(plan, null, 2)}`);
+  }
+  const blockers = planBlockingIssues(plan);
+  if (blockers.length) {
+    throw new Error(`Deterministic load-order plan must not expose blocking issues: ${JSON.stringify(blockers, null, 2)}`);
+  }
+  const expectedOrder = this.packageLibraryExpectedLoadOrder || ["jml.order-base", "jml.order-dependent"];
+  const actualOrder = planLoadOrderIds(plan);
+  if (JSON.stringify(actualOrder) !== JSON.stringify(expectedOrder)) {
+    throw new Error(`Expected deterministic load order ${JSON.stringify(expectedOrder)}, got ${JSON.stringify(actualOrder)}: ${JSON.stringify(plan, null, 2)}`);
   }
 });
