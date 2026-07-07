@@ -908,7 +908,7 @@ assert playable_install_report["error"] is None, playable_install_report
 diagnostics_path = playable_install_report_path.parents[1] / "state" / "stash-diagnostics.jsonl"
 assert diagnostics_path.is_file(), diagnostics_path
 diagnostics = [json.loads(line) for line in diagnostics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby_assist_shrine_adjacent" and event["map"] == "fake-lobby" and event["x"] == 248.0 and event["y"] == 280.0 for event in diagnostics), diagnostics
+assert any(event["event"] == "stash_access_point_created" and event["kind"] == "lobby_assist_shrine_adjacent" and event["map"] == "fake-lobby" and event["x"] == 232.0 and event["y"] == 344.0 for event in diagnostics), diagnostics
 shop_events = [event for event in diagnostics if event["event"] == "stash_access_point_created" and event["kind"] == "shop" and event["map"] == "fake-shop"]
 assert len(shop_events) == 2, diagnostics
 assert (shop_events[0]["x"], shop_events[0]["y"]) == (152.0, 136.0), shop_events

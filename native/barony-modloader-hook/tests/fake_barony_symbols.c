@@ -942,8 +942,15 @@ __asm__(
 static BmlFakeList bml_fake_tile_entity_list_storage = { NULL, NULL };
 static BmlFakeList bml_fake_map_entity_list_storage = { NULL, NULL };
 static int32_t bml_fake_lobby_tiles[64U * 48U * 3U] = {
-    [17U * 3U + 14U * 3U * 48U] = 1,
-    [17U * 3U + 15U * 3U * 48U] = 1,
+    [20U * 3U + 13U * 3U * 48U] = 1,
+    [20U * 3U + 14U * 3U * 48U] = 1,
+    [20U * 3U + 15U * 3U * 48U] = 1,
+    [21U * 3U + 13U * 3U * 48U] = 1,
+    [21U * 3U + 14U * 3U * 48U] = 1,
+    [21U * 3U + 15U * 3U * 48U] = 1,
+    [22U * 3U + 13U * 3U * 48U] = 1,
+    [22U * 3U + 14U * 3U * 48U] = 1,
+    [22U * 3U + 15U * 3U * 48U] = 1,
 };
 static bool bml_fake_shoparea_storage[64U * 48U] = {
     [8U + 8U * 48U] = true,

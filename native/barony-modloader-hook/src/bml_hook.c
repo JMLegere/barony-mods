@@ -47,6 +47,7 @@
 #define BML_RUNES_ELIXIR_LIVE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-elixir-live-install-report.json"
 #define BML_RUNES_ELIXIR_PRODUCTION_VALIDATION_REPORT_RELATIVE_PATH "BaronyModLoader/reports/runebound-elixir-production-validation-report.json"
 #define BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH 225
+#define BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE 1380736049U
 #define BML_RUNES_ELIXIR_LIVE_HOOK_COUNT 6U
 #define BML_STASH_STATE_DIR_RELATIVE_PATH "BaronyModLoader/state"
 #define BML_STASH_INVENTORY_RELATIVE_PATH "BaronyModLoader/state/stash-inventory-v1.tsv"
@@ -118,6 +119,7 @@
 #define BML_STASH_SPRITE_LID_SPAWN 216
 #define BML_STASH_SPRITE_ASSIST_SHRINE_VISUAL 1484
 #define BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES 2
+#define BML_STASH_LOBBY_TILE_CLEARANCE_TILES 1
 #define BML_STASH_SPRITE_LID_VOID_VISUAL 1790
 #define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
 #define BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST 4005
@@ -2319,7 +2321,7 @@ static void bml_runebound_elixir_make_drop_generation_decision(const BmlRuneboun
 
 
 static void bml_runebound_elixir_make_fixture_carrier(const BmlRuneboundElixirDefinition *definition, BmlRuneboundElixirCarrierMetadata *metadata) {
-    metadata->instance_id = 1380736049U;
+    metadata->instance_id = BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE;
     metadata->carrier_item_type = "POTION_STRENGTH";
     metadata->definition = definition;
 }
@@ -3901,7 +3903,53 @@ static int bml_configure_stash_core_behavior(const char *profile_dir, char *erro
     return 0;
 }
 
+static void bml_mark_stash_inventory_dirty(void);
+
+static bool bml_stash_inventory_has_runebound_iron_vow_carrier(const BmlBaronyList *inventory) {
+    if (inventory == NULL) {
+        return false;
+    }
+    for (const BmlBaronyNode *node = inventory->first; node != NULL; node = node->next) {
+        const BmlBaronyItem *item = (const BmlBaronyItem *)node->element;
+        if (item != NULL &&
+            item->type == BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH &&
+            item->appearance == BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int bml_stash_seed_runebound_iron_vow_elixir_if_missing(BmlBaronyList *inventory) {
+    BmlBaronyItem *item;
+    if (!g_bml_runebound_live_hooks_installed || inventory == NULL) {
+        return 0;
+    }
+    if (bml_stash_inventory_has_runebound_iron_vow_carrier(inventory)) {
+        return 0;
+    }
+    if (g_bml_stash_new_item == NULL) {
+        bml_append_stash_error_diagnostic_event("stash_runebound_iron_vow_seed_failed", "BML_STASH_RUNEBOUND_ELIXIR_SEED_SYMBOL_MISSING", "Stash could not seed the Runebound Iron Vow elixir because newItem is unresolved.");
+        return -1;
+    }
+    item = (BmlBaronyItem *)g_bml_stash_new_item(BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH, 4, 0, 1, BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE, true, inventory);
+    if (item == NULL) {
+        bml_append_stash_error_diagnostic_event("stash_runebound_iron_vow_seed_failed", "BML_STASH_RUNEBOUND_ELIXIR_SEED_ITEM_CREATE_FAILED", "Stash could not create the Runebound Iron Vow elixir carrier item.");
+        return -1;
+    }
+    item->type = BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH;
+    item->beatitude = 0;
+    item->count = 1;
+    item->appearance = BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE;
+    item->identified = true;
+    bml_mark_stash_inventory_dirty();
+    bml_stash_record_inventory_generation(inventory);
+    bml_append_stash_diagnostic_event("stash_runebound_iron_vow_seeded", "runebound_iron_vow", NULL, false, 0.0, 0.0, (int)bml_stash_inventory_count(inventory));
+    return 1;
+}
+
 static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *error_code, size_t error_code_size, char *error_message, size_t error_message_size) {
+    int seed_result;
     FILE *file;
     char line[1024];
     BmlBaronyList loaded_inventory = { 0 };
@@ -4078,7 +4126,13 @@ static int bml_load_stash_inventory_if_needed(BmlBaronyList *inventory, char *er
     g_bml_stash_core_behavior_loaded = true;
     g_bml_stash_core_behavior_dirty = false;
     g_bml_stash_core_behavior_loads += 1;
-    bml_append_stash_diagnostic_event("stash_inventory_loaded", NULL, NULL, false, 0.0, 0.0, (int)bml_stash_inventory_count(inventory));
+    seed_result = bml_stash_seed_runebound_iron_vow_elixir_if_missing(inventory);
+    if (seed_result < 0) {
+        bml_copy_string(error_code, error_code_size, "BML_STASH_RUNEBOUND_ELIXIR_SEED_FAILED");
+        bml_copy_string(error_message, error_message_size, "Stash inventory loaded but could not seed the Runebound Iron Vow elixir carrier.");
+        return -1;
+    }
+    bml_append_stash_diagnostic_event("stash_inventory_loaded", seed_result > 0 ? "runebound_seeded" : NULL, NULL, false, 0.0, 0.0, (int)bml_stash_inventory_count(inventory));
     return 0;
 }
 
@@ -4453,41 +4507,97 @@ static void bml_stash_world_tile_center(unsigned int tile_x, unsigned int tile_y
         *world_y_out = (double)tile_y * 16.0 + 8.0;
     }
 }
-static double bml_stash_world_to_tile(double world_coordinate) {
-    return (world_coordinate - 8.0) / 16.0;
+static bool bml_stash_map_tile_is_walkable(BmlStashPlacementMapPrefix *map_prefix, unsigned int tile_x, unsigned int tile_y) {
+    size_t base;
+    if (map_prefix == NULL || map_prefix->tiles == NULL || tile_x == 0U || tile_y == 0U || tile_x + 1U >= map_prefix->width || tile_y + 1U >= map_prefix->height) {
+        return false;
+    }
+    base = (size_t)tile_y * 3U + (size_t)tile_x * 3U * (size_t)map_prefix->height;
+    return map_prefix->tiles[base] != 0 && map_prefix->tiles[base + 1U] == 0;
 }
-static bool bml_stash_find_nearest_walkable_tile(BmlStashPlacementMapPrefix *map_prefix, double anchor_world_x, double anchor_world_y, double *world_x_out, double *world_y_out) {
+static bool bml_stash_playable_tile_has_wall_or_open_floor_clearance(BmlStashPlacementMapPrefix *map_prefix, unsigned int tile_x, unsigned int tile_y) {
+    const int clearance = (int)BML_STASH_LOBBY_TILE_CLEARANCE_TILES;
+    for (int dx = -clearance; dx <= clearance; ++dx) {
+        for (int dy = -clearance; dy <= clearance; ++dy) {
+            int neighbor_x = (int)tile_x + dx;
+            int neighbor_y = (int)tile_y + dy;
+            if (neighbor_x <= 0 || neighbor_y <= 0) {
+                return false;
+            }
+            if (!bml_stash_map_tile_is_walkable(map_prefix, (unsigned int)neighbor_x, (unsigned int)neighbor_y)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool bml_stash_playable_tile_has_entity_clearance(void *map_argument, unsigned int tile_x, unsigned int tile_y, const void *ignore_entity) {
+    const int clearance = (int)BML_STASH_LOBBY_TILE_CLEARANCE_TILES;
+    const int candidate_x = (int)tile_x;
+    const int candidate_y = (int)tile_y;
+    BmlBaronyList *entity_list = bml_stash_playable_get_map_entity_list(map_argument);
+    if (entity_list == NULL) {
+        return true;
+    }
+    for (const BmlBaronyNode *node = entity_list->first; node != NULL; node = node->next) {
+        void *entity = node->element;
+        double x;
+        double y;
+        int entity_tile_x;
+        int entity_tile_y;
+        if (entity == NULL || entity == ignore_entity) {
+            continue;
+        }
+        x = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_X);
+        y = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_Y);
+        if (x < 0.0 || y < 0.0) {
+            continue;
+        }
+        entity_tile_x = (int)(x / 16.0);
+        entity_tile_y = (int)(y / 16.0);
+        if (entity_tile_x >= candidate_x - clearance &&
+            entity_tile_x <= candidate_x + clearance &&
+            entity_tile_y >= candidate_y - clearance &&
+            entity_tile_y <= candidate_y + clearance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool bml_stash_find_nearest_clean_walkable_tile(void *map_argument, BmlStashPlacementMapPrefix *map_prefix, double anchor_world_x, double anchor_world_y, double *world_x_out, double *world_y_out) {
     unsigned int x;
     unsigned int y;
     bool found = false;
     double best_distance_sq = 0.0;
-    double best_world_x = 0.0;
-    double best_world_y = 0.0;
-    double anchor_tile_x = bml_stash_world_to_tile(anchor_world_x);
-    double anchor_tile_y = bml_stash_world_to_tile(anchor_world_y);
-    if (map_prefix == NULL || map_prefix->tiles == NULL || map_prefix->width == 0U || map_prefix->height == 0U) {
+    double best_world_x = anchor_world_x;
+    double best_world_y = anchor_world_y;
+    if (map_prefix == NULL || map_prefix->width == 0U || map_prefix->height == 0U) {
         return false;
     }
     for (x = 1U; x + 1U < map_prefix->width; ++x) {
         for (y = 1U; y + 1U < map_prefix->height; ++y) {
-            size_t base = (size_t)y * 3U + (size_t)x * 3U * (size_t)map_prefix->height;
-            int32_t floor_tile = map_prefix->tiles[base];
-            int32_t obstacle_tile = map_prefix->tiles[base + 1U];
+            double tile_world_x;
+            double tile_world_y;
             double dx;
             double dy;
             double distance_sq;
-            if (floor_tile == 0 || obstacle_tile != 0) {
+            if (!bml_stash_playable_tile_has_wall_or_open_floor_clearance(map_prefix, x, y) ||
+                !bml_stash_playable_tile_has_entity_clearance(map_argument, x, y, NULL)) {
                 continue;
             }
-            dx = (double)x - anchor_tile_x;
-            dy = (double)y - anchor_tile_y;
+            bml_stash_world_tile_center(x, y, &tile_world_x, &tile_world_y);
+            dx = tile_world_x - anchor_world_x;
+            dy = tile_world_y - anchor_world_y;
             distance_sq = dx * dx + dy * dy;
             if (found && distance_sq >= best_distance_sq) {
                 continue;
             }
             found = true;
             best_distance_sq = distance_sq;
-            bml_stash_world_tile_center(x, y, &best_world_x, &best_world_y);
+            best_world_x = tile_world_x;
+            best_world_y = tile_world_y;
         }
     }
     if (!found) {
@@ -4501,37 +4611,7 @@ static bool bml_stash_find_nearest_walkable_tile(BmlStashPlacementMapPrefix *map
     }
     return true;
 }
-static bool bml_stash_map_tile_is_walkable(BmlStashPlacementMapPrefix *map_prefix, unsigned int tile_x, unsigned int tile_y) {
-    size_t base;
-    if (map_prefix == NULL || map_prefix->tiles == NULL || tile_x == 0U || tile_y == 0U || tile_x + 1U >= map_prefix->width || tile_y + 1U >= map_prefix->height) {
-        return false;
-    }
-    base = (size_t)tile_y * 3U + (size_t)tile_x * 3U * (size_t)map_prefix->height;
-    return map_prefix->tiles[base] != 0 && map_prefix->tiles[base + 1U] == 0;
-}
-static bool bml_stash_playable_tile_is_occupied(void *map_argument, unsigned int tile_x, unsigned int tile_y, const void *ignore_entity) {
-    BmlBaronyList *entity_list = bml_stash_playable_get_map_entity_list(map_argument);
-    if (entity_list == NULL) {
-        return false;
-    }
-    for (const BmlBaronyNode *node = entity_list->first; node != NULL; node = node->next) {
-        void *entity = node->element;
-        double x;
-        double y;
-        if (entity == NULL || entity == ignore_entity) {
-            continue;
-        }
-        x = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_X);
-        y = bml_entity_get_real(entity, BML_STASH_ENTITY_OFFSET_Y);
-        if (x < 0.0 || y < 0.0) {
-            continue;
-        }
-        if ((unsigned int)(x / 16.0) == tile_x && (unsigned int)(y / 16.0) == tile_y) {
-            return true;
-        }
-    }
-    return false;
-}
+
 static void *bml_stash_playable_find_assist_shrine(void *map_argument) {
     BmlBaronyList *entity_list = bml_stash_playable_get_map_entity_list(map_argument);
     if (entity_list == NULL) {
@@ -4546,27 +4626,44 @@ static void *bml_stash_playable_find_assist_shrine(void *map_argument) {
     return NULL;
 }
 static bool bml_stash_playable_tile_inside_assist_shrine_clearance(unsigned int shrine_tile_x, unsigned int shrine_tile_y, unsigned int candidate_tile_x, unsigned int candidate_tile_y) {
+    const int clearance = (int)BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES;
     int dx = (int)candidate_tile_x - (int)shrine_tile_x;
     int dy = (int)candidate_tile_y - (int)shrine_tile_y;
-    return dx > -BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES &&
-           dx < BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES &&
-           dy > -BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES &&
-           dy < BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES;
+    return dx >= -clearance &&
+           dx <= clearance &&
+           dy >= -clearance &&
+           dy <= clearance;
 }
 static bool bml_stash_playable_choose_lobby_tile_near_assist_shrine(void *map_argument, BmlStashPlacementMapPrefix *map_prefix, double *world_x_out, double *world_y_out) {
     static const int offsets[][2] = {
-        { 0, 2 },
-        { 1, 2 },
-        { -1, 2 },
-        { 2, 0 },
-        { -2, 0 },
-        { 0, -2 },
-        { 1, -2 },
-        { -1, -2 },
-        { 2, 1 },
-        { 2, -1 },
-        { -2, 1 },
-        { -2, -1 }
+        { 0, 4 },
+        { 1, 4 },
+        { -1, 4 },
+        { 2, 4 },
+        { -2, 4 },
+        { 4, 0 },
+        { -4, 0 },
+        { 0, -4 },
+        { 1, -4 },
+        { -1, -4 },
+        { 2, -4 },
+        { -2, -4 },
+        { 4, 1 },
+        { 4, -1 },
+        { -4, 1 },
+        { -4, -1 },
+        { 0, 3 },
+        { 1, 3 },
+        { -1, 3 },
+        { 3, 0 },
+        { -3, 0 },
+        { 0, -3 },
+        { 1, -3 },
+        { -1, -3 },
+        { 3, 1 },
+        { 3, -1 },
+        { -3, 1 },
+        { -3, -1 }
     };
     void *assist_shrine = bml_stash_playable_find_assist_shrine(map_argument);
     unsigned int shrine_tile_x;
@@ -4585,10 +4682,8 @@ static bool bml_stash_playable_choose_lobby_tile_near_assist_shrine(void *map_ar
         if (bml_stash_playable_tile_inside_assist_shrine_clearance(shrine_tile_x, shrine_tile_y, (unsigned int)candidate_x, (unsigned int)candidate_y)) {
             continue;
         }
-        if (!bml_stash_map_tile_is_walkable(map_prefix, (unsigned int)candidate_x, (unsigned int)candidate_y)) {
-            continue;
-        }
-        if (bml_stash_playable_tile_is_occupied(map_argument, (unsigned int)candidate_x, (unsigned int)candidate_y, assist_shrine)) {
+        if (!bml_stash_playable_tile_has_wall_or_open_floor_clearance(map_prefix, (unsigned int)candidate_x, (unsigned int)candidate_y) ||
+            !bml_stash_playable_tile_has_entity_clearance(map_argument, (unsigned int)candidate_x, (unsigned int)candidate_y, assist_shrine)) {
             continue;
         }
         bml_stash_world_tile_center((unsigned int)candidate_x, (unsigned int)candidate_y, world_x_out, world_y_out);
@@ -4780,7 +4875,10 @@ static bool bml_stash_playable_try_place_lobby_chest_and_lid(void *map_argument)
     }
     anchored_to_assist_shrine = bml_stash_playable_choose_lobby_tile_near_assist_shrine(map_argument, map_prefix, &x_pos, &y_pos);
     if (!anchored_to_assist_shrine) {
-        (void)bml_stash_find_nearest_walkable_tile(map_prefix, x_pos, y_pos, &x_pos, &y_pos);
+        if (!bml_stash_find_nearest_clean_walkable_tile(map_argument, map_prefix, x_pos, y_pos, &x_pos, &y_pos)) {
+            g_bml_stash_playable_lobby_placements_failed += 1;
+            return false;
+        }
     }
     if (bml_stash_playable_place_chest_and_lid_at(map_argument, x_pos, y_pos, BML_STASH_LOBBY_PLACEMENT_YAW, &chest, &lid)) {
         g_bml_stash_playable_last_placed_chest = chest;
@@ -5466,7 +5564,7 @@ static bool bml_runebound_item_is_iron_vow_carrier(void *item) {
     const BmlBaronyItem *barony_item = (const BmlBaronyItem *)item;
     return barony_item != NULL &&
            barony_item->type == BML_RUNES_ELIXIR_CARRIER_ITEM_TYPE_POTION_STRENGTH &&
-           barony_item->appearance == g_bml_runebound_live_carrier.instance_id;
+           barony_item->appearance == BML_RUNES_ELIXIR_IRON_VOW_APPEARANCE;
 }
 
 static void bml_runebound_write_use_debug_event(void *item, int player, bool recognized) {
