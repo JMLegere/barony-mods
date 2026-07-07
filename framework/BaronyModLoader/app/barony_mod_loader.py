@@ -227,6 +227,25 @@ class LoadedPackage:
 
 
 @dataclass
+class ModlistCompatibilityPlan:
+    enabled_mods: list[dict[str, Any]] = field(default_factory=list)
+    packages: list[LoadedPackage] = field(default_factory=list)
+    load_order: list[dict[str, Any]] = field(default_factory=list)
+    issues: list[Problem] = field(default_factory=list)
+
+    @property
+    def blocking_issues(self) -> list[Problem]:
+        return [issue for issue in self.issues if issue.is_error]
+
+    @property
+    def non_blocking_issues(self) -> list[Problem]:
+        return [issue for issue in self.issues if not issue.is_error]
+
+    @property
+    def launchable(self) -> bool:
+        return not self.blocking_issues
+
+@dataclass
 class CommandResult:
     argv: list[str]
     label: str
@@ -2663,7 +2682,11 @@ def validate_enabled_package_path(result: ValidationResult, mod: dict[str, Any],
     requested_paths = requested_package_paths(package)
     enabled_paths = [
         path
-        for path in (normalized_profile_path(mod.get("packagePath")), normalized_profile_path(mod.get("manifestPath")))
+        for path in (
+            normalized_profile_path(mod.get("packagePath")),
+            normalized_profile_path(mod.get("manifestPath")),
+            normalized_profile_path(mod.get("path")),
+        )
         if path is not None
     ]
     if any(path in requested_paths for path in enabled_paths):
@@ -2741,6 +2764,183 @@ def active_mod_package_path(mod: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+def active_mod_package_version(mod: dict[str, Any]) -> str | None:
+    nested_package = mod.get("package") if isinstance(mod.get("package"), dict) else {}
+    package_version = mod.get("version") or mod.get("packageVersion") or nested_package.get("version")
+    return str(package_version) if package_version is not None and str(package_version) else None
+
+
+def active_mod_numeric_load_order(mod: dict[str, Any]) -> int | float | None:
+    load_order = mod.get("loadOrder")
+    if isinstance(load_order, bool) or not isinstance(load_order, (int, float)):
+        return None
+    return load_order
+
+
+def resolved_package_order_path(package: LoadedPackage) -> str:
+    path = preferred_package_path(package)
+    try:
+        path = path.resolve(strict=False)
+    except OSError:
+        pass
+    return str(path)
+
+
+def modlist_load_order_entry(package: LoadedPackage, mod: dict[str, Any]) -> dict[str, Any]:
+    package_id = str(package.manifest.get("id") or "")
+    package_version = str(package.manifest.get("version") or "")
+    entry: dict[str, Any] = {
+        "id": package_id,
+        "version": package_version,
+        "path": resolved_package_order_path(package),
+        "packagePath": str(preferred_package_path(package)),
+        "manifestPath": str(package.manifest_path),
+    }
+    load_order = active_mod_numeric_load_order(mod)
+    if load_order is not None:
+        entry["loadOrder"] = load_order
+    return entry
+
+
+def build_modlist_compatibility_plan(profile: dict[str, Any], profile_dir: Path) -> ModlistCompatibilityPlan:
+    enabled_mods = profile_authoritative_mods(profile, profile_dir)
+    issues: list[Problem] = []
+    packages: list[LoadedPackage] = []
+    order_candidates: list[tuple[bool, int | float, str, str, str, dict[str, Any]]] = []
+
+    active_package_ids = active_mod_package_ids(enabled_mods)
+    if not enabled_mods:
+        issues.append(
+            Problem(
+                "BML_PROFILE_NO_ACTIVE_PACKAGE",
+                "fatal",
+                "No BML package is enabled in the active profile. Enable at least one target package before launching BML Barony.",
+                {"activePackageIds": []},
+            )
+        )
+        return ModlistCompatibilityPlan(enabled_mods=enabled_mods, packages=packages, load_order=[], issues=issues)
+
+    for active_index, mod in enumerate(enabled_mods):
+        package_path = active_mod_package_path(mod)
+        if package_path is None:
+            issues.append(
+                Problem(
+                    "BML_PROFILE_ACTIVE_PACKAGE_PATH_MISSING",
+                    "fatal",
+                    "The active profile package has no packagePath, manifestPath, or path. Disable it and enable the target package again before launching BML Barony.",
+                    {"activePackageIds": active_package_ids, "activeMod": mod, "activeModIndex": active_index},
+                )
+            )
+            continue
+
+        try:
+            package, load_result = load_package(package_path)
+        except Exception as exc:
+            issues.append(
+                Problem(
+                    "BML_PROFILE_ACTIVE_PACKAGE_LOAD_FAILED",
+                    "fatal",
+                    f"Could not load active profile package: {exc}",
+                    {"activePackageIds": active_package_ids, "activeMod": mod, "activeModIndex": active_index, "packagePath": package_path},
+                )
+            )
+            continue
+        issues.extend(load_result.problems)
+        if package is None:
+            if not load_result.problems:
+                issues.append(
+                    Problem(
+                        "BML_PROFILE_ACTIVE_PACKAGE_LOAD_FAILED",
+                        "fatal",
+                        "Could not load active profile package.",
+                        {"activePackageIds": active_package_ids, "activeMod": mod, "activeModIndex": active_index, "packagePath": package_path},
+                    )
+                )
+            continue
+
+        packages.append(package)
+        package_id = str(package.manifest.get("id") or "")
+        package_version = str(package.manifest.get("version") or "")
+
+        try:
+            validation_result = validate_package(package)
+        except Exception as exc:
+            issues.append(
+                Problem(
+                    "BML_PROFILE_ACTIVE_PACKAGE_VALIDATION_FAILED",
+                    "fatal",
+                    f"Could not validate active profile package: {exc}",
+                    {"packageId": package_id, "packageVersion": package_version, "packagePath": package_path},
+                )
+            )
+        else:
+            issues.extend(validation_result.problems)
+
+        coherency_mismatch = False
+        active_package_id = active_mod_package_id(mod)
+        if active_package_id is not None and package_id and active_package_id != package_id:
+            coherency_mismatch = True
+            issues.append(
+                Problem(
+                    "BML_PROFILE_ACTIVE_PACKAGE_ID_MISMATCH",
+                    "fatal",
+                    "Active profile package id does not match the loaded package manifest id.",
+                    {"activePackageId": active_package_id, "packageId": package_id, "packagePath": package_path},
+                )
+            )
+
+        active_package_version = active_mod_package_version(mod)
+        if active_package_version is not None and package_version and active_package_version != package_version:
+            coherency_mismatch = True
+            issues.append(
+                Problem(
+                    "BML_PROFILE_PACKAGE_VERSION_DISABLED",
+                    "fatal",
+                    "Active profile package version does not match the loaded package manifest version.",
+                    {
+                        "packageId": package_id,
+                        "requestedVersion": package_version,
+                        "enabledVersion": active_package_version,
+                        "packagePath": package_path,
+                    },
+                )
+            )
+        if coherency_mismatch:
+            issues.append(
+                Problem(
+                    "BML_PROFILE_PACKAGE_PATH_MISMATCH",
+                    "fatal",
+                    "Active profile package id/version points at a package path with a different manifest.",
+                    {
+                        "activePackageId": active_package_id,
+                        "activePackageVersion": active_package_version,
+                        "packageId": package_id,
+                        "packageVersion": package_version,
+                        "packagePath": package_path,
+                    },
+                )
+            )
+
+        path_result = ValidationResult("profile active mod package path")
+        validate_enabled_package_path(path_result, mod, package, package_id, package_version)
+        issues.extend(path_result.problems)
+
+        load_order = active_mod_numeric_load_order(mod)
+        load_order_entry = modlist_load_order_entry(package, mod)
+        order_candidates.append(
+            (
+                load_order is None,
+                load_order if load_order is not None else 0,
+                package_id,
+                package_version,
+                load_order_entry["path"],
+                load_order_entry,
+            )
+        )
+
+    load_order = [entry for *_sort_fields, entry in sorted(order_candidates, key=lambda candidate: candidate[:5])]
+    return ModlistCompatibilityPlan(enabled_mods=enabled_mods, packages=packages, load_order=load_order, issues=issues)
 
 
 def multiple_active_packages_message(active_package_ids: list[str]) -> str:

@@ -303,14 +303,14 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         write_json(registry_path, registry)
         return profile_dir, registry_path, hook_library
 
-    def enable_package_for_profile(
+    def active_mod_entry_for_package(
         self,
-        profile_dir: Path,
         package_dir: Path,
         *,
         package_path: Path | None = None,
         manifest_path: Path | None = None,
-    ) -> dict[str, str]:
+        load_order: int | None = None,
+    ) -> dict:
         manifest = json.loads((package_dir / loader.PACKAGE_MANIFEST_NAME).read_text(encoding="utf-8"))
         entry = {
             "id": manifest["id"],
@@ -320,14 +320,65 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         }
         if manifest_path is not None:
             entry["manifestPath"] = str(manifest_path.resolve())
+        if load_order is not None:
+            entry["loadOrder"] = load_order
+        return entry
+
+    def write_profile_active_mods(self, profile_dir: Path, mods: list[dict]) -> None:
         profile_path = profile_dir / loader.APP_ID / "profile.json"
         profile = json.loads(profile_path.read_text(encoding="utf-8"))
-        profile["activeMods"] = [entry]
+        profile["activeMods"] = mods
         write_json(profile_path, profile)
         write_json(
             profile_dir / loader.APP_ID / "active-mods.json",
-            {"schemaVersion": loader.SCHEMA_VERSION, "profileId": profile["profile"]["id"], "mods": [entry]},
+            {"schemaVersion": loader.SCHEMA_VERSION, "profileId": profile["profile"]["id"], "mods": mods},
         )
+
+    def set_package_identity(
+        self,
+        package_dir: Path,
+        package_id: str,
+        *,
+        version: str = "0.1.0",
+        name: str | None = None,
+    ) -> None:
+        manifest_path = package_dir / loader.PACKAGE_MANIFEST_NAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["id"] = package_id
+        manifest["version"] = version
+        manifest["name"] = name or package_id
+        write_json(manifest_path, manifest)
+
+    def plan_item_package_id(self, item: object) -> str | None:
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict):
+            nested_package = item.get("package") if isinstance(item.get("package"), dict) else {}
+            value = item.get("id") or item.get("packageId") or nested_package.get("id")
+            return str(value) if value is not None else None
+        manifest = getattr(item, "manifest", None)
+        if isinstance(manifest, dict):
+            value = manifest.get("id")
+            return str(value) if value is not None else None
+        return None
+
+    def plan_package_ids(self, items: list) -> list[str]:
+        return [package_id for item in items if (package_id := self.plan_item_package_id(item)) is not None]
+
+    def enable_package_for_profile(
+        self,
+        profile_dir: Path,
+        package_dir: Path,
+        *,
+        package_path: Path | None = None,
+        manifest_path: Path | None = None,
+    ) -> dict:
+        entry = self.active_mod_entry_for_package(
+            package_dir,
+            package_path=package_path,
+            manifest_path=manifest_path,
+        )
+        self.write_profile_active_mods(profile_dir, [entry])
         return entry
 
     def test_package_validate_pack_and_install_happy_path(self) -> None:
@@ -630,6 +681,106 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
             stdout_for_paths = launch.stdout.replace("\\\\", "\\")
             self.assertIn(str(enabled_dir.resolve()), stdout_for_paths)
             self.assertIn(str(package_dir.resolve()), stdout_for_paths)
+
+    def test_modlist_compatibility_plan_warning_only_issues_are_launchable(self) -> None:
+        warning = loader.Problem("BML_TEST_WARNING", "warning", "Warn without blocking launch.")
+        info = loader.Problem("BML_TEST_INFO", "info", "Informational issue.")
+        warning_plan = loader.ModlistCompatibilityPlan(
+            enabled_mods=[],
+            packages=[],
+            load_order=[],
+            issues=[warning, info],
+        )
+
+        self.assertTrue(warning_plan.launchable)
+        self.assertEqual(warning_plan.blocking_issues, [])
+        self.assertEqual(
+            [problem.code for problem in warning_plan.non_blocking_issues],
+            ["BML_TEST_WARNING", "BML_TEST_INFO"],
+        )
+
+        error = loader.Problem("BML_TEST_ERROR", "error", "Error blocks launch.")
+        fatal = loader.Problem("BML_TEST_FATAL", "fatal", "Fatal blocks launch.")
+        blocking_plan = loader.ModlistCompatibilityPlan(
+            enabled_mods=[],
+            packages=[],
+            load_order=[],
+            issues=[warning, error, fatal],
+        )
+
+        self.assertFalse(blocking_plan.launchable)
+        self.assertEqual(
+            [problem.code for problem in blocking_plan.blocking_issues],
+            ["BML_TEST_ERROR", "BML_TEST_FATAL"],
+        )
+        self.assertEqual(
+            [problem.code for problem in blocking_plan.non_blocking_issues],
+            ["BML_TEST_WARNING"],
+        )
+
+    def test_modlist_compatibility_plan_accepts_two_valid_active_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir),
+                self.active_mod_entry_for_package(beta_dir),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertEqual(plan.blocking_issues, [])
+            self.assertCountEqual(self.plan_package_ids(plan.packages), ["test.alpha", "test.beta"])
+            self.assertCountEqual(self.plan_package_ids(plan.enabled_mods), ["test.alpha", "test.beta"])
+
+    def test_modlist_compatibility_plan_uses_active_mod_load_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            alpha_dir = self.make_package(workspace, "alpha-package")
+            beta_dir = self.make_package(workspace, "beta-package")
+            self.set_package_identity(alpha_dir, "test.alpha")
+            self.set_package_identity(beta_dir, "test.beta")
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, alpha_dir)
+            mods = [
+                self.active_mod_entry_for_package(alpha_dir, load_order=20),
+                self.active_mod_entry_for_package(beta_dir, load_order=10),
+            ]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            self.assertTrue(plan.launchable, [problem.code for problem in plan.issues])
+            self.assertEqual(self.plan_package_ids(plan.load_order), ["test.beta", "test.alpha"])
+
+    def test_modlist_compatibility_plan_blocks_active_package_path_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            declared_dir = self.make_package(workspace, "declared-package")
+            actual_dir = self.make_package(workspace, "actual-package")
+            self.set_package_identity(declared_dir, "test.declared")
+            self.set_package_identity(actual_dir, "test.actual")
+            profile_dir, _registry_path, _hook_library = self.make_profile_and_registry(workspace, declared_dir)
+            mods = [self.active_mod_entry_for_package(declared_dir, package_path=actual_dir)]
+            self.write_profile_active_mods(profile_dir, mods)
+            profile = json.loads((profile_dir / loader.APP_ID / "profile.json").read_text(encoding="utf-8"))
+
+            plan = loader.build_modlist_compatibility_plan(profile, profile_dir)
+
+            blocking_codes = [problem.code for problem in plan.blocking_issues]
+            self.assertFalse(plan.launchable)
+            self.assertIn("BML_PROFILE_PACKAGE_PATH_MISMATCH", blocking_codes)
+            self.assertIn(
+                "BML_PROFILE_PACKAGE_PATH_MISMATCH",
+                [problem.code for problem in plan.issues],
+            )
 
     def test_package_validate_rejects_missing_or_uninstallable_asset_references(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
