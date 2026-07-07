@@ -501,6 +501,9 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         self.assertTrue(profiles_card["profileRows"][0]["selected"])
         self.assertEqual([item["label"] for item in profiles_card["rows"][:2]], ["✓ default", "• challenge"])
         self.assertIn("(selected)", profiles_card["rows"][0]["value"])
+        copy_context = loader._gui_copy_for_ai_context({"profilePath": "/profiles/default", "profile": profile_state, "profileList": profile_state["profiles"]})
+        self.assertEqual(copy_context["bundle"]["profile"]["profileCount"], 2)
+        self.assertEqual([item["id"] for item in copy_context["bundle"]["profile"]["profileList"]], ["default", "challenge"])
 
     def assert_issue_mentions(self, issues: list[loader.Problem], token: str) -> loader.Problem:
         token_lower = token.casefold()

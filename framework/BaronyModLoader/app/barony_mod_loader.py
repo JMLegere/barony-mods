@@ -4314,11 +4314,19 @@ def _gui_copy_for_ai_context(gui_state: dict[str, Any]) -> dict[str, Any]:
     # Profile path and state
     profile = gui_state.get("profile") if isinstance(gui_state.get("profile"), dict) else {}
     profile_path = gui_state.get("profilePath") or profile.get("path") or ""
+    profile_list = profile.get("profileList") if isinstance(profile.get("profileList"), list) else profile.get("profiles")
+    if not isinstance(profile_list, list):
+        profile_list = gui_state.get("profileList") if isinstance(gui_state.get("profileList"), list) else gui_state.get("profiles")
+    if not isinstance(profile_list, list):
+        profile_list = []
     sections["profile"] = {
         "profilePath": str(profile_path),
         "path": str(profile_path),
         "id": profile.get("id") or profile.get("profileId") or "",
         "status": profile.get("status") or "unknown",
+        "profiles": profile_list,
+        "profileList": profile_list,
+        "profileCount": len(profile_list),
     }
     included_sections.append("profile")
 
@@ -7330,6 +7338,9 @@ def build_profile_first_gui_state(
         "title": f"{APP_ID} Mod Manager",
         "profilePath": str(profile_dir),
         "profile": profile_state,
+        "profiles": profile_state.get("profiles") if isinstance(profile_state.get("profiles"), list) else [],
+        "profileList": profile_state.get("profileList") if isinstance(profile_state.get("profileList"), list) else profile_state.get("profiles", []),
+        "profileCount": profile_state.get("profileCount", 0),
         "install": install,
         "packageCatalog": package_catalog,
         "packageList": package_catalog.get("packages", []),
