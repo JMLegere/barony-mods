@@ -4088,7 +4088,7 @@ GUI_ENTITY_ICON_RENDER_ORDER = (
 
 GUI_ACTION_LABELS = {
     "detect-install": "Detect install",
-    "create-select-profile": "Create/select profile",
+    "create-select-profile": "Manage profile",
     "scan-packages": "Scan packages",
     "enable-package": "Enable selected mod",
     "disable-package": "Disable selected mod",
@@ -6999,7 +6999,7 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
         visible_profile_rows = [
             {
                 "id": str(profile.get("id") or Path(str(profile.get("path") or "")).name),
-                "label": f"{'✓' if profile.get('selected') else '•'} {profile.get('id') or Path(str(profile.get('path') or '')).name}",
+                "label": _gui_text(profile.get("id") or Path(str(profile.get("path") or "")).name),
                 "value": f"{profile.get('activeModCount', 0)} {'active mod' if profile.get('activeModCount') == 1 else 'active mods'}{' (selected)' if profile.get('selected') else ''}",
                 "detail": f"{profile.get('activeModCount', 0)} {'active mod' if profile.get('activeModCount') == 1 else 'active mods'}",
                 "selected": bool(profile.get("selected")),
@@ -7019,15 +7019,19 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
                 "id": "compact-profiles",
                 "title": "Profiles",
                 "status": profiles.get("status"),
-                "summary": profiles.get("statusSummary"),
+                "statusSummary": profiles.get("statusSummary"),
+                "summary": None if profiles_list else profiles.get("statusSummary"),
                 "activeModCount": len(profile_active_mods),
                 "profileCount": len(profiles_list),
                 "count": len(profiles_list),
                 "profileActiveModCount": len(profile_active_mods),
                 "profiles": profiles_list,
                 "profileList": profiles_list,
-                "rows": [*visible_profile_rows, *profile_rows],
+                "state": profile_state,
+                "profileState": profile_state,
+                "rows": visible_profile_rows if profiles_list else profile_rows,
                 "profileRows": visible_profile_rows,
+                "evidenceRows": profile_rows,
                 "actions": concept_actions(profiles),
                 "sourceConcept": "profiles",
             }

@@ -497,22 +497,23 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         profiles_card = next(card for card in compact if card["key"] == "profiles")
         self.assertEqual(profiles_card["profileCount"], 2)
         self.assertEqual([item["id"] for item in profiles_card["profileList"]], ["default", "challenge"])
+        self.assertEqual([item["selected"] for item in profiles_card["profileList"]], [True, False])
         self.assertEqual([item["id"] for item in profiles_card["profileRows"]], ["default", "challenge"])
-        self.assertTrue(profiles_card["profileRows"][0]["selected"])
-        self.assertEqual([item["label"] for item in profiles_card["rows"][:2]], ["✓ default", "• challenge"])
-        self.assertIn("(selected)", profiles_card["rows"][0]["value"])
-        compact_row_texts = [loader._gui_compact_card_row_text(item) for item in profiles_card["rows"][:3]]
+        self.assertEqual([item["selected"] for item in profiles_card["profileRows"]], [True, False])
+        compact_row_texts = [loader._gui_compact_card_row_text(item) for item in profiles_card["rows"]]
         self.assertEqual(
             compact_row_texts,
             [
-                "✓ ✓ default: 1 active mod (selected)",
-                "• • challenge: 0 active mods",
-                "Selected profile: default",
+                "✓ default: 1 active mod (selected)",
+                "• challenge: 0 active mods",
             ],
         )
-        self.assertFalse(compact_row_texts[2].startswith("Not set"))
-        self.assertIn("Profiles: ✓ default", profiles_card["summary"])
-        self.assertIn("• challenge", profiles_card["summary"])
+        for row_text in compact_row_texts:
+            self.assertNotIn("✓ ✓", row_text)
+            self.assertNotIn("• •", row_text)
+            self.assertNotIn("Selected profile:", row_text)
+            self.assertNotIn("Profiles list:", row_text)
+        self.assertFalse(profiles_card.get("summary"))
         copy_context = loader._gui_copy_for_ai_context({"profilePath": "/profiles/default", "profile": profile_state, "profileList": profile_state["profiles"]})
         self.assertEqual(copy_context["bundle"]["profile"]["profileCount"], 2)
         self.assertEqual([item["id"] for item in copy_context["bundle"]["profile"]["profileList"]], ["default", "challenge"])
