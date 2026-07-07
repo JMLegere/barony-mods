@@ -497,6 +497,8 @@ class LoaderSecurityRegressionTests(unittest.TestCase):
         profiles_card = next(card for card in compact if card["key"] == "profiles")
         self.assertEqual(profiles_card["profileCount"], 2)
         self.assertEqual([item["id"] for item in profiles_card["profileList"]], ["default", "challenge"])
+        self.assertEqual([item["label"] for item in profiles_card["profileRows"]], ["default", "challenge"])
+        self.assertTrue(profiles_card["profileRows"][0]["selected"])
 
     def assert_issue_mentions(self, issues: list[loader.Problem], token: str) -> loader.Problem:
         token_lower = token.casefold()

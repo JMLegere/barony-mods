@@ -6971,6 +6971,18 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
         profile_active_mods = profile_state.get("activeMods") if isinstance(profile_state.get("activeMods"), list) else []
         profiles_list = profile_state.get("profiles") if isinstance(profile_state.get("profiles"), list) else []
         profile_rows = evidence_rows(profiles, {"Selected profile", "Profiles list", "Active mods"})
+        visible_profile_rows = [
+            {
+                "id": str(profile.get("id") or Path(str(profile.get("path") or "")).name),
+                "label": str(profile.get("id") or Path(str(profile.get("path") or "")).name),
+                "detail": f"{profile.get('activeModCount', 0)} {'active mod' if profile.get('activeModCount') == 1 else 'active mods'}",
+                "selected": bool(profile.get("selected")),
+                "status": "selected" if profile.get("selected") else profile.get("status"),
+                "icon": "✓" if profile.get("selected") else "•",
+            }
+            for profile in profiles_list
+            if isinstance(profile, dict)
+        ]
         if not any(row.get("label") == "Profiles list" for row in profile_rows):
             profile_rows.append({"label": "Profiles list", "value": str(len(profiles_list)), "status": "available" if profiles_list else "empty"})
         if not any(row.get("label") == "Active mods" for row in profile_rows):
@@ -6989,6 +7001,7 @@ def _gui_compact_status_cards(concept_map: dict[str, dict[str, Any]]) -> list[di
                 "profiles": profiles_list,
                 "profileList": profiles_list,
                 "rows": profile_rows,
+                "profileRows": visible_profile_rows,
                 "actions": concept_actions(profiles),
                 "sourceConcept": "profiles",
             }
@@ -8081,6 +8094,22 @@ def _build_gui_dashboard_window(gui_state: dict[str, Any]) -> tuple[Any, list[st
             status_text = _humanize_enum_label(_gui_text(card.get("status") or "not_selected"))
             ttk.Label(frame, text=status_text, style="Summary.TLabel").grid(row=row_cursor, column=0, columnspan=2, sticky="w", pady=(0, 4))
             row_cursor += 1
+            if card.get("key") == "profiles":
+                for profile_item in (card.get("profileRows") if isinstance(card.get("profileRows"), list) else [])[:6]:
+                    if not isinstance(profile_item, dict):
+                        continue
+                    profile_label = _gui_text(profile_item.get("label"))
+                    profile_detail = _gui_text(profile_item.get("detail"))
+                    profile_icon = _gui_text(profile_item.get("icon") or "•")
+                    profile_text = f"{profile_icon} {profile_label}"
+                    if profile_detail != "Not set":
+                        profile_text = f"{profile_text} — {profile_detail}"
+                    if profile_item.get("selected"):
+                        profile_text = f"{profile_text} (selected)"
+                    ttk.Label(frame, text=profile_text, wraplength=250, justify="left").grid(
+                        row=row_cursor, column=0, columnspan=2, sticky="ew", pady=1
+                    )
+                    row_cursor += 1
             for item in (card.get("rows") if isinstance(card.get("rows"), list) else [])[:3]:
                 if not isinstance(item, dict):
                     continue
