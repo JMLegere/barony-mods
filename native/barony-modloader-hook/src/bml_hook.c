@@ -117,6 +117,7 @@
 #define BML_STASH_SPRITE_CHEST_VOID_VISUAL 1791
 #define BML_STASH_SPRITE_LID_SPAWN 216
 #define BML_STASH_SPRITE_ASSIST_SHRINE_VISUAL 1484
+#define BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES 2
 #define BML_STASH_SPRITE_LID_VOID_VISUAL 1790
 #define BML_STASH_PLAYABLE_INSTALL_REPORT_RELATIVE_PATH "BaronyModLoader/reports/stash-playable-install-report.json"
 #define BML_STASH_PROMPT_LANGUAGE_ID_OPEN_CHEST 4005
@@ -4544,12 +4545,28 @@ static void *bml_stash_playable_find_assist_shrine(void *map_argument) {
     }
     return NULL;
 }
+static bool bml_stash_playable_tile_inside_assist_shrine_clearance(unsigned int shrine_tile_x, unsigned int shrine_tile_y, unsigned int candidate_tile_x, unsigned int candidate_tile_y) {
+    int dx = (int)candidate_tile_x - (int)shrine_tile_x;
+    int dy = (int)candidate_tile_y - (int)shrine_tile_y;
+    return dx > -BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES &&
+           dx < BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES &&
+           dy > -BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES &&
+           dy < BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES;
+}
 static bool bml_stash_playable_choose_lobby_tile_near_assist_shrine(void *map_argument, BmlStashPlacementMapPrefix *map_prefix, double *world_x_out, double *world_y_out) {
     static const int offsets[][2] = {
-        { 1, 0 },
-        { -1, 0 },
-        { 0, -1 },
-        { 0, 1 }
+        { 0, 2 },
+        { 1, 2 },
+        { -1, 2 },
+        { 2, 0 },
+        { -2, 0 },
+        { 0, -2 },
+        { 1, -2 },
+        { -1, -2 },
+        { 2, 1 },
+        { 2, -1 },
+        { -2, 1 },
+        { -2, -1 }
     };
     void *assist_shrine = bml_stash_playable_find_assist_shrine(map_argument);
     unsigned int shrine_tile_x;
@@ -4565,6 +4582,9 @@ static bool bml_stash_playable_choose_lobby_tile_near_assist_shrine(void *map_ar
         if (candidate_x <= 0 || candidate_y <= 0) {
             continue;
         }
+        if (bml_stash_playable_tile_inside_assist_shrine_clearance(shrine_tile_x, shrine_tile_y, (unsigned int)candidate_x, (unsigned int)candidate_y)) {
+            continue;
+        }
         if (!bml_stash_map_tile_is_walkable(map_prefix, (unsigned int)candidate_x, (unsigned int)candidate_y)) {
             continue;
         }
@@ -4574,11 +4594,7 @@ static bool bml_stash_playable_choose_lobby_tile_near_assist_shrine(void *map_ar
         bml_stash_world_tile_center((unsigned int)candidate_x, (unsigned int)candidate_y, world_x_out, world_y_out);
         return true;
     }
-    return bml_stash_find_nearest_walkable_tile(map_prefix,
-                                                bml_entity_get_real(assist_shrine, BML_STASH_ENTITY_OFFSET_X),
-                                                bml_entity_get_real(assist_shrine, BML_STASH_ENTITY_OFFSET_Y),
-                                                world_x_out,
-                                                world_y_out);
+    return false;
 }
 static bool bml_stash_playable_read_int_symbol(const char *name, int *value_out) {
     void *symbol = dlsym(RTLD_DEFAULT, name);

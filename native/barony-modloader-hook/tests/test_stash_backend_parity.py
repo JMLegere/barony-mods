@@ -46,6 +46,18 @@ class StashBackendParityTests(unittest.TestCase):
         self.assertIn("place_chest_and_lid_at(map_argument, x_pos, y_pos, BML_STASH_LOBBY_PLACEMENT_YAW", linux)
         self.assertIn("stash_access_point_created", linux)
 
+    def test_linux_stash_lobby_placement_keeps_clear_of_assist_shrine(self) -> None:
+        linux = read_source(LINUX_HOOK)
+
+        self.assertEqual(define_value(linux, "BML_STASH_ASSIST_SHRINE_CLEARANCE_TILES"), "2")
+        self.assertIn("bml_stash_playable_tile_inside_assist_shrine_clearance", linux)
+        self.assertNotIn("{ 1, 0 },", linux)
+        self.assertNotIn("{ -1, 0 },", linux)
+        self.assertNotIn("{ 0, -1 },", linux)
+        self.assertNotIn("{ 0, 1 }", linux)
+        self.assertIn("{ 0, 2 },", linux)
+        self.assertIn("{ 2, 0 },", linux)
+
     def test_windows_backend_is_either_real_parity_or_explicit_fail_closed_stub(self) -> None:
         linux = read_source(LINUX_HOOK)
         if not WINDOWS_HOOK.exists():
