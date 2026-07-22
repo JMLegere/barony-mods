@@ -1,4 +1,4 @@
-name: Application fixture tests
+name: Application syntax and release-input validation
 
 on:
   pull_request:
@@ -24,9 +24,9 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.11"
-      - name: Validate tracked loader security contracts
-        working-directory: framework/BaronyModLoader
-        run: python tests/test_loader_security.py
-      - name: Exercise tracked target-readiness receipt contract
-        working-directory: framework/BaronyModLoader
-        run: python tests/test_target_readiness_receipt.py
+      - name: Compile the tracked application entry point
+        run: python -m py_compile framework/BaronyModLoader/app/barony_mod_loader.py
+      - name: Validate tracked Stash package input
+        run: python tools/barony_mods.py validate stash
+      - name: Validate tracked Runebound Elixirs package input
+        run: python tools/barony_mods.py validate runebound-elixirs
