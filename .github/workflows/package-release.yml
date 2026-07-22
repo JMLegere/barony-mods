@@ -1,0 +1,2125 @@
+name: Package atomic public-v1 release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable annotated public-v1 tag to package and, only when requested, publish
+        required: true
+        type: string
+      exact_evidence_run_id:
+        description: Successful Licensed exact-build parity run for this exact tag and commit
+        required: true
+        type: string
+      publish:
+        description: Publish only after every public-v1 target graph has been revalidated
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SOURCE_DATE_EPOCH: "1700000000"
+  BML_RELEASE_TAG: ${{ inputs.release_tag }}
+
+jobs:
+  public-v1-package-set:
+    name: Build ordered public-v1 packages
+    runs-on: [self-hosted, release-builder, linux, x86_64]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Verify immutable annotated release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG"
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA"
+      - name: Build and seal Stash 1.0.0 before Warrior 1.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/public-v1-packages
+          python packaging/release_evidence.py build-package --package-id bml.stash --source mods/stash --output dist/public-v1-packages/bml.stash-1.0.0.bmlpkg
+          python packaging/release_evidence.py build-package --package-id jml.runebound-elixirs-warrior --source mods/runebound-elixirs --output dist/public-v1-packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+      - name: Upload sealed ordered public-v1 packages
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: public-v1-packages
+          path: dist/public-v1-packages
+          if-no-files-found: error
+
+  linux-package:
+    needs: [public-v1-package-set]
+    runs-on: [self-hosted, release-builder, linux, x86_64]
+    environment: release-signing
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    env:
+      BML_EXACT_EVIDENCE_RUN_ID: ${{ inputs.exact_evidence_run_id }}
+      BML_LINUX_SIGNING_PRIVATE_KEY: ${{ secrets.BML_LINUX_SIGNING_PRIVATE_KEY }}
+      BML_LINUX_SIGNING_PUBLIC_KEY: ${{ secrets.BML_LINUX_SIGNING_PUBLIC_KEY }}
+      BML_LINUX_VERIFIER_TOOL: ${{ vars.BML_LINUX_VERIFIER_TOOL }}
+      BML_LINUX_VERIFIER_IDENTITY: ${{ vars.BML_LINUX_VERIFIER_IDENTITY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight Linux release runner against completed exact evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag || exit 1
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG"
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA"
+          test "$GITHUB_SHA" = "${{ github.sha }}"
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json conclusion --jq .conclusion)" = success
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json workflowName --jq .workflowName)" = "Licensed exact-build parity"
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json headSha --jq .headSha)" = "$GITHUB_SHA"
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json headBranch --jq .headBranch)" = "$BML_RELEASE_TAG"
+          for value in BML_LINUX_SIGNING_PRIVATE_KEY BML_LINUX_SIGNING_PUBLIC_KEY BML_LINUX_VERIFIER_TOOL BML_LINUX_VERIFIER_IDENTITY; do test -n "${!value}" || { echo "$value is unavailable" >&2; exit 1; }; done
+          command -v minisign >/dev/null || { echo 'minisign is unavailable' >&2; exit 1; }
+          test -x "$BML_LINUX_VERIFIER_TOOL" || { echo 'configured Linux verifier is unavailable' >&2; exit 1; }
+          "$BML_LINUX_VERIFIER_TOOL" --version | grep -E "^$(basename "$BML_LINUX_VERIFIER_TOOL") [0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$" >/dev/null || exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-packages
+          path: dist/release/linux-x86_64/packages
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: exact-build-linux-x86_64
+          path: dist/release/linux-x86_64/evidence/linux-x86_64
+          github-token: ${{ github.token }}
+          run-id: ${{ env.BML_EXACT_EVIDENCE_RUN_ID }}
+      - name: Build final Linux distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tool in pyinstaller appimagetool cyclonedx-py gh xvfb-run; do command -v "$tool" >/dev/null || exit 1; done
+          test -f native/barony-modloader-hook/build/libbarony_bml.so || exit 1
+          test -s dist/release/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg || exit 1
+          test -s dist/release/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+          python packaging/release_evidence.py validate-exact --input dist/release/linux-x86_64/evidence/linux-x86_64/exact-build.json --os linux --architecture x86_64 --digest-output dist/release/linux-x86_64/evidence/linux-x86_64/exact-build.json.sha256 || exit 1
+          packaging/linux/build.sh
+          test -s dist/release/linux-x86_64/BaronyModLoader-linux-x86_64.tar.gz || exit 1
+          test -s dist/release/linux-x86_64/BaronyModLoader-linux-x86_64.AppImage || exit 1
+      - id: linux-cli-smoke-gui-smoke
+        name: Launch Linux CLI and GUI from the release archive
+        shell: bash
+        env:
+          BML_GUI_SMOKE_PREFIX: xvfb-run -a
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/linux-x86_64
+          python packaging/release_evidence.py smoke-package --release-root "$ROOT" --archive "$ROOT/BaronyModLoader-linux-x86_64.tar.gz" --cli AppDir/usr/bin/BaronyModLoader/bml --gui AppDir/usr/bin/BaronyModLoader/BaronyModLoader --gui-report-output "$ROOT/evidence/gui-smoke.json" --output "$ROOT/package-smoke.json" || exit 1
+          test -s "$ROOT/package-smoke.json" || exit 1
+          test -s "$ROOT/evidence/gui-smoke.json" || exit 1
+          sha256sum "$ROOT/package-smoke.json" > "$ROOT/package-smoke.json.sha256" || exit 1
+      - name: Record Linux platform trust after packaged smoke
+        shell: bash
+        env:
+          BML_GUI_SMOKE_PREFIX: xvfb-run -a
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/linux-x86_64
+          mkdir -p "$ROOT/evidence/trust"
+          python packaging/release_evidence.py smoke-package --release-root "$ROOT" --archive "$ROOT/BaronyModLoader-linux-x86_64.tar.gz" --cli AppDir/usr/bin/BaronyModLoader/bml --gui AppDir/usr/bin/BaronyModLoader/BaronyModLoader --gui-report-output "$ROOT/evidence/trust/archive-gui-smoke.json" --evidence-kind archiveSmoke --output "$ROOT/evidence/trust/archive-smoke-tool.json" || exit 1
+          python packaging/release_evidence.py smoke-package --release-root "$ROOT" --cli "$ROOT/BaronyModLoader-linux-x86_64.AppImage" --gui "$ROOT/BaronyModLoader-linux-x86_64.AppImage" --gui-report-output "$ROOT/evidence/trust/appimage-gui-smoke.json" --evidence-kind appImageSmoke --output "$ROOT/evidence/trust/appimage-smoke-tool.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind archiveSmoke --subject "$ROOT/BaronyModLoader-linux-x86_64.tar.gz" --tool-output "$ROOT/evidence/trust/archive-smoke-tool.json" --verifier-tool bml-smoke-package --verifier-identity archiveSmoke --verifier-version 1.0.0 --output "$ROOT/evidence/trust/archive-smoke.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind appImageSmoke --subject "$ROOT/BaronyModLoader-linux-x86_64.tar.gz" --subject "$ROOT/BaronyModLoader-linux-x86_64.AppImage" --tool-output "$ROOT/evidence/trust/appimage-smoke-tool.json" --verifier-tool bml-smoke-package --verifier-identity appImageSmoke --verifier-version 1.0.0 --output "$ROOT/evidence/trust/appimage-smoke.json" || exit 1
+          python - "$ROOT/evidence/platform-trust.json" "$ROOT/evidence/trust/archive-smoke.json" "$ROOT/evidence/trust/appimage-smoke.json" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          proofs = [Path(value) for value in sys.argv[2:]]
+          if not all(path.is_file() and path.stat().st_size for path in proofs):
+              raise SystemExit("platform trust proof is missing")
+          output.write_text(json.dumps({"formatVersion": "1.0.0", "status": "verified", "proofs": [{"path": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in proofs]}, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          cyclonedx-py environment --output-file "$ROOT/BaronyModLoader-linux-x86_64.cdx.json" || exit 1
+      - name: Sign and validate the exact final Linux archive then AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/linux-x86_64
+          PRIVATE_KEY="$RUNNER_TEMP/bml-linux-release-$$.key"
+          cleanup_private_key() {
+            if test -f "$PRIVATE_KEY"; then
+              chmod 600 "$PRIVATE_KEY"
+              if command -v shred >/dev/null; then shred -u "$PRIVATE_KEY"; else rm -f "$PRIVATE_KEY"; fi
+            fi
+          }
+          trap cleanup_private_key EXIT
+          mkdir -p "$ROOT/evidence"
+          umask 077
+          printf '%s\n' "$BML_LINUX_SIGNING_PRIVATE_KEY" > "$PRIVATE_KEY"
+          printf '%s\n' "$BML_LINUX_SIGNING_PUBLIC_KEY" > "$ROOT/evidence/linux-release.pub"
+          chmod 600 "$PRIVATE_KEY"
+          chmod 644 "$ROOT/evidence/linux-release.pub"
+          test -s "$PRIVATE_KEY" && test -s "$ROOT/evidence/linux-release.pub" || exit 1
+          python - "$ROOT" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          subjects = [
+              {"role": "archive", "path": "BaronyModLoader-linux-x86_64.tar.gz", "sha256": hashlib.sha256((root / "BaronyModLoader-linux-x86_64.tar.gz").read_bytes()).hexdigest()},
+              {"role": "appImage", "path": "BaronyModLoader-linux-x86_64.AppImage", "sha256": hashlib.sha256((root / "BaronyModLoader-linux-x86_64.AppImage").read_bytes()).hexdigest()},
+          ]
+          payload = {"formatVersion": "1.0.0", "kind": "linux-release-digests", "subjects": subjects}
+          (root / "evidence" / "linux-release-digests.json").write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+          minisign -S -s "$PRIVATE_KEY" -m "$ROOT/evidence/linux-release-digests.json" -x "$ROOT/evidence/linux-release-digests.json.minisig"
+          test -s "$ROOT/evidence/linux-release-digests.json.minisig" || exit 1
+          minisign -v > "$RUNNER_TEMP/minisign-version-$$.txt" 2>&1
+          VERIFIER_VERSION_LINE=$("$BML_LINUX_VERIFIER_TOOL" --version)
+          python - "$ROOT" "$RUNNER_TEMP/minisign-version-$$.txt" "$VERIFIER_VERSION_LINE" "$BML_LINUX_VERIFIER_TOOL" "$BML_LINUX_VERIFIER_IDENTITY" <<'PY'
+          import hashlib
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          root, minisign_version, verifier_line, verifier_tool, verifier_identity = sys.argv[1:]
+          root = Path(root)
+          version_match = re.search(r"\b([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-+][0-9A-Za-z.-]+)?)\b", Path(minisign_version).read_text(encoding="utf-8"))
+          if version_match is None:
+              raise SystemExit("minisign did not report a semantic version")
+          verifier_name = Path(verifier_tool).name
+          prefix = f"{verifier_name} "
+          if not verifier_line.startswith(prefix) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", verifier_line[len(prefix):]) is None:
+              raise SystemExit("Linux verifier did not report the required identity and semantic version")
+          digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          payload = root / "evidence" / "linux-release-digests.json"
+          signature = root / "evidence" / "linux-release-digests.json.minisig"
+          public_key = root / "evidence" / "linux-release.pub"
+          receipt = {
+              "formatVersion": "1.0.0",
+              "kind": "linux-detached-signature",
+              "status": "verified",
+              "evidenceSource": "credential-gated-release-signing",
+              "subjects": json.loads(payload.read_text(encoding="utf-8"))["subjects"],
+              "signedPayload": {"path": "evidence/linux-release-digests.json", "sha256": digest(payload)},
+              "detachedSignature": {"path": "evidence/linux-release-digests.json.minisig", "sha256": digest(signature), "format": "minisign"},
+              "signer": {"tool": "minisign", "version": version_match.group(1), "keyFingerprint": digest(public_key)},
+              "verifier": {"tool": verifier_name, "version": verifier_line[len(prefix):], "identity": verifier_identity, "keyFingerprint": digest(public_key)},
+          }
+          (root / "evidence" / "linux-detached-signature.json").write_text(json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+          rm -f "$RUNNER_TEMP/minisign-version-$$.txt"
+          python packaging/release_evidence.py validate-linux-signature --input evidence/linux-detached-signature.json --release-root "$ROOT" --archive BaronyModLoader-linux-x86_64.tar.gz --appimage BaronyModLoader-linux-x86_64.AppImage --public-key evidence/linux-release.pub --verifier-tool "$BML_LINUX_VERIFIER_TOOL" --verifier-identity "$BML_LINUX_VERIFIER_IDENTITY"
+          cleanup_private_key
+          trap - EXIT
+      - id: provenance
+        name: Attest final Linux applications and ordered packages
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dist/release/linux-x86_64/BaronyModLoader-linux-x86_64.AppImage
+            dist/release/linux-x86_64/BaronyModLoader-linux-x86_64.tar.gz
+            dist/release/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg
+            dist/release/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+            dist/release/linux-x86_64/evidence/trust/archive-smoke.json
+            dist/release/linux-x86_64/evidence/trust/appimage-smoke.json
+            dist/release/linux-x86_64/evidence/platform-trust.json
+            dist/release/linux-x86_64/evidence/linux-release.pub
+            dist/release/linux-x86_64/evidence/linux-release-digests.json
+            dist/release/linux-x86_64/evidence/linux-release-digests.json.minisig
+            dist/release/linux-x86_64/evidence/linux-detached-signature.json
+      - name: Decide advertised Linux target input status for atomic promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/linux-x86_64
+          cp "${{ steps.provenance.outputs.bundle-path }}" "$ROOT/BaronyModLoader-linux-x86_64.intoto.jsonl"
+          advertised=true
+          for evidence in "$ROOT/evidence/linux-x86_64/exact-build.json" "$ROOT/evidence/linux-x86_64/exact-build.json.sha256" "$ROOT/package-smoke.json" "$ROOT/package-smoke.json.sha256" "$ROOT/evidence/gui-smoke.json" "$ROOT/evidence/platform-trust.json" "$ROOT/evidence/linux-release.pub" "$ROOT/evidence/linux-release-digests.json" "$ROOT/evidence/linux-release-digests.json.minisig" "$ROOT/evidence/linux-detached-signature.json" "$ROOT/BaronyModLoader-linux-x86_64.intoto.jsonl" "$ROOT/BaronyModLoader-linux-x86_64.cdx.json" "$ROOT/packages/bml.stash-1.0.0.bmlpkg" "$ROOT/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg" "$ROOT/AppDir/usr/lib/libbarony_bml.so" "$ROOT/AppDir/AppRun"; do test -s "$evidence" || advertised=false; done
+          test -f "$ROOT/evidence/linux-x86_64/gates/semantic.json" || { echo 'missing Linux semantic gate' >&2; exit 1; }
+          test -f "$ROOT/evidence/linux-x86_64/gates/lua.json" || { echo 'missing Linux lua gate' >&2; exit 1; }
+          test -f "$ROOT/evidence/linux-x86_64/gates/save.json" || { echo 'missing Linux save gate' >&2; exit 1; }
+          test -f "$ROOT/evidence/linux-x86_64/gates/network.json" || { echo 'missing Linux network gate' >&2; exit 1; }
+          test -f "$ROOT/evidence/linux-x86_64/gates/platform.json" || { echo 'missing Linux platform gate' >&2; exit 1; }
+          test "$advertised" = true || { echo 'advertised=false: complete Linux target evidence is required' >&2; exit 1; }
+          printf '{"formatVersion":"1.0.0","target":"linux-x86_64","advertised":true}\n' > "$ROOT/advertised-status.json"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        if: ${{ success() }}
+        with:
+          name: BaronyModLoader-linux-x86_64
+          path: dist/release/linux-x86_64
+          if-no-files-found: error
+
+  windows-package:
+    needs: [public-v1-package-set]
+    runs-on: [self-hosted, release-builder, windows, x86_64]
+    environment: release-signing
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    env:
+      BML_EXACT_EVIDENCE_RUN_ID: ${{ inputs.exact_evidence_run_id }}
+      BML_WINDOWS_CERTIFICATE_PFX: ${{ secrets.BML_WINDOWS_CERTIFICATE_PFX }}
+      BML_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.BML_WINDOWS_CERTIFICATE_PASSWORD }}
+      BML_WINDOWS_TIMESTAMP_URL: ${{ vars.BML_WINDOWS_TIMESTAMP_URL }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight Windows signing runner against completed exact evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -ne $env:BML_RELEASE_TAG) { throw 'wrong release ref' }
+          if ((git cat-file -t "refs/tags/$env:BML_RELEASE_TAG") -ne 'tag') { throw 'release ref is not annotated' }
+          if ((git rev-parse "$env:BML_RELEASE_TAG^{}") -ne $env:GITHUB_SHA) { throw 'release commit mismatch' }
+          if ($env:GITHUB_SHA -ne '${{ github.sha }}') { throw 'workflow commit identity mismatch' }
+          if ((gh run view $env:BML_EXACT_EVIDENCE_RUN_ID --json conclusion --jq .conclusion) -ne 'success') { throw 'exact public-v1 graph did not succeed' }
+          if ((gh run view $env:BML_EXACT_EVIDENCE_RUN_ID --json workflowName --jq .workflowName) -ne 'Licensed exact-build parity') { throw 'wrong exact workflow' }
+          if ((gh run view $env:BML_EXACT_EVIDENCE_RUN_ID --json headSha --jq .headSha) -ne $env:GITHUB_SHA) { throw 'exact commit mismatch' }
+          if ((gh run view $env:BML_EXACT_EVIDENCE_RUN_ID --json headBranch --jq .headBranch) -ne $env:BML_RELEASE_TAG) { throw 'exact tag mismatch' }
+          if (-not $env:BML_WINDOWS_CERTIFICATE_PFX -or -not $env:BML_WINDOWS_CERTIFICATE_PASSWORD -or -not $env:BML_WINDOWS_TIMESTAMP_URL) { throw 'Windows signing credentials are unavailable' }
+          foreach ($tool in @('pyinstaller', 'signtool', 'cyclonedx-py', 'gh', 'Start-MpScan')) { if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "$tool is unavailable" } }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-packages
+          path: dist/release/windows-x86_64/packages
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: exact-build-windows-x86_64
+          path: dist/release/windows-x86_64/evidence/windows-x86_64
+          github-token: ${{ github.token }}
+          run-id: ${{ env.BML_EXACT_EVIDENCE_RUN_ID }}
+      - name: Build final Windows distribution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($package in @('dist/release/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg', 'dist/release/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg')) { if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw "missing package: $package" } }
+          python packaging/release_evidence.py validate-exact --input dist/release/windows-x86_64/evidence/windows-x86_64/exact-build.json --os windows --architecture x86_64 --digest-output dist/release/windows-x86_64/evidence/windows-x86_64/exact-build.json.sha256
+          if ($LASTEXITCODE -ne 0) { throw 'exact evidence did not validate' }
+          $ReadinessRoot = (Resolve-Path 'dist/release/windows-x86_64/evidence/windows-x86_64').Path
+          $ExactPath = Join-Path $ReadinessRoot 'exact-build.json'
+          $ExactDocument = Get-Content -LiteralPath $ExactPath -Raw | ConvertFrom-Json
+          $env:BML_WINDOWS_NATIVE_DLL = (Resolve-Path (Join-Path (Split-Path -Parent $ExactPath) $ExactDocument.adapter.artifactPath)).Path
+          $env:BML_TARGET_READINESS_ROOT = $ReadinessRoot
+          $env:BML_WINDOWS_X86_64_READINESS_RECEIPT = Join-Path $ReadinessRoot 'target-readiness.json'
+          python packaging/release_evidence.py validate-target-readiness --input $env:BML_WINDOWS_X86_64_READINESS_RECEIPT --release-root $env:BML_TARGET_READINESS_ROOT --os windows --architecture x86_64 --subject $env:BML_WINDOWS_NATIVE_DLL
+          if ($LASTEXITCODE -ne 0) { throw 'Windows target readiness did not admit signing' }
+          ./packaging/windows/build.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows package build failed' }
+          if (-not (Test-Path 'dist/release/windows-x86_64/BaronyModLoader-windows-x86_64.zip' -PathType Leaf)) { throw 'Windows archive is missing after build' }
+      - id: windows-cli-smoke-gui-smoke
+        name: Launch Windows CLI and GUI from the release archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Root = 'dist/release/windows-x86_64'
+          python packaging/release_evidence.py smoke-package --release-root $Root --archive "$Root/BaronyModLoader-windows-x86_64.zip" --cli BaronyModLoader-windows-x86_64/bml.exe --gui BaronyModLoader-windows-x86_64/BaronyModLoader.exe --gui-report-output "$Root/evidence/gui-smoke.json" --output "$Root/package-smoke.json"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$Root/package-smoke.json" -PathType Leaf) -or -not (Test-Path "$Root/evidence/gui-smoke.json" -PathType Leaf)) { throw 'packaged CLI or GUI smoke failed' }
+          $SmokeHash = (Get-FileHash -Algorithm SHA256 "$Root/package-smoke.json").Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$Root/package-smoke.json.sha256", "$SmokeHash  package-smoke.json`n", [System.Text.Encoding]::ASCII)
+          if (-not (Test-Path "$Root/package-smoke.json.sha256" -PathType Leaf)) { throw 'package smoke hash is missing' }
+      - name: Record Windows platform trust after packaged smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Root = 'dist/release/windows-x86_64'; $Trust = "$Root/evidence/trust"; New-Item -ItemType Directory -Force $Trust | Out-Null
+          $Launcher = "$Root/BaronyModLoader-windows-x86_64/bml-win-launcher.exe"; $Archive = "$Root/BaronyModLoader-windows-x86_64.zip"
+          & signtool verify /pa /v $Launcher *> "$Trust/authenticode-tool.txt"; if ($LASTEXITCODE -ne 0) { throw 'signature verification failed' }
+          & signtool verify /pa /all /v $Launcher *> "$Trust/timestamp-tool.txt"; if ($LASTEXITCODE -ne 0) { throw 'timestamp verification failed' }
+          Start-MpScan -ScanType CustomScan -ScanPath $Archive
+          $threats = @(Get-MpThreatDetection | Where-Object { $_.Resources -like "*$Archive*" }); $threats | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 "$Trust/antivirus-tool.json"; if ($threats.Count -ne 0) { throw 'antivirus reported final archive' }
+          python packaging/release_evidence.py record-proof --release-root $Root --kind authenticode --subject $Archive --subject $Launcher --tool-output "$Trust/authenticode-tool.txt" --verifier-tool signtool --verifier-identity Authenticode --verifier-version 10.0 --output "$Trust/authenticode.json"; if ($LASTEXITCODE -ne 0) { throw 'authenticode trust receipt failed' }
+          python packaging/release_evidence.py record-proof --release-root $Root --kind timestamp --subject $Archive --subject $Launcher --tool-output "$Trust/timestamp-tool.txt" --verifier-tool signtool --verifier-identity RFC3161 --verifier-version 10.0 --output "$Trust/timestamp.json"; if ($LASTEXITCODE -ne 0) { throw 'timestamp trust receipt failed' }
+          python packaging/release_evidence.py record-proof --release-root $Root --kind antivirus --subject $Archive --tool-output "$Trust/antivirus-tool.json" --verifier-tool microsoft-defender --verifier-identity antimalware-scan --verifier-version 1.0 --output "$Trust/antivirus.json"; if ($LASTEXITCODE -ne 0) { throw 'antivirus trust receipt failed' }
+          python -c "import hashlib,json,sys; from pathlib import Path; output=Path(sys.argv[1]); proofs=[Path(value) for value in sys.argv[2:]]; (all(path.is_file() and path.stat().st_size for path in proofs) or (_ for _ in ()).throw(SystemExit('platform trust proof is missing'))); output.write_text(json.dumps({'formatVersion':'1.0.0','status':'verified','proofs':[{'path':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for path in proofs]}, sort_keys=True)+'\n', encoding='utf-8')" "$Root/evidence/platform-trust.json" "$Trust/authenticode.json" "$Trust/timestamp.json" "$Trust/antivirus.json"
+          if ($LASTEXITCODE -ne 0) { throw 'platform trust aggregation failed' }
+          cyclonedx-py environment --output-file "$Root/BaronyModLoader-windows-x86_64.cdx.json"; if ($LASTEXITCODE -ne 0) { throw 'SBOM generation failed' }
+      - id: provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dist/release/windows-x86_64/BaronyModLoader-windows-x86_64.zip
+            dist/release/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg
+            dist/release/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+            dist/release/windows-x86_64/BaronyModLoader-windows-x86_64/bml-win-launcher.exe
+            dist/release/windows-x86_64/evidence/trust/authenticode.json
+            dist/release/windows-x86_64/evidence/trust/timestamp.json
+            dist/release/windows-x86_64/evidence/trust/antivirus.json
+            dist/release/windows-x86_64/evidence/platform-trust.json
+      - name: Decide advertised Windows target input status for atomic promotion
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'; $Root = 'dist/release/windows-x86_64'
+          Copy-Item -LiteralPath '${{ steps.provenance.outputs.bundle-path }}' -Destination "$Root/BaronyModLoader-windows-x86_64.intoto.jsonl"
+          $advertised = $true
+          foreach ($evidence in @("$Root/evidence/windows-x86_64/exact-build.json", "$Root/evidence/windows-x86_64/exact-build.json.sha256", "$Root/package-smoke.json", "$Root/package-smoke.json.sha256", "$Root/evidence/gui-smoke.json", "$Root/evidence/platform-trust.json", "$Root/BaronyModLoader-windows-x86_64.intoto.jsonl", "$Root/BaronyModLoader-windows-x86_64.cdx.json", "$Root/packages/bml.stash-1.0.0.bmlpkg", "$Root/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg", "$Root/BaronyModLoader-windows-x86_64/barony_bml.dll", "$Root/BaronyModLoader-windows-x86_64/bml-win-launcher.exe")) { if (-not (Test-Path -LiteralPath $evidence -PathType Leaf)) { $advertised = $false } }
+          if (-not (Test-Path -LiteralPath "$Root/evidence/windows-x86_64/gates/semantic.json" -PathType Leaf)) { throw 'missing Windows semantic gate' }
+          if (-not (Test-Path -LiteralPath "$Root/evidence/windows-x86_64/gates/lua.json" -PathType Leaf)) { throw 'missing Windows lua gate' }
+          if (-not (Test-Path -LiteralPath "$Root/evidence/windows-x86_64/gates/save.json" -PathType Leaf)) { throw 'missing Windows save gate' }
+          if (-not (Test-Path -LiteralPath "$Root/evidence/windows-x86_64/gates/network.json" -PathType Leaf)) { throw 'missing Windows network gate' }
+          if (-not (Test-Path -LiteralPath "$Root/evidence/windows-x86_64/gates/platform.json" -PathType Leaf)) { throw 'missing Windows platform gate' }
+          if (-not $advertised) { throw 'advertised=false: complete Windows target evidence is required' }
+          '{"formatVersion":"1.0.0","target":"windows-x86_64","advertised":true}' | Set-Content -Encoding utf8 "$Root/advertised-status.json"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        if: ${{ success() }}
+        with:
+          name: BaronyModLoader-windows-x86_64
+          path: dist/release/windows-x86_64
+          if-no-files-found: error
+
+  macos-package:
+    needs: [public-v1-package-set]
+    runs-on: [self-hosted, release-builder, macos, universal2]
+    environment: release-signing
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    env:
+      BML_EXACT_EVIDENCE_RUN_ID: ${{ inputs.exact_evidence_run_id }}
+      BML_MACOS_CODESIGN_IDENTITY: ${{ secrets.BML_MACOS_CODESIGN_IDENTITY }}
+      BML_MACOS_X86_64_DYLIB: ${{ vars.BML_MACOS_X86_64_DYLIB }}
+      BML_MACOS_ARM64_DYLIB: ${{ vars.BML_MACOS_ARM64_DYLIB }}
+      BML_APPLE_ID: ${{ secrets.BML_APPLE_ID }}
+      BML_APPLE_TEAM_ID: ${{ secrets.BML_APPLE_TEAM_ID }}
+      BML_APPLE_APP_PASSWORD: ${{ secrets.BML_APPLE_APP_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight macOS signing runner credentials and exact evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json conclusion --jq .conclusion)" = success
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG"
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA"
+          test "$GITHUB_SHA" = "${{ github.sha }}"
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json workflowName --jq .workflowName)" = "Licensed exact-build parity"
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json headSha --jq .headSha)" = "$GITHUB_SHA"
+          test "$(gh run view "$BML_EXACT_EVIDENCE_RUN_ID" --json headBranch --jq .headBranch)" = "$BML_RELEASE_TAG"
+          for value in BML_MACOS_CODESIGN_IDENTITY BML_MACOS_X86_64_DYLIB BML_MACOS_ARM64_DYLIB BML_APPLE_ID BML_APPLE_TEAM_ID BML_APPLE_APP_PASSWORD; do test -n "${!value}" || exit 1; done
+          for tool in pyinstaller codesign spctl xcrun lipo cyclonedx-py gh; do command -v "$tool" >/dev/null || exit 1; done
+          test -f "$BML_MACOS_X86_64_DYLIB" || exit 1
+          test -f "$BML_MACOS_ARM64_DYLIB" || exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-packages
+          path: dist/release/macos-universal2/packages
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: exact-build-macos-x86_64
+          path: dist/release/macos-universal2/evidence/macos-x86_64
+          github-token: ${{ github.token }}
+          run-id: ${{ env.BML_EXACT_EVIDENCE_RUN_ID }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: exact-build-macos-arm64
+          path: dist/release/macos-universal2/evidence/macos-arm64
+          github-token: ${{ github.token }}
+          run-id: ${{ env.BML_EXACT_EVIDENCE_RUN_ID }}
+      - name: Build sign notarize and staple universal macOS distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/macos-universal2
+          test -s "$ROOT/packages/bml.stash-1.0.0.bmlpkg" || exit 1
+          test -s "$ROOT/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg" || exit 1
+          python packaging/release_evidence.py validate-exact --input "$ROOT/evidence/macos-x86_64/exact-build.json" --os macos --architecture x86_64 --digest-output "$ROOT/evidence/macos-x86_64/exact-build.json.sha256" || exit 1
+          python packaging/release_evidence.py validate-exact --input "$ROOT/evidence/macos-arm64/exact-build.json" --os macos --architecture arm64 --digest-output "$ROOT/evidence/macos-arm64/exact-build.json.sha256" || exit 1
+          resolve_adapter() {
+            python - "$1" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          exact_path = Path(sys.argv[1]).resolve()
+          document = json.loads(exact_path.read_text(encoding="utf-8"))
+          print((exact_path.parent / document["adapter"]["artifactPath"]).resolve())
+          PY
+          }
+          export BML_MACOS_X86_64_READINESS_ROOT="$ROOT/evidence/macos-x86_64"
+          export BML_MACOS_X86_64_READINESS_RECEIPT="$BML_MACOS_X86_64_READINESS_ROOT/target-readiness.json"
+          export BML_MACOS_X86_64_DYLIB="$(resolve_adapter "$BML_MACOS_X86_64_READINESS_ROOT/exact-build.json")"
+          export BML_MACOS_ARM64_READINESS_ROOT="$ROOT/evidence/macos-arm64"
+          export BML_MACOS_ARM64_READINESS_RECEIPT="$BML_MACOS_ARM64_READINESS_ROOT/target-readiness.json"
+          export BML_MACOS_ARM64_DYLIB="$(resolve_adapter "$BML_MACOS_ARM64_READINESS_ROOT/exact-build.json")"
+          python packaging/release_evidence.py validate-target-readiness --input "$BML_MACOS_X86_64_READINESS_RECEIPT" --release-root "$BML_MACOS_X86_64_READINESS_ROOT" --os macos --architecture x86_64 --subject "$BML_MACOS_X86_64_DYLIB" || exit 1
+          python packaging/release_evidence.py validate-target-readiness --input "$BML_MACOS_ARM64_READINESS_RECEIPT" --release-root "$BML_MACOS_ARM64_READINESS_ROOT" --os macos --architecture arm64 --subject "$BML_MACOS_ARM64_DYLIB" || exit 1
+          packaging/macos/build.sh
+          test -s "$ROOT/BaronyModLoader-macos-universal2.zip" || exit 1
+      - id: macos-cli-smoke-gui-smoke
+        name: Launch macOS CLI and GUI from the release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/macos-universal2
+          python packaging/release_evidence.py smoke-package --release-root "$ROOT" --archive "$ROOT/BaronyModLoader-macos-universal2.zip" --cli BaronyModLoader.app/Contents/MacOS/bml --gui BaronyModLoader.app/Contents/MacOS/BaronyModLoader --gui-report-output "$ROOT/evidence/gui-smoke.json" --output "$ROOT/package-smoke.json" || exit 1
+          test -s "$ROOT/package-smoke.json" || exit 1
+          test -s "$ROOT/evidence/gui-smoke.json" || exit 1
+          shasum -a 256 "$ROOT/package-smoke.json" > "$ROOT/package-smoke.json.sha256" || exit 1
+      - name: Record macOS platform trust after packaged smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/macos-universal2
+          TRUST="$ROOT/evidence/trust"; APP="$ROOT/BaronyModLoader.app"; LAUNCHER="$APP/Contents/MacOS/BaronyModLoader"; mkdir -p "$TRUST"
+          codesign --verify --deep --strict --verbose=4 "$APP" >"$TRUST/code-signature-tool.txt" 2>&1
+          xcrun notarytool history --apple-id "$BML_APPLE_ID" --team-id "$BML_APPLE_TEAM_ID" --password "$BML_APPLE_APP_PASSWORD" >"$TRUST/notarization-tool.txt" 2>&1
+          spctl --assess --type execute --verbose=4 "$APP" >>"$TRUST/notarization-tool.txt" 2>&1
+          xcrun stapler validate -v "$APP" >"$TRUST/stapling-tool.txt" 2>&1
+          { xattr -p com.apple.quarantine "$APP"; spctl --assess --type execute --verbose=4 "$APP"; } >"$TRUST/quarantine-tool.txt" 2>&1
+          for target in macos-x86_64 macos-arm64; do
+            mkdir -p "$TRUST/$target"
+            cp "$TRUST/code-signature-tool.txt" "$TRUST/$target/code-signature-tool.txt"
+            cp "$TRUST/notarization-tool.txt" "$TRUST/$target/notarization-tool.txt"
+            cp "$TRUST/stapling-tool.txt" "$TRUST/$target/stapling-tool.txt"
+            cp "$TRUST/quarantine-tool.txt" "$TRUST/$target/quarantine-tool.txt"
+          done
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind codeSignature --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/code-signature-tool.txt" --verifier-tool codesign --verifier-identity designated-requirement --verifier-version 1.0 --output "$TRUST/code-signature.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind notarization --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/notarization-tool.txt" --verifier-tool notarytool --verifier-identity accepted --verifier-version 1.0 --output "$TRUST/notarization.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind stapling --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/stapling-tool.txt" --verifier-tool stapler --verifier-identity validate --verifier-version 1.0 --output "$TRUST/stapling.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind quarantine --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/quarantine-tool.txt" --verifier-tool spctl --verifier-identity Gatekeeper-assessment --verifier-version 1.0 --output "$TRUST/quarantine.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind codeSignature --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-x86_64/code-signature-tool.txt" --verifier-tool codesign --verifier-identity designated-requirement --verifier-version 1.0 --output "$TRUST/macos-x86_64/code-signature.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind notarization --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-x86_64/notarization-tool.txt" --verifier-tool notarytool --verifier-identity accepted --verifier-version 1.0 --output "$TRUST/macos-x86_64/notarization.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind stapling --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-x86_64/stapling-tool.txt" --verifier-tool stapler --verifier-identity validate --verifier-version 1.0 --output "$TRUST/macos-x86_64/stapling.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind quarantine --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-x86_64/quarantine-tool.txt" --verifier-tool spctl --verifier-identity Gatekeeper-assessment --verifier-version 1.0 --output "$TRUST/macos-x86_64/quarantine.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind codeSignature --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-arm64/code-signature-tool.txt" --verifier-tool codesign --verifier-identity designated-requirement --verifier-version 1.0 --output "$TRUST/macos-arm64/code-signature.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind notarization --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-arm64/notarization-tool.txt" --verifier-tool notarytool --verifier-identity accepted --verifier-version 1.0 --output "$TRUST/macos-arm64/notarization.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind stapling --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-arm64/stapling-tool.txt" --verifier-tool stapler --verifier-identity validate --verifier-version 1.0 --output "$TRUST/macos-arm64/stapling.json" || exit 1
+          python packaging/release_evidence.py record-proof --release-root "$ROOT" --kind quarantine --subject "$ROOT/BaronyModLoader-macos-universal2.zip" --subject "$LAUNCHER" --tool-output "$TRUST/macos-arm64/quarantine-tool.txt" --verifier-tool spctl --verifier-identity Gatekeeper-assessment --verifier-version 1.0 --output "$TRUST/macos-arm64/quarantine.json" || exit 1
+          python - "$ROOT/evidence/platform-trust.json" "$TRUST/code-signature.json" "$TRUST/notarization.json" "$TRUST/stapling.json" "$TRUST/quarantine.json" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          proofs = [Path(value) for value in sys.argv[2:]]
+          if not all(path.is_file() and path.stat().st_size for path in proofs):
+              raise SystemExit("platform trust proof is missing")
+          output.write_text(json.dumps({"formatVersion": "1.0.0", "status": "verified", "proofs": [{"path": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in proofs]}, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          cyclonedx-py environment --output-file "$ROOT/BaronyModLoader-macos-universal2.cdx.json" || exit 1
+      - id: provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dist/release/macos-universal2/BaronyModLoader-macos-universal2.zip
+            dist/release/macos-universal2/packages/bml.stash-1.0.0.bmlpkg
+            dist/release/macos-universal2/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+            dist/release/macos-universal2/BaronyModLoader.app/Contents/MacOS/BaronyModLoader
+            dist/release/macos-universal2/evidence/trust/code-signature.json
+            dist/release/macos-universal2/evidence/trust/notarization.json
+            dist/release/macos-universal2/evidence/trust/stapling.json
+            dist/release/macos-universal2/evidence/trust/quarantine.json
+            dist/release/macos-universal2/evidence/platform-trust.json
+            dist/release/macos-universal2/evidence/trust/macos-x86_64/code-signature.json
+            dist/release/macos-universal2/evidence/trust/macos-x86_64/notarization.json
+            dist/release/macos-universal2/evidence/trust/macos-x86_64/stapling.json
+            dist/release/macos-universal2/evidence/trust/macos-x86_64/quarantine.json
+            dist/release/macos-universal2/evidence/trust/macos-arm64/code-signature.json
+            dist/release/macos-universal2/evidence/trust/macos-arm64/notarization.json
+            dist/release/macos-universal2/evidence/trust/macos-arm64/stapling.json
+            dist/release/macos-universal2/evidence/trust/macos-arm64/quarantine.json
+      - name: Decide advertised macOS target input status and materialize distinct target graphs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=dist/release/macos-universal2
+          cp "${{ steps.provenance.outputs.bundle-path }}" "$ROOT/BaronyModLoader-macos-universal2.intoto.jsonl"
+          for target in macos-x86_64 macos-arm64; do rm -rf "dist/release/$target"; cp -R "$ROOT" "dist/release/$target"; done
+          test -f "dist/release/macos-x86_64/evidence/macos-x86_64/gates/semantic.json" || { echo 'missing macOS x86_64 semantic gate' >&2; exit 1; }
+          test -f "dist/release/macos-x86_64/evidence/macos-x86_64/gates/lua.json" || { echo 'missing macOS x86_64 lua gate' >&2; exit 1; }
+          test -f "dist/release/macos-x86_64/evidence/macos-x86_64/gates/save.json" || { echo 'missing macOS x86_64 save gate' >&2; exit 1; }
+          test -f "dist/release/macos-x86_64/evidence/macos-x86_64/gates/network.json" || { echo 'missing macOS x86_64 network gate' >&2; exit 1; }
+          test -f "dist/release/macos-x86_64/evidence/macos-x86_64/gates/platform.json" || { echo 'missing macOS x86_64 platform gate' >&2; exit 1; }
+          test -f "dist/release/macos-arm64/evidence/macos-arm64/gates/semantic.json" || { echo 'missing macOS arm64 semantic gate' >&2; exit 1; }
+          test -f "dist/release/macos-arm64/evidence/macos-arm64/gates/lua.json" || { echo 'missing macOS arm64 lua gate' >&2; exit 1; }
+          test -f "dist/release/macos-arm64/evidence/macos-arm64/gates/save.json" || { echo 'missing macOS arm64 save gate' >&2; exit 1; }
+          test -f "dist/release/macos-arm64/evidence/macos-arm64/gates/network.json" || { echo 'missing macOS arm64 network gate' >&2; exit 1; }
+          test -f "dist/release/macos-arm64/evidence/macos-arm64/gates/platform.json" || { echo 'missing macOS arm64 platform gate' >&2; exit 1; }
+          for target in macos-x86_64 macos-arm64; do
+            TARGET_ROOT="dist/release/$target"
+            advertised=true
+            for evidence in "$TARGET_ROOT/evidence/$target/exact-build.json" "$TARGET_ROOT/evidence/$target/exact-build.json.sha256" "$TARGET_ROOT/package-smoke.json" "$TARGET_ROOT/package-smoke.json.sha256" "$TARGET_ROOT/evidence/gui-smoke.json" "$TARGET_ROOT/evidence/platform-trust.json" "$TARGET_ROOT/BaronyModLoader-macos-universal2.intoto.jsonl" "$TARGET_ROOT/BaronyModLoader-macos-universal2.cdx.json" "$TARGET_ROOT/packages/bml.stash-1.0.0.bmlpkg" "$TARGET_ROOT/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg" "$TARGET_ROOT/BaronyModLoader.app/Contents/Frameworks/libbarony_bml.dylib" "$TARGET_ROOT/BaronyModLoader.app/Contents/MacOS/BaronyModLoader"; do test -f "$evidence" || advertised=false; done
+            test "$advertised" = true || { echo "advertised=false: complete $target target evidence is required" >&2; exit 1; }
+            printf '{"formatVersion":"1.0.0","target":"%s","advertised":true}\n' "$target" > "$TARGET_ROOT/advertised-status.json"
+          done
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        if: ${{ success() }}
+        with:
+          name: BaronyModLoader-macos-x86_64
+          path: dist/release/macos-x86_64
+          if-no-files-found: error
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        if: ${{ success() }}
+        with:
+          name: BaronyModLoader-macos-arm64
+          path: dist/release/macos-arm64
+          if-no-files-found: error
+
+  final-scenario-evidence:
+    name: Final-byte public-v1 scenario (${{ matrix.scenario }})
+    needs: [linux-package, windows-package, macos-package]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - {scenario: platform-local-linux-x86_64, host_target: linux-x86_64, host_os: linux, host_architecture: x86_64}
+          - {scenario: platform-local-windows-x86_64, host_target: windows-x86_64, host_os: windows, host_architecture: x86_64}
+          - {scenario: platform-local-macos-x86_64, host_target: macos-x86_64, host_os: macos, host_architecture: x86_64}
+          - {scenario: platform-local-macos-arm64, host_target: macos-arm64, host_os: macos, host_architecture: arm64}
+          - {scenario: host-linux-x86_64-client-windows-x86_64, host_target: linux-x86_64, host_os: linux, host_architecture: x86_64}
+          - {scenario: host-linux-x86_64-client-macos-x86_64, host_target: linux-x86_64, host_os: linux, host_architecture: x86_64}
+          - {scenario: host-linux-x86_64-client-macos-arm64, host_target: linux-x86_64, host_os: linux, host_architecture: x86_64}
+          - {scenario: host-windows-x86_64-client-linux-x86_64, host_target: windows-x86_64, host_os: windows, host_architecture: x86_64}
+          - {scenario: host-windows-x86_64-client-macos-x86_64, host_target: windows-x86_64, host_os: windows, host_architecture: x86_64}
+          - {scenario: host-windows-x86_64-client-macos-arm64, host_target: windows-x86_64, host_os: windows, host_architecture: x86_64}
+          - {scenario: host-macos-x86_64-client-linux-x86_64, host_target: macos-x86_64, host_os: macos, host_architecture: x86_64}
+          - {scenario: host-macos-x86_64-client-windows-x86_64, host_target: macos-x86_64, host_os: macos, host_architecture: x86_64}
+          - {scenario: host-macos-x86_64-client-macos-arm64, host_target: macos-x86_64, host_os: macos, host_architecture: x86_64}
+          - {scenario: host-macos-arm64-client-linux-x86_64, host_target: macos-arm64, host_os: macos, host_architecture: arm64}
+          - {scenario: host-macos-arm64-client-windows-x86_64, host_target: macos-arm64, host_os: macos, host_architecture: arm64}
+          - {scenario: host-macos-arm64-client-macos-x86_64, host_target: macos-arm64, host_os: macos, host_architecture: arm64}
+          - {scenario: save-linux-x86_64-to-windows-x86_64, host_target: linux-x86_64, host_os: linux, host_architecture: x86_64}
+          - {scenario: save-linux-x86_64-to-macos-x86_64, host_target: linux-x86_64, host_os: linux, host_architecture: x86_64}
+          - {scenario: save-linux-x86_64-to-macos-arm64, host_target: linux-x86_64, host_os: linux, host_architecture: x86_64}
+          - {scenario: save-windows-x86_64-to-macos-x86_64, host_target: windows-x86_64, host_os: windows, host_architecture: x86_64}
+          - {scenario: save-windows-x86_64-to-macos-arm64, host_target: windows-x86_64, host_os: windows, host_architecture: x86_64}
+          - {scenario: save-macos-x86_64-to-macos-arm64, host_target: macos-x86_64, host_os: macos, host_architecture: x86_64}
+    runs-on: [self-hosted, licensed-barony, "${{ matrix.host_os }}", "${{ matrix.host_architecture }}", "${{ matrix.host_target }}"]
+    permissions:
+      actions: read
+      contents: read
+    env:
+      BML_PUBLIC_V1_SCENARIO_DRIVER: ${{ vars.BML_PUBLIC_V1_SCENARIO_DRIVER }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-linux-x86_64
+          path: final-artifacts/linux-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-windows-x86_64
+          path: final-artifacts/windows-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-macos-x86_64
+          path: final-artifacts/macos-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-macos-arm64
+          path: final-artifacts/macos-arm64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-packages
+          path: final-artifacts/packages
+      - name: Build the exact release identity from canonical package bytes
+        shell: python
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, "packaging")
+          import public_v1_scenarios
+
+          package_paths = (
+              Path("final-artifacts/packages/bml.stash-1.0.0.bmlpkg"),
+              Path("final-artifacts/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg"),
+          )
+          bindings = []
+          for path, (package_id, version, artifact_id) in zip(package_paths, public_v1_scenarios.PACKAGE_FACTS, strict=True):
+              bindings.append({"id": package_id, "version": version, "artifactId": artifact_id, "path": str(path), "sha256": public_v1_scenarios._sha256(path)})
+          identity = public_v1_scenarios.build_release_identity(
+              repository=os.environ["RELEASE_REPOSITORY"],
+              release_tag=os.environ["RELEASE_TAG"],
+              commit_sha=os.environ["RELEASE_COMMIT"],
+              package_artifacts=bindings,
+          )
+          public_v1_scenarios._atomic_json(Path("scenario-work/release-identity.json"), identity)
+      - name: Execute one repository-owned scenario against all exact final bytes
+        run: |
+          python packaging/public_v1_scenarios.py validate
+          python packaging/public_v1_scenarios.py execute "${{ matrix.scenario }}" --target-artifact linux-x86_64=final-artifacts/linux-x86_64/BaronyModLoader-linux-x86_64.tar.gz --target-artifact windows-x86_64=final-artifacts/windows-x86_64/BaronyModLoader-windows-x86_64.zip --target-artifact macos-x86_64=final-artifacts/macos-x86_64/BaronyModLoader-macos-universal2.zip --target-artifact macos-arm64=final-artifacts/macos-arm64/BaronyModLoader-macos-universal2.zip --package-artifact bml.stash=final-artifacts/packages/bml.stash-1.0.0.bmlpkg --package-artifact jml.runebound-elixirs-warrior=final-artifacts/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --release-identity scenario-work/release-identity.json --output scenario-work/raw-result.json
+          python packaging/public_v1_scenarios.py materialize-scenario-evidence --result scenario-work/raw-result.json --source-root . --release-root evidence --output "evidence/${{ matrix.scenario }}.json"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        if: ${{ success() }}
+        with:
+          name: final-scenario-${{ matrix.scenario }}
+          path: |
+            evidence/${{ matrix.scenario }}.json
+            evidence/scenarios/${{ matrix.scenario }}
+          if-no-files-found: error
+
+  consolidate-final-scenario-evidence:
+    name: Validate all 22 final-byte scenarios
+    needs: [final-scenario-evidence]
+    runs-on: [self-hosted, release-builder, linux, x86_64]
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: final-scenario-*
+          path: staged/scenarios
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-linux-x86_64
+          path: staged/final-artifacts/linux-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-windows-x86_64
+          path: staged/final-artifacts/windows-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-macos-x86_64
+          path: staged/final-artifacts/macos-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-macos-arm64
+          path: staged/final-artifacts/macos-arm64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-packages
+          path: staged/final-artifacts/packages
+      - name: Require the exact canonical verified licensed result set
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/public_v1_scenarios.py validate
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          catalog = json.loads(Path("packaging/public-v1-scenarios.json").read_text(encoding="utf-8"))
+          expected = [scenario["id"] for scenario in catalog["scenarios"]]
+          results = sorted(path for path in Path("staged/scenarios").glob("*.json") if path.is_file())
+          if len(results) != 22:
+              raise SystemExit(f"expected exactly 22 top-level scenario results, got {len(results)}")
+          documents = {path.stem: json.loads(path.read_text(encoding="utf-8")) for path in results}
+          if set(documents) != set(expected):
+              raise SystemExit("final scenario IDs are missing, extra, or duplicated")
+          for scenario_id in expected:
+              result = documents[scenario_id]
+              if result.get("status") != "verified" or result.get("source") != "licensed-self-hosted":
+                  raise SystemExit(f"final scenario is not verified licensed evidence: {scenario_id}")
+              if result.get("scenario", {}).get("id") != scenario_id:
+                  raise SystemExit(f"final scenario source identity mismatch: {scenario_id}")
+          PY
+          python packaging/public_v1_scenarios.py build-release-identity --repository "${{ github.repository }}" --release-tag "${{ inputs.release_tag }}" --commit-sha "${{ github.sha }}" --package-artifact bml.stash=staged/final-artifacts/packages/bml.stash-1.0.0.bmlpkg --package-artifact jml.runebound-elixirs-warrior=staged/final-artifacts/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --output staged/release-identity.json
+          mkdir -p staged/scenarios/validation
+          python packaging/public_v1_scenarios.py validate-complete-evidence-set --result staged/scenarios/platform-local-linux-x86_64.json --result staged/scenarios/platform-local-windows-x86_64.json --result staged/scenarios/platform-local-macos-x86_64.json --result staged/scenarios/platform-local-macos-arm64.json --result staged/scenarios/host-linux-x86_64-client-windows-x86_64.json --result staged/scenarios/host-linux-x86_64-client-macos-x86_64.json --result staged/scenarios/host-linux-x86_64-client-macos-arm64.json --result staged/scenarios/host-windows-x86_64-client-linux-x86_64.json --result staged/scenarios/host-windows-x86_64-client-macos-x86_64.json --result staged/scenarios/host-windows-x86_64-client-macos-arm64.json --result staged/scenarios/host-macos-x86_64-client-linux-x86_64.json --result staged/scenarios/host-macos-x86_64-client-windows-x86_64.json --result staged/scenarios/host-macos-x86_64-client-macos-arm64.json --result staged/scenarios/host-macos-arm64-client-linux-x86_64.json --result staged/scenarios/host-macos-arm64-client-windows-x86_64.json --result staged/scenarios/host-macos-arm64-client-macos-x86_64.json --result staged/scenarios/save-linux-x86_64-to-windows-x86_64.json --result staged/scenarios/save-linux-x86_64-to-macos-x86_64.json --result staged/scenarios/save-linux-x86_64-to-macos-arm64.json --result staged/scenarios/save-windows-x86_64-to-macos-x86_64.json --result staged/scenarios/save-windows-x86_64-to-macos-arm64.json --result staged/scenarios/save-macos-x86_64-to-macos-arm64.json --release-identity staged/release-identity.json --final-artifact linux-x86_64=staged/final-artifacts/linux-x86_64/BaronyModLoader-linux-x86_64.tar.gz --final-artifact windows-x86_64=staged/final-artifacts/windows-x86_64/BaronyModLoader-windows-x86_64.zip --final-artifact macos-x86_64=staged/final-artifacts/macos-x86_64/BaronyModLoader-macos-universal2.zip --final-artifact macos-arm64=staged/final-artifacts/macos-arm64/BaronyModLoader-macos-universal2.zip --package-artifact bml.stash=staged/final-artifacts/packages/bml.stash-1.0.0.bmlpkg --package-artifact jml.runebound-elixirs-warrior=staged/final-artifacts/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --evidence-root staged/scenarios --output staged/scenarios/validation/complete-set.json
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        if: ${{ success() }}
+        with:
+          name: public-v1-scenario-evidence
+          path: staged/scenarios
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish one globally validated public-v1 release
+    needs: [linux-package, windows-package, macos-package, consolidate-final-scenario-evidence]
+    if: ${{ inputs.publish }}
+    runs-on: [self-hosted, release-builder, linux, x86_64]
+    environment: release-publish
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    outputs:
+      created-release-id: ${{ steps.create-draft.outputs.release-id }}
+    env:
+      BML_LINUX_VERIFIER_TOOL: ${{ vars.BML_LINUX_VERIFIER_TOOL }}
+      BML_LINUX_VERIFIER_IDENTITY: ${{ vars.BML_LINUX_VERIFIER_IDENTITY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-linux-x86_64
+          path: staged/linux-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-windows-x86_64
+          path: staged/windows-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-macos-x86_64
+          path: staged/macos-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: BaronyModLoader-macos-arm64
+          path: staged/macos-arm64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-scenario-evidence
+          path: staged/scenarios
+      - name: Rehash and identity-check every complete downloaded target bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v lipo >/dev/null || exit 1
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG"
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA"
+          for target in linux-x86_64 windows-x86_64 macos-x86_64 macos-arm64; do
+            test -s "staged/$target/advertised-status.json" || exit 1
+            test -s "staged/$target/package-smoke.json" || exit 1
+            sha256sum --check "staged/$target/package-smoke.json.sha256" || exit 1
+          done
+          python - "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$BML_RELEASE_TAG" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+          repository, commit, tag = sys.argv[1:]
+          expected_packages = [("bml.stash", "1.0.0"), ("jml.runebound-elixirs-warrior", "1.0.0")]
+          targets = (("linux-x86_64", "linux", "x86_64"), ("windows-x86_64", "windows", "x86_64"), ("macos-x86_64", "macos", "x86_64"), ("macos-arm64", "macos", "arm64"))
+          for target, os_name, architecture in targets:
+              root = Path("staged") / target
+              if json.loads((root / "advertised-status.json").read_text()) != {"formatVersion": "1.0.0", "target": target, "advertised": True}:
+                  raise SystemExit(f"incomplete target bundle: {target}")
+              exact = json.loads((root / "evidence" / target / "exact-build.json").read_text())
+              identity = exact.get("releaseIdentity", {})
+              if (exact.get("os"), exact.get("architecture")) != (os_name, architecture) or (identity.get("repository"), identity.get("commitSha"), identity.get("releaseTag")) != (repository, commit, tag):
+                  raise SystemExit(f"exact identity mismatch: {target}")
+              if [(entry.get("id"), entry.get("version")) for entry in identity.get("packages", [])] != expected_packages:
+                  raise SystemExit(f"ordered package identity mismatch: {target}")
+              smoke = json.loads((root / "package-smoke.json").read_text())
+              archive = root / str(smoke.get("archive", {}).get("path", ""))
+              if smoke.get("evidenceKind") != "packageSmoke" or not archive.is_file() or hashlib.sha256(archive.read_bytes()).hexdigest() != smoke["archive"].get("sha256"):
+                  raise SystemExit(f"final package smoke mismatch: {target}")
+          PY
+          python packaging/release_evidence.py validate-exact --input staged/linux-x86_64/evidence/linux-x86_64/exact-build.json --os linux --architecture x86_64 --digest-output staged/linux-x86_64/evidence/linux-x86_64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py validate-exact --input staged/windows-x86_64/evidence/windows-x86_64/exact-build.json --os windows --architecture x86_64 --digest-output staged/windows-x86_64/evidence/windows-x86_64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py validate-exact --input staged/macos-x86_64/evidence/macos-x86_64/exact-build.json --os macos --architecture x86_64 --digest-output staged/macos-x86_64/evidence/macos-x86_64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py validate-exact --input staged/macos-arm64/evidence/macos-arm64/exact-build.json --os macos --architecture arm64 --digest-output staged/macos-arm64/evidence/macos-arm64/exact-build.json.sha256 || exit 1
+          PYTHONPATH=packaging python - <<'PY'
+          import json
+          from pathlib import Path
+          import release_evidence
+          for target, os_name, architecture in (
+              ("windows-x86_64", "windows", "x86_64"),
+              ("macos-x86_64", "macos", "x86_64"),
+              ("macos-arm64", "macos", "arm64"),
+          ):
+              readiness_root = Path("staged") / target / "evidence" / target
+              exact_path = readiness_root / "exact-build.json"
+              exact = json.loads(exact_path.read_text(encoding="utf-8"))
+              subject = (exact_path.parent / exact["adapter"]["artifactPath"]).resolve()
+              release_evidence.validate_target_readiness(
+                  readiness_root / "target-readiness.json",
+                  readiness_root,
+                  os_name,
+                  architecture,
+                  subject,
+              )
+          PY
+          find staged/scenarios -maxdepth 1 -name '*.json.sha256' -print0 | xargs -0 -r sha256sum --check
+          test "$(find staged/scenarios -maxdepth 1 -name '*.json' -type f | wc -l)" = 22
+      - name: Cryptographically replay staged Linux detached signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$BML_LINUX_VERIFIER_TOOL" && test -n "$BML_LINUX_VERIFIER_IDENTITY" || exit 1
+          test -x "$BML_LINUX_VERIFIER_TOOL" || exit 1
+          python packaging/release_evidence.py validate-linux-signature --input evidence/linux-detached-signature.json --release-root staged/linux-x86_64 --archive BaronyModLoader-linux-x86_64.tar.gz --appimage BaronyModLoader-linux-x86_64.AppImage --public-key evidence/linux-release.pub --verifier-tool "$BML_LINUX_VERIFIER_TOOL" --verifier-identity "$BML_LINUX_VERIFIER_IDENTITY"
+      - name: Cryptographically verify and structurally validate every staged machine receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || exit 1
+          test "$GITHUB_REPOSITORY" = "${{ github.repository }}"
+          test "refs/tags/$BML_RELEASE_TAG" = "refs/tags/${{ inputs.release_tag }}"
+          test "$GITHUB_SHA" = "${{ github.sha }}"
+          verify_bundle() {
+            local bundle="$1"
+            local repository="$2"
+            local workflow="$3"
+            local ref="$4"
+            local commit_sha="$5"
+            shift 5
+            test -s "$bundle" || exit 1
+            for subject in "$@"; do
+              test -s "$subject" || exit 1
+              gh attestation verify "$subject" --repo "$repository" --bundle "$bundle" || exit 1
+            done
+            python - "$bundle" "$repository" "$workflow" "$ref" "$commit_sha" "$@" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "packaging")
+          import release_evidence
+
+          bundle, repository, workflow, ref, commit_sha, *subjects = sys.argv[1:]
+          expected_predicate_identity = {
+              "repository": repository,
+              "workflow": workflow,
+              "ref": ref,
+              "commit-sha": commit_sha,
+          }
+          try:
+              if not all(json.loads(line).get("dsseEnvelope") for line in Path(bundle).read_text(encoding="utf-8").splitlines()):
+                  raise ValueError("missing DSSE envelope")
+          except (OSError, ValueError, json.JSONDecodeError) as error:
+              raise SystemExit(f"invalid retained provenance bundle: {bundle}") from error
+          release_evidence.validate_provenance(
+              Path(bundle),
+              tuple(Path(subject) for subject in subjects),
+              repository=expected_predicate_identity["repository"],
+              workflow=expected_predicate_identity["workflow"],
+              ref=expected_predicate_identity["ref"],
+              commit_sha=expected_predicate_identity["commit-sha"],
+          )
+          PY
+          }
+          verify_bundle staged/linux-x86_64/BaronyModLoader-linux-x86_64.intoto.jsonl \
+            "$GITHUB_REPOSITORY" .github/workflows/package-release.yml "refs/tags/$BML_RELEASE_TAG" "$GITHUB_SHA" \
+            staged/linux-x86_64/evidence/trust/archive-smoke.json \
+            staged/linux-x86_64/evidence/trust/appimage-smoke.json \
+            staged/linux-x86_64/evidence/platform-trust.json \
+            staged/linux-x86_64/BaronyModLoader-linux-x86_64.tar.gz \
+            staged/linux-x86_64/BaronyModLoader-linux-x86_64.AppImage \
+            staged/linux-x86_64/evidence/linux-release.pub \
+            staged/linux-x86_64/evidence/linux-release-digests.json \
+            staged/linux-x86_64/evidence/linux-release-digests.json.minisig \
+            staged/linux-x86_64/evidence/linux-detached-signature.json
+          verify_bundle staged/windows-x86_64/BaronyModLoader-windows-x86_64.intoto.jsonl \
+            "$GITHUB_REPOSITORY" .github/workflows/package-release.yml "refs/tags/$BML_RELEASE_TAG" "$GITHUB_SHA" \
+            staged/windows-x86_64/evidence/trust/authenticode.json \
+            staged/windows-x86_64/evidence/trust/timestamp.json \
+            staged/windows-x86_64/evidence/trust/antivirus.json \
+            staged/windows-x86_64/evidence/platform-trust.json \
+            staged/windows-x86_64/BaronyModLoader-windows-x86_64.zip \
+            staged/windows-x86_64/BaronyModLoader-windows-x86_64/bml-win-launcher.exe
+          verify_bundle staged/macos-x86_64/BaronyModLoader-macos-universal2.intoto.jsonl \
+            "$GITHUB_REPOSITORY" .github/workflows/package-release.yml "refs/tags/$BML_RELEASE_TAG" "$GITHUB_SHA" \
+            staged/macos-x86_64/evidence/trust/code-signature.json \
+            staged/macos-x86_64/evidence/trust/notarization.json \
+            staged/macos-x86_64/evidence/trust/stapling.json \
+            staged/macos-x86_64/evidence/trust/quarantine.json \
+            staged/macos-x86_64/evidence/platform-trust.json \
+            staged/macos-x86_64/evidence/trust/macos-x86_64/code-signature.json \
+            staged/macos-x86_64/evidence/trust/macos-x86_64/notarization.json \
+            staged/macos-x86_64/evidence/trust/macos-x86_64/stapling.json \
+            staged/macos-x86_64/evidence/trust/macos-x86_64/quarantine.json \
+            staged/macos-x86_64/BaronyModLoader-macos-universal2.zip \
+            staged/macos-x86_64/BaronyModLoader.app/Contents/MacOS/BaronyModLoader
+          verify_bundle staged/macos-arm64/BaronyModLoader-macos-universal2.intoto.jsonl \
+            "$GITHUB_REPOSITORY" .github/workflows/package-release.yml "refs/tags/$BML_RELEASE_TAG" "$GITHUB_SHA" \
+            staged/macos-arm64/evidence/trust/code-signature.json \
+            staged/macos-arm64/evidence/trust/notarization.json \
+            staged/macos-arm64/evidence/trust/stapling.json \
+            staged/macos-arm64/evidence/trust/quarantine.json \
+            staged/macos-arm64/evidence/platform-trust.json \
+            staged/macos-arm64/evidence/trust/macos-arm64/code-signature.json \
+            staged/macos-arm64/evidence/trust/macos-arm64/notarization.json \
+            staged/macos-arm64/evidence/trust/macos-arm64/stapling.json \
+            staged/macos-arm64/evidence/trust/macos-arm64/quarantine.json \
+            staged/macos-arm64/BaronyModLoader-macos-universal2.zip \
+            staged/macos-arm64/BaronyModLoader.app/Contents/MacOS/BaronyModLoader
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, "packaging")
+          import release_evidence
+
+          contracts = {
+              "linux-x86_64": (("archiveSmoke", "evidence/trust/archive-smoke.json"), ("appImageSmoke", "evidence/trust/appimage-smoke.json")),
+              "windows-x86_64": (("authenticode", "evidence/trust/authenticode.json"), ("timestamp", "evidence/trust/timestamp.json"), ("antivirus", "evidence/trust/antivirus.json")),
+              "macos-x86_64": (("codeSignature", "evidence/trust/code-signature.json"), ("notarization", "evidence/trust/notarization.json"), ("stapling", "evidence/trust/stapling.json"), ("quarantine", "evidence/trust/quarantine.json"), ("codeSignature", "evidence/trust/macos-x86_64/code-signature.json"), ("notarization", "evidence/trust/macos-x86_64/notarization.json"), ("stapling", "evidence/trust/macos-x86_64/stapling.json"), ("quarantine", "evidence/trust/macos-x86_64/quarantine.json")),
+              "macos-arm64": (("codeSignature", "evidence/trust/code-signature.json"), ("notarization", "evidence/trust/notarization.json"), ("stapling", "evidence/trust/stapling.json"), ("quarantine", "evidence/trust/quarantine.json"), ("codeSignature", "evidence/trust/macos-arm64/code-signature.json"), ("notarization", "evidence/trust/macos-arm64/notarization.json"), ("stapling", "evidence/trust/macos-arm64/stapling.json"), ("quarantine", "evidence/trust/macos-arm64/quarantine.json")),
+          }
+          for target, receipts in contracts.items():
+              root = Path("staged") / target
+              for kind, relative_path in receipts:
+                  release_evidence.validate_trust_proof_document(root, root / relative_path, kind)
+              platform_trust = release_evidence.load_object(root / "evidence" / "platform-trust.json")
+              if set(platform_trust) != {"formatVersion", "status", "proofs"} or platform_trust["formatVersion"] != "1.0.0" or platform_trust["status"] != "verified":
+                  raise SystemExit(f"malformed platform-trust receipt: {target}")
+              for proof in platform_trust["proofs"]:
+                  if set(proof) != {"path", "sha256"}:
+                      raise SystemExit(f"malformed platform-trust proof: {target}")
+                  proof_path = root / "evidence" / "trust" / proof["path"]
+                  if not proof_path.is_file() or release_evidence.sha256_file(proof_path) != proof["sha256"]:
+                      raise SystemExit(f"platform-trust proof digest mismatch: {target}")
+          PY
+      - name: Compose complete target input bundles at the global manifest root
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=staged
+          mkdir -p "$ROOT/packages" "$ROOT/evidence/rebased-smoke" "$ROOT/evidence/rebased-gui" "$ROOT/evidence/trust" "$ROOT/evidence/global-trust/linux-x86_64" "$ROOT/evidence/global-trust/windows-x86_64" "$ROOT/evidence/global-trust/macos-x86_64" "$ROOT/evidence/global-trust/macos-arm64"
+          cp framework/BaronyModLoader/schema/release-manifest.schema.json "$ROOT/release-manifest.schema.json"
+          for package in bml.stash-1.0.0.bmlpkg jml.runebound-elixirs-warrior-1.0.0.bmlpkg; do
+            cmp "$ROOT/linux-x86_64/packages/$package" "$ROOT/windows-x86_64/packages/$package"
+            cmp "$ROOT/linux-x86_64/packages/$package" "$ROOT/macos-x86_64/packages/$package"
+            cmp "$ROOT/linux-x86_64/packages/$package" "$ROOT/macos-arm64/packages/$package"
+            cp "$ROOT/linux-x86_64/packages/$package" "$ROOT/packages/$package"
+          done
+          cp "$ROOT/linux-x86_64/BaronyModLoader-linux-x86_64.tar.gz" "$ROOT/"
+          cp "$ROOT/linux-x86_64/BaronyModLoader-linux-x86_64.AppImage" "$ROOT/"
+          cp "$ROOT/linux-x86_64/AppDir/usr/lib/libbarony_bml.so" "$ROOT/libbarony_bml.so"
+          cp "$ROOT/linux-x86_64/AppDir/AppRun" "$ROOT/AppRun"
+          cp "$ROOT/windows-x86_64/BaronyModLoader-windows-x86_64.zip" "$ROOT/"
+          cp -R "$ROOT/windows-x86_64/BaronyModLoader-windows-x86_64" "$ROOT/"
+          cp "$ROOT/macos-x86_64/BaronyModLoader-macos-universal2.zip" "$ROOT/"
+          cp -R "$ROOT/macos-x86_64/BaronyModLoader.app" "$ROOT/"
+          cp "$ROOT/linux-x86_64/evidence/linux-release.pub" "$ROOT/evidence/linux-release.pub"
+          cp "$ROOT/linux-x86_64/evidence/linux-release-digests.json" "$ROOT/evidence/linux-release-digests.json"
+          cp "$ROOT/linux-x86_64/evidence/linux-release-digests.json.minisig" "$ROOT/evidence/linux-release-digests.json.minisig"
+          cp "$ROOT/linux-x86_64/evidence/linux-detached-signature.json" "$ROOT/evidence/linux-detached-signature.json"
+          cp "$ROOT/linux-x86_64/evidence/trust/"*-tool.* "$ROOT/evidence/trust/"
+          cp "$ROOT/linux-x86_64/evidence/trust/archive-smoke.json" "$ROOT/evidence/global-trust/linux-x86_64/"
+          cp "$ROOT/linux-x86_64/evidence/trust/appimage-smoke.json" "$ROOT/evidence/global-trust/linux-x86_64/"
+          cp "$ROOT/windows-x86_64/evidence/trust/"*-tool.* "$ROOT/evidence/trust/"
+          cp "$ROOT/windows-x86_64/evidence/trust/authenticode.json" "$ROOT/evidence/global-trust/windows-x86_64/"
+          cp "$ROOT/windows-x86_64/evidence/trust/timestamp.json" "$ROOT/evidence/global-trust/windows-x86_64/"
+          cp "$ROOT/windows-x86_64/evidence/trust/antivirus.json" "$ROOT/evidence/global-trust/windows-x86_64/"
+          for target in macos-x86_64 macos-arm64; do
+            mkdir -p "$ROOT/evidence/trust/$target"
+            cp "$ROOT/$target/evidence/trust/$target/"*-tool.* "$ROOT/evidence/trust/$target/"
+            cp "$ROOT/$target/evidence/trust/$target/"*.json "$ROOT/evidence/global-trust/$target/"
+          done
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "packaging")
+          import release_evidence
+          root = Path("staged").resolve()
+          archives = {"linux-x86_64": "BaronyModLoader-linux-x86_64.tar.gz", "windows-x86_64": "BaronyModLoader-windows-x86_64.zip", "macos-x86_64": "BaronyModLoader-macos-universal2.zip", "macos-arm64": "BaronyModLoader-macos-universal2.zip"}
+          for target, archive_name in archives.items():
+              original = json.loads((root / target / "package-smoke.json").read_text())
+              release_evidence.validate_package_smoke(root / target, original, expected_kind="packageSmoke")
+              report = root / target / str(original["gui"]["reportPath"])
+              report_target = root / "evidence" / "rebased-gui" / f"{target}.json"
+              report_target.write_bytes(report.read_bytes())
+              original["archive"] = {"path": archive_name, "sha256": hashlib.sha256((root / archive_name).read_bytes()).hexdigest()}
+              original["gui"]["reportPath"] = f"evidence/rebased-gui/{target}.json"
+              original["gui"]["reportSha256"] = hashlib.sha256(report_target.read_bytes()).hexdigest()
+              (root / "evidence" / "rebased-smoke" / f"{target}.json").write_text(json.dumps(original, indent=2, sort_keys=True) + "\n")
+          PY
+          command -v cyclonedx-py >/dev/null || exit 1
+          cyclonedx-py environment --output-file "$ROOT/BaronyModLoader-public-v1.cdx.json" || exit 1
+          for target in linux-x86_64 windows-x86_64 macos-x86_64 macos-arm64; do tar -czf "$ROOT/BaronyModLoader-$target-input-bundle.tar.gz" -C "$ROOT/$target" .; done
+          tar -czf "$ROOT/public-v1-scenario-evidence-bundle.tar.gz" -C "$ROOT/scenarios" .
+      - name: Build the detached digest-bound Workshop candidate plan
+        shell: bash
+        env:
+          BML_WORKSHOP_STASH_ITEM_ID: ${{ secrets.BML_WORKSHOP_STASH_ITEM_ID }}
+          BML_WORKSHOP_STASH_OWNER_ID: ${{ secrets.BML_WORKSHOP_STASH_OWNER_ID }}
+          BML_WORKSHOP_WARRIOR_ITEM_ID: ${{ secrets.BML_WORKSHOP_WARRIOR_ITEM_ID }}
+          BML_WORKSHOP_WARRIOR_OWNER_ID: ${{ secrets.BML_WORKSHOP_WARRIOR_OWNER_ID }}
+        run: |
+          set -euo pipefail
+          for value in BML_WORKSHOP_STASH_ITEM_ID BML_WORKSHOP_STASH_OWNER_ID BML_WORKSHOP_WARRIOR_ITEM_ID BML_WORKSHOP_WARRIOR_OWNER_ID; do test -n "${!value}" || exit 1; done
+          bml_workshop_stash_item_id="$BML_WORKSHOP_STASH_ITEM_ID"
+          bml_workshop_stash_owner_id="$BML_WORKSHOP_STASH_OWNER_ID"
+          bml_workshop_warrior_item_id="$BML_WORKSHOP_WARRIOR_ITEM_ID"
+          bml_workshop_warrior_owner_id="$BML_WORKSHOP_WARRIOR_OWNER_ID"
+          mkdir -p \
+            staged/workshop/bml.stash \
+            staged/workshop/jml.runebound-elixirs-warrior
+          install -m 0400 mods/stash/preview.png staged/workshop/bml.stash/preview.png
+          install -m 0400 mods/runebound-elixirs/preview.png staged/workshop/jml.runebound-elixirs-warrior/preview.png
+          python packaging/workshop_release.py build-candidate-plan \
+            --stash-package staged/packages/bml.stash-1.0.0.bmlpkg \
+            --stash-workshop-toml mods/stash/workshop.toml \
+            --stash-preview staged/workshop/bml.stash/preview.png \
+            --stash-item-id "$bml_workshop_stash_item_id" \
+            --stash-owner-id "$bml_workshop_stash_owner_id" \
+            --warrior-package staged/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg \
+            --warrior-workshop-toml mods/runebound-elixirs/workshop.toml \
+            --warrior-preview staged/workshop/jml.runebound-elixirs-warrior/preview.png \
+            --warrior-item-id "$bml_workshop_warrior_item_id" \
+            --warrior-owner-id "$bml_workshop_warrior_owner_id" \
+            --output staged/workshop/workshop-publication-plan.json
+      - id: global-provenance
+        name: Attest complete global application and package bytes
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            staged/BaronyModLoader-linux-x86_64.tar.gz
+            staged/BaronyModLoader-linux-x86_64.AppImage
+            staged/BaronyModLoader-windows-x86_64.zip
+            staged/BaronyModLoader-macos-universal2.zip
+            staged/packages/bml.stash-1.0.0.bmlpkg
+            staged/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+            staged/workshop/workshop-publication-plan.json
+      - name: Build and validate one public-v1 four-target manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=staged
+          root="$ROOT"
+          cp "${{ steps.global-provenance.outputs.bundle-path }}" "$ROOT/BaronyModLoader-public-v1.intoto.jsonl"
+          python packaging/release_evidence.py build-manifest --release-root "$ROOT" --release-id "$BML_RELEASE_TAG" --release-tag "$BML_RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --provenance-repository "$GITHUB_REPOSITORY" --provenance-workflow .github/workflows/package-release.yml --provenance-ref "refs/tags/${{ inputs.release_tag }}" --sbom "$ROOT/BaronyModLoader-public-v1.cdx.json" --provenance "$ROOT/BaronyModLoader-public-v1.intoto.jsonl" --checksums "$ROOT/SHA256SUMS" --linux-public-key evidence/linux-release.pub --linux-verifier-tool "$BML_LINUX_VERIFIER_TOOL" --linux-verifier-identity "$BML_LINUX_VERIFIER_IDENTITY" \
+            --target linux:x86_64:"$ROOT/linux-x86_64/evidence/linux-x86_64/exact-build.json" --target windows:x86_64:"$ROOT/windows-x86_64/evidence/windows-x86_64/exact-build.json" --target macos:x86_64:"$ROOT/macos-x86_64/evidence/macos-x86_64/exact-build.json" --target macos:arm64:"$ROOT/macos-arm64/evidence/macos-arm64/exact-build.json" \
+            --target-package-smoke linux-x86_64:"$ROOT/evidence/rebased-smoke/linux-x86_64.json" --target-package-smoke windows-x86_64:"$ROOT/evidence/rebased-smoke/windows-x86_64.json" --target-package-smoke macos-x86_64:"$ROOT/evidence/rebased-smoke/macos-x86_64.json" --target-package-smoke macos-arm64:"$ROOT/evidence/rebased-smoke/macos-arm64.json" \
+            --target-trust-proof linux-x86_64:archiveSmoke:release-host:staged/evidence/global-trust/linux-x86_64/archive-smoke.json --target-trust-proof linux-x86_64:appImageSmoke:release-host:staged/evidence/global-trust/linux-x86_64/appimage-smoke.json --target-trust-proof linux-x86_64:detachedSignature:signing-tool:staged/evidence/linux-detached-signature.json \
+            --target-trust-proof windows-x86_64:authenticode:signing-tool:staged/evidence/global-trust/windows-x86_64/authenticode.json --target-trust-proof windows-x86_64:timestamp:signing-tool:staged/evidence/global-trust/windows-x86_64/timestamp.json --target-trust-proof windows-x86_64:antivirus:antivirus-scanner:staged/evidence/global-trust/windows-x86_64/antivirus.json \
+            --target-trust-proof macos-x86_64:codeSignature:signing-tool:staged/evidence/global-trust/macos-x86_64/code-signature.json --target-trust-proof macos-x86_64:notarization:notary-service:staged/evidence/global-trust/macos-x86_64/notarization.json --target-trust-proof macos-x86_64:stapling:notary-service:staged/evidence/global-trust/macos-x86_64/stapling.json --target-trust-proof macos-x86_64:quarantine:release-host:staged/evidence/global-trust/macos-x86_64/quarantine.json \
+            --target-trust-proof macos-arm64:codeSignature:signing-tool:staged/evidence/global-trust/macos-arm64/code-signature.json --target-trust-proof macos-arm64:notarization:notary-service:staged/evidence/global-trust/macos-arm64/notarization.json --target-trust-proof macos-arm64:stapling:notary-service:staged/evidence/global-trust/macos-arm64/stapling.json --target-trust-proof macos-arm64:quarantine:release-host:staged/evidence/global-trust/macos-arm64/quarantine.json \
+            --artifact linux-archive:application:"$ROOT/BaronyModLoader-linux-x86_64.tar.gz":linux:x86_64 --artifact linux-appimage:application:"$ROOT/BaronyModLoader-linux-x86_64.AppImage":linux:x86_64 --artifact linux-runtime:runtime:"$ROOT/libbarony_bml.so":linux:x86_64 --artifact linux-launcher:launcher:"$ROOT/AppRun":linux:x86_64 --artifact windows-archive:application:"$ROOT/BaronyModLoader-windows-x86_64.zip":windows:x86_64 --artifact windows-runtime:runtime:"$ROOT/BaronyModLoader-windows-x86_64/barony_bml.dll":windows:x86_64 --artifact windows-launcher:launcher:"$ROOT/BaronyModLoader-windows-x86_64/bml-win-launcher.exe":windows:x86_64 --artifact macos-archive:application:"$ROOT/BaronyModLoader-macos-universal2.zip":macos:universal2 --artifact macos-runtime:runtime:"$ROOT/BaronyModLoader.app/Contents/Frameworks/libbarony_bml.dylib":macos:universal2 --artifact macos-launcher:launcher:"$ROOT/BaronyModLoader.app/Contents/MacOS/BaronyModLoader":macos:universal2 \
+            --artifact stash-package:package:"$ROOT/packages/bml.stash-1.0.0.bmlpkg":all:all --artifact warrior-package:package:"$ROOT/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg":all:all --artifact linux-target-bundle:evidence:"$ROOT/BaronyModLoader-linux-x86_64-input-bundle.tar.gz":linux:x86_64 --artifact windows-target-bundle:evidence:"$ROOT/BaronyModLoader-windows-x86_64-input-bundle.tar.gz":windows:x86_64 --artifact macos-x86_64-target-bundle:evidence:"$ROOT/BaronyModLoader-macos-x86_64-input-bundle.tar.gz":macos:x86_64 --artifact macos-arm64-target-bundle:evidence:"$ROOT/BaronyModLoader-macos-arm64-input-bundle.tar.gz":macos:arm64 --artifact scenario-bundle:evidence:"$ROOT/public-v1-scenario-evidence-bundle.tar.gz":all:all \
+            --artifact workshop-publication-plan:evidence:"$root/workshop/workshop-publication-plan.json":all:all \
+            --artifact release-manifest-schema:evidence:"$ROOT/release-manifest.schema.json":all:all \
+            --artifact linux-public-key:evidence:"$ROOT/evidence/linux-release.pub":linux:x86_64 --artifact linux-signature-payload:evidence:"$ROOT/evidence/linux-release-digests.json":linux:x86_64 --artifact linux-detached-signature-bytes:evidence:"$ROOT/evidence/linux-release-digests.json.minisig":linux:x86_64 --artifact linux-detached-signature:evidence:"$ROOT/evidence/linux-detached-signature.json":linux:x86_64 \
+            --artifact windows-target-readiness:evidence:"$ROOT/windows-x86_64/evidence/windows-x86_64/target-readiness.json":windows:x86_64 --artifact macos-x86_64-target-readiness:evidence:"$ROOT/macos-x86_64/evidence/macos-x86_64/target-readiness.json":macos:x86_64 --artifact macos-arm64-target-readiness:evidence:"$ROOT/macos-arm64/evidence/macos-arm64/target-readiness.json":macos:arm64 \
+            --package bml.stash:1.0.0:stash-package --package jml.runebound-elixirs-warrior:1.0.0:warrior-package \
+            --scenario platform:platform-local-linux-x86_64:linux-x86_64:linux-x86_64:"$ROOT/scenarios/platform-local-linux-x86_64.json" --scenario platform:platform-local-windows-x86_64:windows-x86_64:windows-x86_64:"$ROOT/scenarios/platform-local-windows-x86_64.json" --scenario platform:platform-local-macos-x86_64:macos-x86_64:macos-x86_64:"$ROOT/scenarios/platform-local-macos-x86_64.json" --scenario platform:platform-local-macos-arm64:macos-arm64:macos-arm64:"$ROOT/scenarios/platform-local-macos-arm64.json" \
+            --scenario network:host-linux-x86_64-client-windows-x86_64:linux-x86_64:windows-x86_64:"$ROOT/scenarios/host-linux-x86_64-client-windows-x86_64.json" --scenario network:host-linux-x86_64-client-macos-x86_64:linux-x86_64:macos-x86_64:"$ROOT/scenarios/host-linux-x86_64-client-macos-x86_64.json" --scenario network:host-linux-x86_64-client-macos-arm64:linux-x86_64:macos-arm64:"$ROOT/scenarios/host-linux-x86_64-client-macos-arm64.json" --scenario network:host-windows-x86_64-client-linux-x86_64:windows-x86_64:linux-x86_64:"$ROOT/scenarios/host-windows-x86_64-client-linux-x86_64.json" --scenario network:host-windows-x86_64-client-macos-x86_64:windows-x86_64:macos-x86_64:"$ROOT/scenarios/host-windows-x86_64-client-macos-x86_64.json" --scenario network:host-windows-x86_64-client-macos-arm64:windows-x86_64:macos-arm64:"$ROOT/scenarios/host-windows-x86_64-client-macos-arm64.json" --scenario network:host-macos-x86_64-client-linux-x86_64:macos-x86_64:linux-x86_64:"$ROOT/scenarios/host-macos-x86_64-client-linux-x86_64.json" --scenario network:host-macos-x86_64-client-windows-x86_64:macos-x86_64:windows-x86_64:"$ROOT/scenarios/host-macos-x86_64-client-windows-x86_64.json" --scenario network:host-macos-x86_64-client-macos-arm64:macos-x86_64:macos-arm64:"$ROOT/scenarios/host-macos-x86_64-client-macos-arm64.json" --scenario network:host-macos-arm64-client-linux-x86_64:macos-arm64:linux-x86_64:"$ROOT/scenarios/host-macos-arm64-client-linux-x86_64.json" --scenario network:host-macos-arm64-client-windows-x86_64:macos-arm64:windows-x86_64:"$ROOT/scenarios/host-macos-arm64-client-windows-x86_64.json" --scenario network:host-macos-arm64-client-macos-x86_64:macos-arm64:macos-x86_64:"$ROOT/scenarios/host-macos-arm64-client-macos-x86_64.json" \
+            --scenario save:save-linux-x86_64-to-windows-x86_64:linux-x86_64:windows-x86_64:"$ROOT/scenarios/save-linux-x86_64-to-windows-x86_64.json" --scenario save:save-linux-x86_64-to-macos-x86_64:linux-x86_64:macos-x86_64:"$ROOT/scenarios/save-linux-x86_64-to-macos-x86_64.json" --scenario save:save-linux-x86_64-to-macos-arm64:linux-x86_64:macos-arm64:"$ROOT/scenarios/save-linux-x86_64-to-macos-arm64.json" --scenario save:save-windows-x86_64-to-macos-x86_64:windows-x86_64:macos-x86_64:"$ROOT/scenarios/save-windows-x86_64-to-macos-x86_64.json" --scenario save:save-windows-x86_64-to-macos-arm64:windows-x86_64:macos-arm64:"$ROOT/scenarios/save-windows-x86_64-to-macos-arm64.json" --scenario save:save-macos-x86_64-to-macos-arm64:macos-x86_64:macos-arm64:"$ROOT/scenarios/save-macos-x86_64-to-macos-arm64.json" || exit 1
+          python packaging/release_evidence.py validate-manifest --input "$ROOT/release-manifest.json" --release-root "$ROOT" --provenance-repository "$GITHUB_REPOSITORY" --provenance-workflow .github/workflows/package-release.yml --provenance-ref "refs/tags/${{ inputs.release_tag }}" --commit-sha "$GITHUB_SHA" --linux-public-key evidence/linux-release.pub --linux-verifier-tool "$BML_LINUX_VERIFIER_TOOL" --linux-verifier-identity "$BML_LINUX_VERIFIER_IDENTITY" || exit 1
+      - name: Build one detached global release index
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_evidence.py build-index --release-root staged --manifest staged/release-manifest.json --checksums staged/SHA256SUMS --provenance staged/BaronyModLoader-public-v1.intoto.jsonl --output staged/release-index.json || exit 1
+      - id: global-index
+        name: Attest one detached global release index
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: staged/release-index.json
+      - name: Validate signed global index before publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "${{ steps.global-index.outputs.bundle-path }}" staged/release-index.intoto.jsonl
+          python packaging/release_evidence.py validate-index --input staged/release-index.json --release-root staged --attestation staged/release-index.intoto.jsonl --repository "${{ github.repository }}" --workflow .github/workflows/package-release.yml --ref "refs/tags/${{ inputs.release_tag }}" --commit-sha "${{ github.sha }}" --linux-public-key evidence/linux-release.pub --linux-verifier-tool "$BML_LINUX_VERIFIER_TOOL" --linux-verifier-identity "$BML_LINUX_VERIFIER_IDENTITY" || exit 1
+      - name: Preflight both Workshop items and capture one rollback kit
+        shell: bash
+        env:
+          BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          authority_root="$RUNNER_TEMP/bml-workshop-authority-preflight"
+          rm -rf -- "$authority_root"
+          mkdir -m 0700 "$authority_root"
+          seal_command_file() {
+            local source="$1"
+            local destination="$2"
+            test -n "$source" && test -f "$source" && test ! -L "$source" || exit 1
+            install -m 0400 "$source" "$destination"
+            test "$(stat -c '%a' "$destination")" = 400 || exit 1
+          }
+          bml_workshop_steam_build_command_file="$authority_root/steam-build"
+          bml_workshop_steam_details_command_file="$authority_root/steam-details"
+          bml_workshop_steam_download_command_file="$authority_root/steam-download"
+          seal_command_file "$BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE" "$bml_workshop_steam_build_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE" "$bml_workshop_steam_details_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE" "$bml_workshop_steam_download_command_file"
+          python packaging/workshop_release.py preflight-public-v1 \
+            --candidate-plan staged/workshop/workshop-publication-plan.json \
+            --release-root staged \
+            --rollback-kit staged/workshop/workshop-rollback-kit.json \
+            --steam-build-command-file "$bml_workshop_steam_build_command_file" \
+            --steam-details-command-file "$bml_workshop_steam_details_command_file" \
+            --steam-download-command-file "$bml_workshop_steam_download_command_file"
+      - name: Assemble one portable whole-version recovery archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          rm -rf staged/workshop-public-v1-recovery
+          mkdir -p \
+            staged/workshop-public-v1-recovery/packages \
+            staged/workshop-public-v1-recovery/workshop/authority-bound/stash \
+            staged/workshop-public-v1-recovery/workshop/authority-bound/warrior \
+            staged/workshop-public-v1-recovery/workshop/bml.stash \
+            staged/workshop-public-v1-recovery/workshop/jml.runebound-elixirs-warrior
+          install -m 0400 staged/workshop/workshop-publication-plan.json staged/workshop-public-v1-recovery/workshop/workshop-publication-plan.json
+          install -m 0400 staged/workshop/workshop-rollback-kit.json staged/workshop-public-v1-recovery/workshop/workshop-rollback-kit.json
+          install -m 0400 staged/packages/bml.stash-1.0.0.bmlpkg staged/workshop-public-v1-recovery/packages/bml.stash-1.0.0.bmlpkg
+          install -m 0400 staged/workshop/authority-bound/stash/workshop.toml staged/workshop-public-v1-recovery/workshop/authority-bound/stash/workshop.toml
+          install -m 0400 staged/workshop/bml.stash/preview.png staged/workshop-public-v1-recovery/workshop/bml.stash/preview.png
+          install -m 0400 staged/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg staged/workshop-public-v1-recovery/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+          install -m 0400 staged/workshop/authority-bound/warrior/workshop.toml staged/workshop-public-v1-recovery/workshop/authority-bound/warrior/workshop.toml
+          install -m 0400 staged/workshop/jml.runebound-elixirs-warrior/preview.png staged/workshop-public-v1-recovery/workshop/jml.runebound-elixirs-warrior/preview.png
+          test ! -e staged/workshop-public-v1-recovery/workshop/bml.stash/workshop.toml
+          test ! -e staged/workshop-public-v1-recovery/workshop/jml.runebound-elixirs-warrior/workshop.toml
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -czf staged/workshop-public-v1-recovery.tar.gz -C staged/workshop-public-v1-recovery packages workshop
+      - id: create-draft
+        name: Create one asset-free owned draft through the Releases REST API
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$BML_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo 'refusing to overwrite release' >&2; exit 1; fi
+          CREATED_RELEASE_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" -F tag_name="$BML_RELEASE_TAG" -F target_commitish="$GITHUB_SHA" -F name="$BML_RELEASE_TAG" -F draft=true -F generate_release_notes=true --jq .id)
+          test -n "$CREATED_RELEASE_ID" && test "$CREATED_RELEASE_ID" -gt 0 || { echo 'created release ID is invalid' >&2; exit 1; }
+          printf 'release-id=%s\n' "$CREATED_RELEASE_ID" >> "$GITHUB_OUTPUT"
+      - id: upload-release-assets
+        name: Upload every sealed asset through the exact release ID REST endpoint
+        shell: bash
+        env:
+          OWNED_RELEASE_ID: ${{ steps.create-draft.outputs.release-id }}
+        run: |
+          set -euo pipefail
+          test -n "$OWNED_RELEASE_ID" || { echo 'created release ID is unavailable' >&2; exit 1; }
+          CURRENT_RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/$OWNED_RELEASE_ID" --jq .id)
+          CURRENT_RELEASE_DRAFT=$(gh api "repos/$GITHUB_REPOSITORY/releases/$OWNED_RELEASE_ID" --jq .draft)
+          test "$CURRENT_RELEASE_ID" = "$OWNED_RELEASE_ID" && test "$CURRENT_RELEASE_DRAFT" = true || { echo 'owned draft identity changed before asset upload' >&2; exit 1; }
+          ASSETS=(
+            staged/BaronyModLoader-linux-x86_64.tar.gz
+            staged/BaronyModLoader-linux-x86_64.AppImage
+            staged/BaronyModLoader-windows-x86_64.zip
+            staged/BaronyModLoader-macos-universal2.zip
+            staged/packages/bml.stash-1.0.0.bmlpkg
+            staged/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+            staged/BaronyModLoader-linux-x86_64-input-bundle.tar.gz
+            staged/BaronyModLoader-windows-x86_64-input-bundle.tar.gz
+            staged/BaronyModLoader-macos-x86_64-input-bundle.tar.gz
+            staged/BaronyModLoader-macos-arm64-input-bundle.tar.gz
+            staged/public-v1-scenario-evidence-bundle.tar.gz
+            staged/BaronyModLoader-public-v1.cdx.json
+            staged/BaronyModLoader-public-v1.intoto.jsonl
+            staged/SHA256SUMS
+            staged/release-manifest.schema.json
+            staged/release-manifest.json
+            staged/release-index.json
+            staged/release-index.intoto.jsonl
+            staged/evidence/linux-release.pub
+            staged/evidence/linux-release-digests.json
+            staged/evidence/linux-release-digests.json.minisig
+            staged/evidence/linux-detached-signature.json
+            staged/workshop/workshop-publication-plan.json
+            staged/workshop-public-v1-recovery.tar.gz
+          )
+          for ASSET in "${ASSETS[@]}"; do
+            test -s "$ASSET" || { echo "sealed release asset is missing: $ASSET" >&2; exit 1; }
+            ASSET_NAME=$(basename "$ASSET")
+            ENCODED_ASSET_NAME=$(python -c 'import sys; from urllib.parse import quote; print(quote(sys.argv[1], safe=""))' "$ASSET_NAME")
+            curl --request POST --fail-with-body --show-error --silent --header "Authorization: Bearer $GH_TOKEN" --header "Content-Type: application/octet-stream" --data-binary @$ASSET "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$OWNED_RELEASE_ID/assets?name=$ENCODED_ASSET_NAME" >/dev/null
+          done
+      - id: publish-atomic-saga
+        name: Publish both verified Workshop items and expose GitHub last
+        shell: bash
+        env:
+          OWNED_RELEASE_ID: ${{ steps.create-draft.outputs.release-id }}
+          BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE }}
+          BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE: ${{ vars.BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE }}
+        run: |
+          set -euo pipefail
+          for value in OWNED_RELEASE_ID BML_RELEASE_TAG GITHUB_SHA GITHUB_REPOSITORY; do test -n "${!value}" || exit 1; done
+          umask 077
+          authority_root="$RUNNER_TEMP/bml-workshop-authority-publish"
+          rm -rf -- "$authority_root"
+          mkdir -m 0700 "$authority_root"
+          seal_command_file() {
+            local source="$1"
+            local destination="$2"
+            test -n "$source" && test -f "$source" && test ! -L "$source" || exit 1
+            install -m 0400 "$source" "$destination"
+            test "$(stat -c '%a' "$destination")" = 400 || exit 1
+          }
+          owned_release_id="$OWNED_RELEASE_ID"
+          bml_release_tag="$BML_RELEASE_TAG"
+          github_sha="$GITHUB_SHA"
+          github_repository="$GITHUB_REPOSITORY"
+          bml_workshop_steam_build_command_file="$authority_root/steam-build"
+          bml_workshop_steam_details_command_file="$authority_root/steam-details"
+          bml_workshop_steam_download_command_file="$authority_root/steam-download"
+          bml_workshop_github_release_command_file="$authority_root/github-release"
+          seal_command_file "$BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE" "$bml_workshop_steam_build_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE" "$bml_workshop_steam_details_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE" "$bml_workshop_steam_download_command_file"
+          seal_command_file "$BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE" "$bml_workshop_github_release_command_file"
+          python packaging/workshop_release.py publish-public-v1 \
+            --candidate-plan staged/workshop/workshop-publication-plan.json \
+            --release-root staged \
+            --rollback-kit staged/workshop/workshop-rollback-kit.json \
+            --github-release-id "$owned_release_id" \
+            --release-tag "$bml_release_tag" \
+            --commit-sha "$github_sha" \
+            --github-repository "$github_repository" \
+            --steam-build-command-file "$bml_workshop_steam_build_command_file" \
+            --steam-details-command-file "$bml_workshop_steam_details_command_file" \
+            --steam-download-command-file "$bml_workshop_steam_download_command_file" \
+            --github-release-command-file "$bml_workshop_github_release_command_file"
+      - name: Compensate every incomplete Workshop and GitHub publication
+        if: ${{ always() && steps.create-draft.outputs.release-id != '' && steps.publish-atomic-saga.outcome != 'success' }}
+        shell: bash
+        env:
+          OWNED_RELEASE_ID: ${{ steps.create-draft.outputs.release-id }}
+          BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE }}
+          BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE: ${{ vars.BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE }}
+        run: |
+          set -euo pipefail
+          test -n "$OWNED_RELEASE_ID" || exit 1
+          umask 077
+          authority_root="$RUNNER_TEMP/bml-workshop-authority-compensate"
+          rm -rf -- "$authority_root"
+          mkdir -m 0700 "$authority_root"
+          seal_command_file() {
+            local source="$1"
+            local destination="$2"
+            test -n "$source" && test -f "$source" && test ! -L "$source" || exit 1
+            install -m 0400 "$source" "$destination"
+            test "$(stat -c '%a' "$destination")" = 400 || exit 1
+          }
+          owned_release_id="$OWNED_RELEASE_ID"
+          bml_workshop_steam_build_command_file="$authority_root/steam-build"
+          bml_workshop_steam_details_command_file="$authority_root/steam-details"
+          bml_workshop_steam_download_command_file="$authority_root/steam-download"
+          bml_workshop_github_release_command_file="$authority_root/github-release"
+          seal_command_file "$BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE" "$bml_workshop_steam_build_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE" "$bml_workshop_steam_details_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE" "$bml_workshop_steam_download_command_file"
+          seal_command_file "$BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE" "$bml_workshop_github_release_command_file"
+          python packaging/workshop_release.py compensate-public-v1 \
+            --candidate-plan staged/workshop/workshop-publication-plan.json \
+            --rollback-kit staged/workshop/workshop-rollback-kit.json \
+            --github-release-id "$owned_release_id" \
+            --steam-build-command-file "$bml_workshop_steam_build_command_file" \
+            --steam-details-command-file "$bml_workshop_steam_details_command_file" \
+            --steam-download-command-file "$bml_workshop_steam_download_command_file" \
+            --github-release-command-file "$bml_workshop_github_release_command_file"
+      - name: Retain private whole-version recovery inputs for final replay failure
+        if: ${{ always() && steps.create-draft.outputs.release-id != '' }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: workshop-publication-recovery
+          path: staged/workshop-public-v1-recovery.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  verify-public-release:
+    name: Replay the public GitHub release graph on Linux
+    needs: [publish-release]
+    runs-on: [self-hosted, licensed-barony, linux, x86_64]
+    permissions:
+      contents: read
+    env:
+      BML_LINUX_VERIFIER_TOOL: ${{ vars.BML_LINUX_VERIFIER_TOOL }}
+      BML_LINUX_VERIFIER_IDENTITY: ${{ vars.BML_LINUX_VERIFIER_IDENTITY }}
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      asset-count: ${{ steps.public-replay.outputs.asset-count }}
+      snapshot-sha256: ${{ steps.public-replay.outputs.snapshot-sha256 }}
+      release-id: ${{ steps.public-replay.outputs.release-id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - id: public-root
+        name: Allocate one clean public download root
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLIC_ROOT="$(mktemp -d "$RUNNER_TEMP/bml-public-download.XXXXXX")"
+          printf 'PUBLIC_ROOT=%s\n' "$PUBLIC_ROOT" >> "$GITHUB_ENV"
+      - id: public-replay
+        name: Discover one immutable public release snapshot and download every exact asset
+        shell: python
+        env:
+          EXPECTED_TAG: ${{ inputs.release_tag }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+          EXPECTED_RELEASE_ID: ${{ needs.publish-release.outputs.created-release-id }}
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          from urllib.parse import quote, urlparse
+          import urllib.request
+
+          expected_declared_assets = {
+              "BaronyModLoader-linux-x86_64.tar.gz",
+              "BaronyModLoader-linux-x86_64.AppImage",
+              "BaronyModLoader-windows-x86_64.zip",
+              "BaronyModLoader-macos-universal2.zip",
+              "bml.stash-1.0.0.bmlpkg",
+              "jml.runebound-elixirs-warrior-1.0.0.bmlpkg",
+              "BaronyModLoader-linux-x86_64-input-bundle.tar.gz",
+              "BaronyModLoader-windows-x86_64-input-bundle.tar.gz",
+              "BaronyModLoader-macos-x86_64-input-bundle.tar.gz",
+              "BaronyModLoader-macos-arm64-input-bundle.tar.gz",
+              "public-v1-scenario-evidence-bundle.tar.gz",
+              "BaronyModLoader-public-v1.cdx.json",
+              "BaronyModLoader-public-v1.intoto.jsonl",
+              "SHA256SUMS",
+              "release-manifest.schema.json",
+              "release-manifest.json",
+              "release-index.json",
+              "release-index.intoto.jsonl",
+              "linux-release.pub",
+              "linux-release-digests.json",
+              "linux-release-digests.json.minisig",
+              "linux-detached-signature.json",
+              "workshop-publication-plan.json",
+              "workshop-public-v1-recovery.tar.gz",
+          }
+          tag = os.environ["EXPECTED_TAG"]
+          repository = os.environ["EXPECTED_REPOSITORY"]
+          expected_release_id = int(os.environ["EXPECTED_RELEASE_ID"])
+          endpoint = f"https://api.github.com/repos/{repository}/releases/tags/{quote(tag, safe='')}"
+          request = urllib.request.Request(endpoint, headers={"Accept": "application/vnd.github+json", "User-Agent": "bml-public-release-verifier"})
+          with urllib.request.urlopen(request, timeout=60) as response:
+              release = json.load(response)
+          release_id = release.get("id")
+          if not isinstance(release_id, int) or release_id <= 0:
+              raise SystemExit("public Releases API returned an invalid immutable release ID")
+          if release_id != expected_release_id:
+              raise SystemExit("public Releases API returned a release not created by this workflow run")
+          if release.get("draft") is not False:
+              raise SystemExit("public Releases API returned a draft release")
+          if release.get("tag_name") != tag:
+              raise SystemExit("public Releases API returned the wrong tag_name")
+          assets = release.get("assets")
+          if not isinstance(assets, list):
+              raise SystemExit("public Releases API omitted assets")
+          api_assets = {asset.get("name") for asset in assets}
+          if None in api_assets or api_assets != expected_declared_assets or len(assets) != len(expected_declared_assets):
+              raise SystemExit("public API asset set/count differs from the declared release asset set")
+          asset_ids = {asset.get("id") for asset in assets}
+          if None in asset_ids or len(asset_ids) != len(assets):
+              raise SystemExit("public API asset IDs are missing or duplicated")
+
+          root = Path(os.environ["PUBLIC_ROOT"])
+          snapshot_assets = []
+          for asset in assets:
+              asset_id = asset.get("id")
+              name = asset.get("name")
+              size = asset.get("size")
+              url = asset.get("browser_download_url")
+              if not isinstance(asset_id, int) or asset_id <= 0:
+                  raise SystemExit(f"asset ID is invalid: {name}")
+              if not isinstance(name, str) or name not in expected_declared_assets:
+                  raise SystemExit("asset name is invalid")
+              if not isinstance(size, int) or size < 0:
+                  raise SystemExit(f"asset size is invalid: {name}")
+              if not isinstance(url, str) or urlparse(url).scheme != "https":
+                  raise SystemExit(f"asset browser_download_url is not public HTTPS: {name}")
+              download_request = urllib.request.Request(url, headers={"User-Agent": "bml-public-release-verifier"})
+              with urllib.request.urlopen(download_request, timeout=300) as response:
+                  if urlparse(response.geturl()).scheme != "https":
+                      raise SystemExit(f"asset redirect left HTTPS: {name}")
+                  asset_bytes = response.read()
+              if len(asset_bytes) != asset.get("size"):
+                  raise SystemExit(f"downloaded asset size differs from the release snapshot: {name}")
+              (root / name).write_bytes(asset_bytes)
+              snapshot_assets.append({
+                  "id": asset.get("id"),
+                  "name": name,
+                  "size": asset.get("size"),
+                  "sha256": hashlib.sha256(asset_bytes).hexdigest(),
+                  "browserDownloadUrl": url,
+              })
+          downloaded_assets = {path.name for path in root.iterdir() if path.is_file()}
+          if downloaded_assets != expected_declared_assets or len(downloaded_assets) != len(expected_declared_assets):
+              raise SystemExit("downloaded public asset set/count is incomplete")
+
+          snapshot_assets = sorted(snapshot_assets, key=lambda asset: asset["name"])
+          snapshot = {
+              "formatVersion": "1.0.0",
+              "evidenceKind": "PublicAssetSnapshot",
+              "status": "verified",
+              "repository": repository,
+              "releaseTag": tag,
+              "commitSha": os.environ["EXPECTED_COMMIT"],
+              "releaseId": release_id,
+              "assets": snapshot_assets,
+          }
+          snapshot_root = Path("public-verification")
+          shutil.rmtree(snapshot_root, ignore_errors=True)
+          snapshot_root.mkdir()
+          snapshot_path = snapshot_root / "public-asset-snapshot.json"
+          snapshot_bytes = (json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+          snapshot_path.write_bytes(snapshot_bytes)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"asset-count={len(downloaded_assets)}\n")
+              output.write(f"snapshot-sha256={hashlib.sha256(snapshot_bytes).hexdigest()}\n")
+              output.write(f"release-id={release_id}\n")
+      - name: Reconstruct the declared graph exclusively from public assets
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import tarfile
+          import stat
+
+          root = Path(os.environ["PUBLIC_ROOT"])
+          bundles = {
+              "linux-x86_64": "BaronyModLoader-linux-x86_64-input-bundle.tar.gz",
+              "windows-x86_64": "BaronyModLoader-windows-x86_64-input-bundle.tar.gz",
+              "macos-x86_64": "BaronyModLoader-macos-x86_64-input-bundle.tar.gz",
+              "macos-arm64": "BaronyModLoader-macos-arm64-input-bundle.tar.gz",
+          }
+          for target, bundle in bundles.items():
+              destination = root / target
+              destination.mkdir()
+              with tarfile.open(root / bundle, "r:gz") as archive:
+                  archive.extractall(destination, filter="data")
+          (root / "scenarios").mkdir()
+          with tarfile.open(root / "public-v1-scenario-evidence-bundle.tar.gz", "r:gz") as archive:
+              archive.extractall(root / "scenarios", filter="data")
+          (root / "packages").mkdir()
+          for package in ("bml.stash-1.0.0.bmlpkg", "jml.runebound-elixirs-warrior-1.0.0.bmlpkg"):
+              shutil.copy2(root / package, root / "packages" / package)
+          (root / "workshop").mkdir()
+          shutil.copy2(root / "workshop-publication-plan.json", root / "workshop" / "workshop-publication-plan.json")
+          recovery = root / "workshop-public-v1-recovery"
+          recovery.mkdir()
+          with tarfile.open(root / "workshop-public-v1-recovery.tar.gz", "r:gz") as archive:
+              archive.extractall(recovery, filter="data")
+          recovery_plan = recovery / "workshop" / "workshop-publication-plan.json"
+          recovery_rollback = recovery / "workshop" / "workshop-rollback-kit.json"
+          for document_path, label in (
+              (recovery_plan, "Workshop recovery plan"),
+              (recovery_rollback, "Workshop recovery rollback kit"),
+          ):
+              metadata = document_path.lstat()
+              if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                  raise SystemExit(f"{label} is not a non-symlink regular file")
+          if recovery_plan.read_bytes() != (root / "workshop-publication-plan.json").read_bytes():
+              raise SystemExit("portable Workshop recovery plan differs from the sealed public plan")
+          plan = json.loads(recovery_plan.read_bytes())
+          items = plan.get("items")
+          if not isinstance(items, list) or len(items) != 2:
+              raise SystemExit("portable Workshop recovery plan has the wrong item set")
+          recovery_root = recovery.resolve()
+          for item in items:
+              if not isinstance(item, dict):
+                  raise SystemExit("portable Workshop recovery plan item is invalid")
+              for binding_name in ("sealedPackage", "workshopToml", "preview"):
+                  binding = item.get(binding_name)
+                  if not isinstance(binding, dict) or set(binding) != {"path", "sha256"}:
+                      raise SystemExit(f"portable Workshop {binding_name} binding is invalid")
+                  path_value = binding.get("path")
+                  digest_value = binding.get("sha256")
+                  if not isinstance(path_value, str) or not path_value or path_value != path_value.strip():
+                      raise SystemExit(f"portable Workshop {binding_name} path is invalid")
+                  relative_path = Path(path_value)
+                  if relative_path.is_absolute() or ".." in relative_path.parts:
+                      raise SystemExit(f"portable Workshop {binding_name} path escapes the recovery root")
+                  candidate = recovery / relative_path
+                  try:
+                      candidate.resolve(strict=True).relative_to(recovery_root)
+                  except (OSError, ValueError) as error:
+                      raise SystemExit(
+                          f"portable Workshop {binding_name} path escapes the recovery root"
+                      ) from error
+                  component = recovery
+                  for part in relative_path.parts:
+                      component /= part
+                      if stat.S_ISLNK(component.lstat().st_mode):
+                          raise SystemExit(f"portable Workshop {binding_name} path uses a symlink")
+                  if not stat.S_ISREG(candidate.lstat().st_mode):
+                      raise SystemExit(f"portable Workshop {binding_name} is not a regular file")
+                  if (
+                      not isinstance(digest_value, str)
+                      or len(digest_value) != 64
+                      or any(character not in "0123456789abcdef" for character in digest_value)
+                      or hashlib.sha256(candidate.read_bytes()).hexdigest() != digest_value
+                  ):
+                      raise SystemExit(f"portable Workshop {binding_name} digest differs from the sealed plan")
+          shutil.copy2(root / "linux-x86_64" / "AppDir" / "usr" / "lib" / "libbarony_bml.so", root / "libbarony_bml.so")
+          shutil.copy2(root / "linux-x86_64" / "AppDir" / "AppRun", root / "AppRun")
+          shutil.copytree(root / "windows-x86_64" / "BaronyModLoader-windows-x86_64", root / "BaronyModLoader-windows-x86_64")
+          shutil.copytree(root / "macos-x86_64" / "BaronyModLoader.app", root / "BaronyModLoader.app", symlinks=True)
+          evidence = root / "evidence"
+          for directory in (
+              evidence / "rebased-smoke",
+              evidence / "rebased-gui",
+              evidence / "trust",
+              evidence / "global-trust" / "linux-x86_64",
+              evidence / "global-trust" / "windows-x86_64",
+              evidence / "global-trust" / "macos-x86_64",
+              evidence / "global-trust" / "macos-arm64",
+          ):
+              directory.mkdir(parents=True, exist_ok=True)
+          for name in ("linux-release.pub", "linux-release-digests.json", "linux-release-digests.json.minisig", "linux-detached-signature.json"):
+              shutil.copy2(root / name, evidence / name)
+          for source in (root / "linux-x86_64" / "evidence" / "trust").glob("*-tool.*"):
+              shutil.copy2(source, evidence / "trust" / source.name)
+          for name in ("archive-smoke.json", "appimage-smoke.json"):
+              shutil.copy2(root / "linux-x86_64" / "evidence" / "trust" / name, evidence / "global-trust" / "linux-x86_64" / name)
+          for source in (root / "windows-x86_64" / "evidence" / "trust").glob("*-tool.*"):
+              shutil.copy2(source, evidence / "trust" / source.name)
+          for name in ("authenticode.json", "timestamp.json", "antivirus.json"):
+              shutil.copy2(root / "windows-x86_64" / "evidence" / "trust" / name, evidence / "global-trust" / "windows-x86_64" / name)
+          for target in ("macos-x86_64", "macos-arm64"):
+              trust_source = root / target / "evidence" / "trust" / target
+              trust_destination = evidence / "trust" / target
+              trust_destination.mkdir()
+              for source in trust_source.glob("*-tool.*"):
+                  shutil.copy2(source, trust_destination / source.name)
+              for source in trust_source.glob("*.json"):
+                  shutil.copy2(source, evidence / "global-trust" / target / source.name)
+          archives = {
+              "linux-x86_64": "BaronyModLoader-linux-x86_64.tar.gz",
+              "windows-x86_64": "BaronyModLoader-windows-x86_64.zip",
+              "macos-x86_64": "BaronyModLoader-macos-universal2.zip",
+              "macos-arm64": "BaronyModLoader-macos-universal2.zip",
+          }
+          for target, archive_name in archives.items():
+              target_root = root / target
+              original = json.loads((target_root / "package-smoke.json").read_text(encoding="utf-8"))
+              report = target_root / original["gui"]["reportPath"]
+              report_target = evidence / "rebased-gui" / f"{target}.json"
+              shutil.copy2(report, report_target)
+              original["archive"] = {"path": archive_name, "sha256": hashlib.sha256((root / archive_name).read_bytes()).hexdigest()}
+              original["gui"]["reportPath"] = f"evidence/rebased-gui/{target}.json"
+              original["gui"]["reportSha256"] = hashlib.sha256(report_target.read_bytes()).hexdigest()
+              (evidence / "rebased-smoke" / f"{target}.json").write_text(json.dumps(original, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+      - name: Replay checksums manifest target matrix index and Linux signature on public bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$BML_LINUX_VERIFIER_TOOL" && test -n "$BML_LINUX_VERIFIER_IDENTITY" || exit 1
+          (cd "$PUBLIC_ROOT" && sha256sum --check SHA256SUMS)
+          python packaging/release_evidence.py validate-linux-signature --input evidence/linux-detached-signature.json --release-root "$PUBLIC_ROOT" --archive BaronyModLoader-linux-x86_64.tar.gz --appimage BaronyModLoader-linux-x86_64.AppImage --public-key evidence/linux-release.pub --verifier-tool "$BML_LINUX_VERIFIER_TOOL" --verifier-identity "$BML_LINUX_VERIFIER_IDENTITY"
+          python packaging/release_evidence.py validate-manifest --input "$PUBLIC_ROOT/release-manifest.json" --release-root "$PUBLIC_ROOT" --provenance-repository "$GITHUB_REPOSITORY" --provenance-workflow .github/workflows/package-release.yml --provenance-ref "refs/tags/$BML_RELEASE_TAG" --commit-sha "$GITHUB_SHA" --linux-public-key evidence/linux-release.pub --linux-verifier-tool "$BML_LINUX_VERIFIER_TOOL" --linux-verifier-identity "$BML_LINUX_VERIFIER_IDENTITY"
+          python packaging/release_evidence.py validate-index --input "$PUBLIC_ROOT/release-index.json" --release-root "$PUBLIC_ROOT" --attestation "$PUBLIC_ROOT/release-index.intoto.jsonl" --repository "$GITHUB_REPOSITORY" --workflow .github/workflows/package-release.yml --ref "refs/tags/$BML_RELEASE_TAG" --commit-sha "$GITHUB_SHA" --linux-public-key evidence/linux-release.pub --linux-verifier-tool "$BML_LINUX_VERIFIER_TOOL" --linux-verifier-identity "$BML_LINUX_VERIFIER_IDENTITY"
+      - name: Require the exact advertised four-target matrix
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads((Path(os.environ["PUBLIC_ROOT"]) / "release-manifest.json").read_text(encoding="utf-8"))
+          expected_targets = {
+              ("linux", "x86_64"),
+              ("windows", "x86_64"),
+              ("macos", "x86_64"),
+              ("macos", "arm64"),
+          }
+          actual_targets = {(platform.get("os"), platform.get("architecture")) for platform in manifest.get("platforms", []) if platform.get("advertised") is True}
+          if set(actual_targets) != expected_targets:
+              raise SystemExit("public manifest advertised target matrix is missing or extra")
+      - name: Upload the sealed canonical public asset snapshot
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: public-asset-snapshot
+          path: public-verification/public-asset-snapshot.json
+          if-no-files-found: error
+
+
+  verify-public-windows:
+    name: Replay Authenticode on the snapshotted public Windows archive
+    needs: [verify-public-release]
+    runs-on: [self-hosted, licensed-barony, windows, x86_64]
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      receipt-sha256: ${{ steps.windows-receipt.outputs.receipt-sha256 }}
+    steps:
+      - name: Download the canonical public asset snapshot
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-asset-snapshot
+          path: public-snapshot
+      - name: Download and unpack the exact snapshotted public Windows archive
+        shell: python
+        env:
+          EXPECTED_SNAPSHOT_SHA256: ${{ needs.verify-public-release.outputs.snapshot-sha256 }}
+          EXPECTED_RELEASE_ID: ${{ needs.verify-public-release.outputs.release-id }}
+          EXPECTED_TAG: ${{ inputs.release_tag }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import shutil
+          from urllib.parse import urlparse
+          import urllib.request
+          import zipfile
+
+          snapshot_path = Path("public-snapshot/public-asset-snapshot.json")
+          snapshot_bytes = snapshot_path.read_bytes()
+          snapshot_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+          if snapshot_sha256 != os.environ["EXPECTED_SNAPSHOT_SHA256"]:
+              raise SystemExit("Windows replay received a changed public asset snapshot")
+          snapshot = json.loads(snapshot_bytes)
+          release = {"id": snapshot.get("releaseId")}
+          if str(release.get("id")) != os.environ["EXPECTED_RELEASE_ID"]:
+              raise SystemExit("Windows replay received a changed GitHub release ID")
+          if (snapshot.get("repository"), snapshot.get("releaseTag"), snapshot.get("commitSha")) != (
+              os.environ["EXPECTED_REPOSITORY"],
+              os.environ["EXPECTED_TAG"],
+              os.environ["EXPECTED_COMMIT"],
+          ):
+              raise SystemExit("Windows replay received a snapshot for another release identity")
+          expected_name = "BaronyModLoader-windows-x86_64.zip"
+          matches = [asset for asset in snapshot.get("assets", []) if asset.get("name") == expected_name]
+          if len(matches) != 1:
+              raise SystemExit("snapshot must contain exactly one public Windows archive")
+          asset = matches[0]
+          if not isinstance(asset.get("id"), int) or asset.get("id") <= 0:
+              raise SystemExit("snapshot Windows asset ID is invalid")
+          if asset.get("name") != expected_name:
+              raise SystemExit("snapshot Windows asset name changed")
+          if not isinstance(asset.get("size"), int) or asset.get("size") < 0:
+              raise SystemExit("snapshot Windows asset size is invalid")
+          if re.fullmatch(r"[0-9a-f]{64}", str(asset.get("sha256"))) is None:
+              raise SystemExit("snapshot Windows asset SHA-256 is invalid")
+          url = asset.get("browserDownloadUrl")
+          if not isinstance(url, str) or urlparse(url).scheme != "https":
+              raise SystemExit("snapshotted Windows archive URL is not public HTTPS")
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "bml-public-windows"
+          shutil.rmtree(root, ignore_errors=True)
+          root.mkdir()
+          with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "bml-public-windows-verifier"}), timeout=300) as response:
+              if urlparse(response.geturl()).scheme != "https":
+                  raise SystemExit("public Windows asset redirect left HTTPS")
+              archive_bytes = response.read()
+          archive = root / expected_name
+          archive.write_bytes(archive_bytes)
+          if len(archive_bytes) != asset.get("size") or archive.stat().st_size != asset.get("size"):
+              raise SystemExit("public Windows archive size changed after the snapshot")
+          if hashlib.sha256(archive_bytes).hexdigest() != asset.get("sha256"):
+              raise SystemExit("public Windows archive SHA-256 changed after the snapshot")
+          with zipfile.ZipFile(archive) as package:
+              members = [PurePosixPath(name) for name in package.namelist()]
+              if any(member.is_absolute() or ".." in member.parts for member in members):
+                  raise SystemExit("public Windows archive contains an unsafe path")
+              package.extractall(root)
+          base = {
+              "formatVersion": "1.0.0",
+              "evidenceKind": "PublicPlatformVerification",
+              "status": "verified",
+              "targetIds": ["windows-x86_64"],
+              "repository": snapshot["repository"],
+              "releaseTag": snapshot["releaseTag"],
+              "commitSha": snapshot["commitSha"],
+              "releaseId": release.get("id"),
+              "assetSnapshotSha256": snapshot_sha256,
+              "asset": asset,
+          }
+          Path("public-windows-verification-base.json").write_text(json.dumps(base, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as output:
+              output.write(f"PUBLIC_WINDOWS_ROOT={root}\n")
+      - name: Verify Authenticode and timestamp on snapshotted public bytes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Launcher = Join-Path $env:PUBLIC_WINDOWS_ROOT 'BaronyModLoader-windows-x86_64/bml-win-launcher.exe'
+          & signtool verify /pa /v $Launcher
+          if ($LASTEXITCODE -ne 0) { throw 'public Authenticode verification failed' }
+          & signtool verify /pa /all /v $Launcher
+          if ($LASTEXITCODE -ne 0) { throw 'public Authenticode timestamp verification failed' }
+      - id: windows-receipt
+        name: Seal the Windows public-byte receipt
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = json.loads(Path("public-windows-verification-base.json").read_text(encoding="utf-8"))
+          receipt["nativeChecks"] = {"authenticode": "verified", "timestamp": "verified"}
+          receipt_path = Path("public-windows-verification.json")
+          receipt_bytes = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+          receipt_path.write_bytes(receipt_bytes)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"receipt-sha256={hashlib.sha256(receipt_bytes).hexdigest()}\n")
+      - name: Upload the canonical Windows native receipt
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: public-windows-verification
+          path: public-windows-verification.json
+          if-no-files-found: error
+
+  verify-public-macos:
+    name: Replay Apple trust on the snapshotted public macOS archive
+    needs: [verify-public-release]
+    runs-on: [self-hosted, licensed-barony, macos, universal2]
+    environment: release-signing
+    permissions:
+      actions: read
+      contents: read
+    env:
+      BML_APPLE_ID: ${{ secrets.BML_APPLE_ID }}
+      BML_APPLE_TEAM_ID: ${{ secrets.BML_APPLE_TEAM_ID }}
+      BML_APPLE_APP_PASSWORD: ${{ secrets.BML_APPLE_APP_PASSWORD }}
+    outputs:
+      receipt-sha256: ${{ steps.macos-receipt.outputs.receipt-sha256 }}
+    steps:
+      - name: Download the canonical public asset snapshot
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-asset-snapshot
+          path: public-snapshot
+      - name: Download the exact snapshotted public macOS archive
+        shell: python
+        env:
+          EXPECTED_SNAPSHOT_SHA256: ${{ needs.verify-public-release.outputs.snapshot-sha256 }}
+          EXPECTED_RELEASE_ID: ${{ needs.verify-public-release.outputs.release-id }}
+          EXPECTED_TAG: ${{ inputs.release_tag }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          from urllib.parse import urlparse
+          import urllib.request
+
+          snapshot_path = Path("public-snapshot/public-asset-snapshot.json")
+          snapshot_bytes = snapshot_path.read_bytes()
+          snapshot_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+          if snapshot_sha256 != os.environ["EXPECTED_SNAPSHOT_SHA256"]:
+              raise SystemExit("macOS replay received a changed public asset snapshot")
+          snapshot = json.loads(snapshot_bytes)
+          release = {"id": snapshot.get("releaseId")}
+          if str(release.get("id")) != os.environ["EXPECTED_RELEASE_ID"]:
+              raise SystemExit("macOS replay received a changed GitHub release ID")
+          if (snapshot.get("repository"), snapshot.get("releaseTag"), snapshot.get("commitSha")) != (
+              os.environ["EXPECTED_REPOSITORY"],
+              os.environ["EXPECTED_TAG"],
+              os.environ["EXPECTED_COMMIT"],
+          ):
+              raise SystemExit("macOS replay received a snapshot for another release identity")
+          expected_name = "BaronyModLoader-macos-universal2.zip"
+          matches = [asset for asset in snapshot.get("assets", []) if asset.get("name") == expected_name]
+          if len(matches) != 1:
+              raise SystemExit("snapshot must contain exactly one public macOS archive")
+          asset = matches[0]
+          if not isinstance(asset.get("id"), int) or asset.get("id") <= 0:
+              raise SystemExit("snapshot macOS asset ID is invalid")
+          if asset.get("name") != expected_name:
+              raise SystemExit("snapshot macOS asset name changed")
+          if not isinstance(asset.get("size"), int) or asset.get("size") < 0:
+              raise SystemExit("snapshot macOS asset size is invalid")
+          if re.fullmatch(r"[0-9a-f]{64}", str(asset.get("sha256"))) is None:
+              raise SystemExit("snapshot macOS asset SHA-256 is invalid")
+          url = asset.get("browserDownloadUrl")
+          if not isinstance(url, str) or urlparse(url).scheme != "https":
+              raise SystemExit("snapshotted macOS archive URL is not public HTTPS")
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "bml-public-macos"
+          shutil.rmtree(root, ignore_errors=True)
+          root.mkdir()
+          with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "bml-public-macos-verifier"}), timeout=300) as response:
+              if urlparse(response.geturl()).scheme != "https":
+                  raise SystemExit("public macOS asset redirect left HTTPS")
+              archive_bytes = response.read()
+          archive = root / expected_name
+          archive.write_bytes(archive_bytes)
+          if len(archive_bytes) != asset.get("size") or archive.stat().st_size != asset.get("size"):
+              raise SystemExit("public macOS archive size changed after the snapshot")
+          if hashlib.sha256(archive_bytes).hexdigest() != asset.get("sha256"):
+              raise SystemExit("public macOS archive SHA-256 changed after the snapshot")
+          base = {
+              "formatVersion": "1.0.0",
+              "evidenceKind": "PublicPlatformVerification",
+              "status": "verified",
+              "targetIds": ["macos-arm64", "macos-x86_64"],
+              "repository": snapshot["repository"],
+              "releaseTag": snapshot["releaseTag"],
+              "commitSha": snapshot["commitSha"],
+              "releaseId": release.get("id"),
+              "assetSnapshotSha256": snapshot_sha256,
+              "asset": asset,
+          }
+          Path("public-macos-verification-base.json").write_text(json.dumps(base, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as output:
+              output.write(f"PUBLIC_MACOS_ROOT={root}\n")
+      - name: Extract with native metadata preservation and verify Apple trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in BML_APPLE_ID BML_APPLE_TEAM_ID BML_APPLE_APP_PASSWORD; do test -n "${!value}" || exit 1; done
+          EXTRACTED="$PUBLIC_MACOS_ROOT/extracted"
+          rm -rf "$EXTRACTED"
+          mkdir -p "$EXTRACTED"
+          /usr/bin/ditto -x -k "$PUBLIC_MACOS_ROOT/BaronyModLoader-macos-universal2.zip" "$EXTRACTED"
+          APP="$EXTRACTED/BaronyModLoader.app"
+          codesign --verify --deep --strict --verbose=4 "$APP"
+          xcrun notarytool history --apple-id "$BML_APPLE_ID" --team-id "$BML_APPLE_TEAM_ID" --password "$BML_APPLE_APP_PASSWORD"
+          spctl --assess --type execute --verbose=4 "$APP"
+          xcrun stapler validate -v "$APP"
+      - id: macos-receipt
+        name: Seal the macOS public-byte receipt
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = json.loads(Path("public-macos-verification-base.json").read_text(encoding="utf-8"))
+          receipt["nativeChecks"] = {"codeSignature": "verified", "notarization": "verified", "stapling": "verified"}
+          receipt_path = Path("public-macos-verification.json")
+          receipt_bytes = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+          receipt_path.write_bytes(receipt_bytes)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"receipt-sha256={hashlib.sha256(receipt_bytes).hexdigest()}\n")
+      - name: Upload the canonical macOS native receipt
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: public-macos-verification
+          path: public-macos-verification.json
+          if-no-files-found: error
+
+  finalize-public-verification:
+    name: Seal one public download verification receipt
+    needs: [verify-public-release, verify-public-windows, verify-public-macos]
+    runs-on: [self-hosted, release-builder, linux, x86_64]
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      receipt-sha256: ${{ steps.final-receipt.outputs.receipt-sha256 }}
+    steps:
+      - name: Download the canonical public asset snapshot
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-asset-snapshot
+          path: public-verification-input/snapshot
+      - name: Download the Windows native receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-windows-verification
+          path: public-verification-input/windows
+      - name: Download the macOS native receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-macos-verification
+          path: public-verification-input/macos
+      - id: final-receipt
+        name: Write the canonical public verification receipt
+        shell: python
+        env:
+          EXPECTED_SNAPSHOT_SHA256: ${{ needs.verify-public-release.outputs.snapshot-sha256 }}
+          EXPECTED_WINDOWS_RECEIPT_SHA256: ${{ needs.verify-public-windows.outputs.receipt-sha256 }}
+          EXPECTED_MACOS_RECEIPT_SHA256: ${{ needs.verify-public-macos.outputs.receipt-sha256 }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_TAG: ${{ inputs.release_tag }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          def load_canonical(path, expected_sha256):
+              payload = path.read_bytes()
+              observed_sha256 = hashlib.sha256(payload).hexdigest()
+              if observed_sha256 != expected_sha256:
+                  raise SystemExit(f"public verification input digest mismatch: {path}")
+              document = json.loads(payload)
+              canonical = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+              if payload != canonical:
+                  raise SystemExit(f"public verification input is not canonical JSON: {path}")
+              return document, observed_sha256
+
+          snapshot, snapshot_sha256 = load_canonical(
+              Path("public-verification-input/snapshot/public-asset-snapshot.json"),
+              os.environ["EXPECTED_SNAPSHOT_SHA256"],
+          )
+          expected_identity = (
+              os.environ["EXPECTED_REPOSITORY"],
+              os.environ["EXPECTED_TAG"],
+              os.environ["EXPECTED_COMMIT"],
+          )
+          if (snapshot.get("repository"), snapshot.get("releaseTag"), snapshot.get("commitSha")) != expected_identity:
+              raise SystemExit("canonical public snapshot release identity changed")
+          if snapshot.get("status") != "verified" or not isinstance(snapshot.get("releaseId"), int):
+              raise SystemExit("canonical public snapshot is not verified")
+          assets = snapshot.get("assets")
+          if not isinstance(assets, list) or not assets:
+              raise SystemExit("canonical public snapshot has no exact assets")
+
+          windows, windows_sha256 = load_canonical(
+              Path("public-verification-input/windows/public-windows-verification.json"),
+              os.environ["EXPECTED_WINDOWS_RECEIPT_SHA256"],
+          )
+          macos, macos_sha256 = load_canonical(
+              Path("public-verification-input/macos/public-macos-verification.json"),
+              os.environ["EXPECTED_MACOS_RECEIPT_SHA256"],
+          )
+          expected_receipts = (
+              (windows, ["windows-x86_64"], {"authenticode": "verified", "timestamp": "verified"}),
+              (macos, ["macos-arm64", "macos-x86_64"], {"codeSignature": "verified", "notarization": "verified", "stapling": "verified"}),
+          )
+          for platform_receipt, target_ids, native_checks in expected_receipts:
+              if platform_receipt.get("status") != "verified":
+                  raise SystemExit("native public verification receipt is not verified")
+              if platform_receipt.get("targetIds") != target_ids or platform_receipt.get("nativeChecks") != native_checks:
+                  raise SystemExit("native public verification target or checks changed")
+              if (platform_receipt.get("repository"), platform_receipt.get("releaseTag"), platform_receipt.get("commitSha")) != expected_identity:
+                  raise SystemExit("native public verification release identity changed")
+              if platform_receipt.get("releaseId") != snapshot.get("releaseId"):
+                  raise SystemExit("native public verification release ID changed")
+              if platform_receipt.get("assetSnapshotSha256") != snapshot_sha256:
+                  raise SystemExit("native public verification snapshot digest changed")
+              if platform_receipt.get("asset") not in assets:
+                  raise SystemExit("native public verification asset identity is not in the canonical snapshot")
+
+          receipt = {
+              "formatVersion": "1.0.0",
+              "evidenceKind": "PublicDownloadVerification",
+              "status": "verified",
+              "repository": snapshot["repository"],
+              "releaseTag": snapshot["releaseTag"],
+              "commitSha": snapshot["commitSha"],
+              "releaseId": snapshot["releaseId"],
+              "assetCount": len(assets),
+              "assetSnapshotSha256": snapshot_sha256,
+              "assets": assets,
+              "platformReceipts": [
+                  {"targetIds": ["macos-arm64", "macos-x86_64"], "receiptSha256": macos_sha256},
+                  {"targetIds": ["windows-x86_64"], "receiptSha256": windows_sha256},
+              ],
+          }
+          receipt_path = Path("public-download-verification.json")
+          receipt_bytes = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+          receipt_path.write_bytes(receipt_bytes)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"receipt-sha256={hashlib.sha256(receipt_bytes).hexdigest()}\n")
+      - name: Upload the one typed public download verification receipt
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: public-download-verification
+          path: public-download-verification.json
+          if-no-files-found: error
+
+  withdraw-failed-public-release:
+    name: Withdraw the whole version after any unsafe publication or replay result
+    needs: [publish-release, verify-public-release, verify-public-windows, verify-public-macos, finalize-public-verification]
+    if: ${{ always() && needs.publish-release.outputs.created-release-id != '' && (cancelled() || failure() || needs.publish-release.result != 'success' || needs.verify-public-release.result != 'success' || needs.verify-public-windows.result != 'success' || needs.verify-public-macos.result != 'success' || needs.finalize-public-verification.result != 'success') }}
+    runs-on: [self-hosted, release-builder, linux, x86_64]
+    environment: release-publish
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Download the private whole-version recovery inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: workshop-publication-recovery
+          path: staged
+      - name: Reconstruct the portable whole-version recovery hierarchy
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil
+          import tarfile
+
+          recovery = Path("staged/workshop-public-v1-recovery")
+          shutil.rmtree(recovery, ignore_errors=True)
+          recovery.mkdir()
+          with tarfile.open("staged/workshop-public-v1-recovery.tar.gz", "r:gz") as archive:
+              archive.extractall(recovery, filter="data")
+      - name: Compensate Workshop and GitHub after any failed final replay
+        if: ${{ always() }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNED_RELEASE_ID: ${{ needs.publish-release.outputs.created-release-id }}
+          BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE }}
+          BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE: ${{ vars.BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE }}
+          BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE: ${{ vars.BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE }}
+        run: |
+          set -euo pipefail
+          test -n "$OWNED_RELEASE_ID" || exit 1
+          umask 077
+          authority_root="$RUNNER_TEMP/bml-workshop-authority-final-compensate"
+          rm -rf -- "$authority_root"
+          mkdir -m 0700 "$authority_root"
+          seal_command_file() {
+            local source="$1"
+            local destination="$2"
+            test -n "$source" && test -f "$source" && test ! -L "$source" || exit 1
+            install -m 0400 "$source" "$destination"
+            test "$(stat -c '%a' "$destination")" = 400 || exit 1
+          }
+          owned_release_id="$OWNED_RELEASE_ID"
+          bml_workshop_steam_build_command_file="$authority_root/steam-build"
+          bml_workshop_steam_details_command_file="$authority_root/steam-details"
+          bml_workshop_steam_download_command_file="$authority_root/steam-download"
+          bml_workshop_github_release_command_file="$authority_root/github-release"
+          seal_command_file "$BML_WORKSHOP_STEAM_BUILD_COMMAND_FILE" "$bml_workshop_steam_build_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DETAILS_COMMAND_FILE" "$bml_workshop_steam_details_command_file"
+          seal_command_file "$BML_WORKSHOP_STEAM_DOWNLOAD_COMMAND_FILE" "$bml_workshop_steam_download_command_file"
+          seal_command_file "$BML_WORKSHOP_GITHUB_RELEASE_COMMAND_FILE" "$bml_workshop_github_release_command_file"
+          python packaging/workshop_release.py compensate-public-v1 \
+            --candidate-plan staged/workshop-public-v1-recovery/workshop/workshop-publication-plan.json \
+            --rollback-kit staged/workshop-public-v1-recovery/workshop/workshop-rollback-kit.json \
+            --github-release-id "$owned_release_id" \
+            --steam-build-command-file "$bml_workshop_steam_build_command_file" \
+            --steam-details-command-file "$bml_workshop_steam_details_command_file" \
+            --steam-download-command-file "$bml_workshop_steam_download_command_file" \
+            --github-release-command-file "$bml_workshop_github_release_command_file"

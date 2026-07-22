@@ -1,0 +1,117 @@
+name: Build deterministic unsigned public-v1 candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_run_id:
+        description: Successful workflow run containing the digest-bound public-v1-unsigned-inputs artifact
+        required: true
+        type: string
+      source_date_epoch:
+        description: Decimal reproducibility epoch bound to the candidate manifest
+        required: true
+        default: "1704067200"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  assemble-unsigned-candidate:
+    name: Assemble and replay non-promotable four-target candidate
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_DATE_EPOCH: ${{ inputs.source_date_epoch }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+      - name: Require a decimal reproducibility epoch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] || { echo 'SOURCE_DATE_EPOCH must be decimal' >&2; exit 1; }
+      - name: Download exact digest-bound unsigned inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-unsigned-inputs
+          path: dist/unsigned-inputs
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.input_run_id }}
+      - name: Validate the explicit four-target input contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUTS=dist/unsigned-inputs/public-v1-unsigned-release-inputs.json
+          test -s "$INPUTS" || { echo 'unsigned input document is missing' >&2; exit 1; }
+          python - "$INPUTS" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          document = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          expected_targets = [
+              ("linux-x86_64", "linux", "x86_64", "reference"),
+              ("windows-x86_64", "windows", "x86_64", "unavailable"),
+              ("macos-x86_64", "macos", "x86_64", "unavailable"),
+              ("macos-arm64", "macos", "arm64", "unavailable"),
+          ]
+          actual_targets = [
+              (item.get("id"), item.get("os"), item.get("architecture"), item.get("availability"))
+              for item in document.get("targets", [])
+          ]
+          if actual_targets != expected_targets:
+              raise SystemExit("unsigned input target matrix is missing, extra, reordered, aliased, or overclaimed")
+          expected_packages = [("bml.stash", "1.0.0"), ("jml.runebound-elixirs-warrior", "1.0.0")]
+          actual_packages = [(item.get("id"), item.get("version")) for item in document.get("packages", [])]
+          if actual_packages != expected_packages:
+              raise SystemExit("unsigned input package set is missing, extra, reordered, or private-named")
+          PY
+      - name: Assemble deterministic unsigned candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_builder.py assemble \
+            --inputs dist/unsigned-inputs/public-v1-unsigned-release-inputs.json \
+            --output dist/BaronyModLoader-public-v1-unsigned \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+      - name: Replay manifest index checksums and macOS slice binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=dist/BaronyModLoader-public-v1-unsigned
+          python packaging/release_builder.py verify \
+            --root "$ROOT" \
+            --manifest "$ROOT/unsigned-release-build.json" \
+            --index "$ROOT/unsigned-release-index.json"
+          python - "$ROOT/unsigned-release-build.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if manifest.get("publicationAllowed") is not False or manifest.get("claims") != []:
+              raise SystemExit("unsigned candidate acquired a publication or proof claim")
+          forbidden = {"trust", "proof", "evidence", "signing", "notarization", "readiness", "gameplay"}
+          def keys(value):
+              if isinstance(value, dict):
+                  for key, child in value.items():
+                      yield key.casefold()
+                      yield from keys(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from keys(child)
+          present = sorted(forbidden.intersection(keys(manifest)))
+          if present:
+              raise SystemExit(f"unsigned candidate contains prohibited claim fields: {present}")
+          PY
+      - name: Upload only the verified unsigned candidate
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: BaronyModLoader-public-v1-unsigned
+          path: dist/BaronyModLoader-public-v1-unsigned
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,91 @@
+name: Materialize deterministic unsigned public-v1 inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      linux_x86_64_run_id:
+        description: Successful run containing public-v1-linux-x86_64-raw-input with runtime.bin, module.bin, and exact-manifest.json
+        required: true
+        type: string
+      windows_x86_64_run_id:
+        description: Successful run containing public-v1-windows-x86_64-raw-input with the unavailable target descriptor bytes
+        required: true
+        type: string
+      macos_x86_64_run_id:
+        description: Successful run containing public-v1-macos-x86_64-raw-input with the unavailable target descriptor bytes
+        required: true
+        type: string
+      macos_arm64_run_id:
+        description: Successful run containing public-v1-macos-arm64-raw-input with the unavailable target descriptor bytes
+        required: true
+        type: string
+      workshop_authority_run_id:
+        description: Protected run containing the detached public-v1-workshop-authority artifact
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  materialize-unsigned-inputs:
+    name: Bind canonical packages to raw target and Workshop authority inputs
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+      - name: Download Linux x86_64 raw target input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-linux-x86_64-raw-input
+          path: dist/raw-target-inputs/linux-x86_64
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.linux_x86_64_run_id }}
+      - name: Download Windows x86_64 unavailable target input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-windows-x86_64-raw-input
+          path: dist/raw-target-inputs/windows-x86_64
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.windows_x86_64_run_id }}
+      - name: Download macOS x86_64 unavailable target input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-macos-x86_64-raw-input
+          path: dist/raw-target-inputs/macos-x86_64
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.macos_x86_64_run_id }}
+      - name: Download macOS arm64 unavailable target input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-macos-arm64-raw-input
+          path: dist/raw-target-inputs/macos-arm64
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.macos_arm64_run_id }}
+      - name: Download protected detached Workshop authority
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: public-v1-workshop-authority
+          path: dist/protected-workshop-authority
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.workshop_authority_run_id }}
+      - name: Materialize the self-contained digest-bound input tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_builder.py materialize-inputs \
+            --target-input-root dist/raw-target-inputs \
+            --workshop-authority dist/protected-workshop-authority/workshop-authority.json \
+            --output dist/public-v1-unsigned-inputs
+          test -s dist/public-v1-unsigned-inputs/public-v1-unsigned-release-inputs.json
+      - name: Upload only the canonical unsigned input artifact
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: public-v1-unsigned-inputs
+          path: dist/public-v1-unsigned-inputs
+          if-no-files-found: error
+          retention-days: 14

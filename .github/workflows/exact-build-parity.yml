@@ -1,0 +1,542 @@
+name: Licensed exact-build parity
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable annotated tag to verify before any public-v1 publication
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  BML_EVIDENCE_MODE: licensed-exact-build
+  BML_RELEASE_TAG: ${{ inputs.release_tag }}
+
+jobs:
+  linux-x86_64:
+    name: Licensed Linux x86_64 exact target
+    runs-on: [self-hosted, licensed-barony, linux, x86_64]
+    environment: release-exact-build
+    env:
+      BML_EXACT_PARITY_DRIVER: ${{ vars.BML_LINUX_X86_64_EXACT_PARITY_DRIVER }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight licensed Linux runner and immutable annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$BML_EVIDENCE_MODE" = licensed-exact-build || exit 1
+          test "$GITHUB_REF_TYPE" = tag || exit 1
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG" || exit 1
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag || exit 1
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA" || exit 1
+          test -n "$BML_EXACT_PARITY_DRIVER" || exit 1
+          test -x "$BML_EXACT_PARITY_DRIVER" || exit 1
+      - name: Build the ordered public-v1 package inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/linux-x86_64/packages
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import zipfile
+
+          packages = (
+              (Path("mods/stash"), "bml.stash", "1.0.0"),
+              (Path("mods/runebound-elixirs"), "jml.runebound-elixirs-warrior", "1.0.0"),
+          )
+          output = Path("evidence/linux-x86_64/packages")
+          for source, package_id, version in packages:
+              manifest_path = source / "bml-package.json"
+              if not manifest_path.is_file():
+                  raise SystemExit(f"missing package manifest: {manifest_path}")
+              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+              if manifest.get("id") != package_id or manifest.get("version") != version:
+                  raise SystemExit(f"nonpublishable package identity: {source}")
+              destination = output / f"{package_id}-{version}.bmlpkg"
+              with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+                  for path in sorted(source.rglob("*")):
+                      if path.is_symlink():
+                          raise SystemExit(f"package contains symlink: {path}")
+                      if not path.is_file():
+                          continue
+                      info = zipfile.ZipInfo(path.relative_to(source).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+                      info.compress_type = zipfile.ZIP_DEFLATED
+                      info.external_attr = 0o100644 << 16
+                      archive.writestr(info, path.read_bytes(), compresslevel=9)
+              print(f"{hashlib.sha256(destination.read_bytes()).hexdigest()}  {destination}")
+          PY
+          test -s evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg || exit 1
+          test -s evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+      - name: Execute every real licensed Linux gate and target report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/linux-x86_64/gates
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-linux-x86_64 --gate semantic --output evidence/linux-x86_64/gates/semantic.json
+          test -s evidence/linux-x86_64/gates/semantic.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-linux-x86_64 --gate lua --output evidence/linux-x86_64/gates/lua.json
+          test -s evidence/linux-x86_64/gates/lua.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-linux-x86_64 --gate save --output evidence/linux-x86_64/gates/save.json
+          test -s evidence/linux-x86_64/gates/save.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-linux-x86_64 --gate network --output evidence/linux-x86_64/gates/network.json
+          test -s evidence/linux-x86_64/gates/network.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-linux-x86_64 --gate platform --output evidence/linux-x86_64/gates/platform.json
+          test -s evidence/linux-x86_64/gates/platform.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-linux-x86_64 --gate semantic --gate lua --gate save --gate network --gate platform --output evidence/linux-x86_64/exact-build.json --summary-output evidence/linux-x86_64/summary.json --report-output evidence/linux-x86_64/report.json
+          test -s evidence/linux-x86_64/exact-build.json || exit 1
+          test -s evidence/linux-x86_64/summary.json || exit 1
+          test -s evidence/linux-x86_64/report.json || exit 1
+      - name: Aggregate schema-validate and hash Linux exact evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_evidence.py aggregate-gates --os linux --architecture x86_64 --gate semantic:evidence/linux-x86_64/gates/semantic.json --gate lua:evidence/linux-x86_64/gates/lua.json --gate save:evidence/linux-x86_64/gates/save.json --gate network:evidence/linux-x86_64/gates/network.json --gate platform:evidence/linux-x86_64/gates/platform.json --output evidence/linux-x86_64/parity-gates.json --exact-build evidence/linux-x86_64/exact-build.json --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --release-tag "$BML_RELEASE_TAG" --package bml.stash:evidence/linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+          PYTHONPATH=framework/BaronyModLoader/app python - <<'PY'
+          import json
+          from pathlib import Path
+          from bml.services.schema_service import validate_public_document
+
+          path = Path("evidence/linux-x86_64/exact-build.json")
+          document = json.load(path.open(encoding="utf-8"))
+          result = validate_public_document("platform-runtime-evidence", document)
+          if not result.valid:
+              raise SystemExit("platform-runtime-evidence schema rejected exact-build.json")
+          if document["os"] != "linux" or document["architecture"] != "x86_64":
+              raise SystemExit("exact-build target identity mismatch")
+          for section in ("runtime", "game", "adapter", "trust"):
+              if section not in document:
+                  raise SystemExit(f"missing exact-build content: {section}")
+          if document["runtime"].get("artifactSha256") is None or document["adapter"].get("artifactSha256") is None:
+              raise SystemExit("missing artifactSha256 content identity")
+          if document["game"].get("executableSha256") is None or document["trust"].get("status") != "verified":
+              raise SystemExit("missing executableSha256 or verified trust identity")
+          PY
+          python packaging/release_evidence.py validate-exact --input evidence/linux-x86_64/exact-build.json --os linux --architecture x86_64 --digest-output evidence/linux-x86_64/exact-build.json.sha256 || exit 1
+          sha256sum --check evidence/linux-x86_64/exact-build.json.sha256 || exit 1
+      - name: Upload verified Linux gate artifacts and exact target graph
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: exact-build-linux-x86_64
+          path: evidence/linux-x86_64
+          if-no-files-found: error
+
+  windows-x86_64:
+    name: Licensed Windows x86_64 exact target
+    runs-on: [self-hosted, licensed-barony, windows, x86_64]
+    environment: release-exact-build
+    env:
+      BML_EXACT_PARITY_DRIVER: ${{ vars.BML_WINDOWS_X86_64_EXACT_PARITY_DRIVER }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight licensed Windows runner and immutable annotated tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:BML_EVIDENCE_MODE -ne 'licensed-exact-build') { throw 'wrong evidence mode' }
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -ne $env:BML_RELEASE_TAG) { throw 'wrong release ref' }
+          if ((git cat-file -t "refs/tags/$env:BML_RELEASE_TAG") -ne 'tag') { throw 'release ref is not annotated' }
+          if ((git rev-parse "$env:BML_RELEASE_TAG^{}") -ne $env:GITHUB_SHA) { throw 'release commit mismatch' }
+          if (-not $env:BML_EXACT_PARITY_DRIVER -or -not (Test-Path -LiteralPath $env:BML_EXACT_PARITY_DRIVER -PathType Leaf)) { throw 'exact runner is unavailable' }
+      - name: Build the ordered public-v1 package inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force evidence/windows-x86_64/packages | Out-Null
+          @'
+          import hashlib
+          import json
+          from pathlib import Path
+          import zipfile
+          packages = ((Path("mods/stash"), "bml.stash", "1.0.0"), (Path("mods/runebound-elixirs"), "jml.runebound-elixirs-warrior", "1.0.0"))
+          output = Path("evidence/windows-x86_64/packages")
+          for source, package_id, version in packages:
+              manifest = json.loads((source / "bml-package.json").read_text(encoding="utf-8"))
+              if manifest.get("id") != package_id or manifest.get("version") != version:
+                  raise SystemExit(f"nonpublishable package identity: {source}")
+              destination = output / f"{package_id}-{version}.bmlpkg"
+              with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+                  for path in sorted(source.rglob("*")):
+                      if path.is_symlink(): raise SystemExit(f"package contains symlink: {path}")
+                      if not path.is_file(): continue
+                      info = zipfile.ZipInfo(path.relative_to(source).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+                      info.compress_type = zipfile.ZIP_DEFLATED; info.external_attr = 0o100644 << 16
+                      archive.writestr(info, path.read_bytes(), compresslevel=9)
+              print(f"{hashlib.sha256(destination.read_bytes()).hexdigest()}  {destination}")
+          '@ | python -
+          foreach ($package in @('evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg', 'evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg')) { if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw "missing package: $package" } }
+      - name: Execute every real licensed Windows gate and target report
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force evidence/windows-x86_64/gates | Out-Null
+          & $env:BML_EXACT_PARITY_DRIVER --package evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-windows-x86_64 --gate semantic --output evidence/windows-x86_64/gates/semantic.json
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path evidence/windows-x86_64/gates/semantic.json -PathType Leaf)) { throw 'semantic gate did not emit evidence' }
+          & $env:BML_EXACT_PARITY_DRIVER --package evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-windows-x86_64 --gate lua --output evidence/windows-x86_64/gates/lua.json
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path evidence/windows-x86_64/gates/lua.json -PathType Leaf)) { throw 'lua gate did not emit evidence' }
+          & $env:BML_EXACT_PARITY_DRIVER --package evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-windows-x86_64 --gate save --output evidence/windows-x86_64/gates/save.json
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path evidence/windows-x86_64/gates/save.json -PathType Leaf)) { throw 'save gate did not emit evidence' }
+          & $env:BML_EXACT_PARITY_DRIVER --package evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-windows-x86_64 --gate network --output evidence/windows-x86_64/gates/network.json
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path evidence/windows-x86_64/gates/network.json -PathType Leaf)) { throw 'network gate did not emit evidence' }
+          & $env:BML_EXACT_PARITY_DRIVER --package evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-windows-x86_64 --gate platform --output evidence/windows-x86_64/gates/platform.json
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path evidence/windows-x86_64/gates/platform.json -PathType Leaf)) { throw 'platform gate did not emit evidence' }
+          & $env:BML_EXACT_PARITY_DRIVER --package evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-windows-x86_64 --gate semantic --gate lua --gate save --gate network --gate platform --output evidence/windows-x86_64/exact-build.json --summary-output evidence/windows-x86_64/summary.json --report-output evidence/windows-x86_64/report.json
+          if ($LASTEXITCODE -ne 0) { throw 'exact target driver failed' }
+          foreach ($output in @('evidence/windows-x86_64/exact-build.json', 'evidence/windows-x86_64/summary.json', 'evidence/windows-x86_64/report.json')) { if (-not (Test-Path -LiteralPath $output -PathType Leaf)) { throw "missing driver output: $output" } }
+      - name: Aggregate schema-validate and hash Windows exact evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python packaging/release_evidence.py aggregate-gates --os windows --architecture x86_64 --gate semantic:evidence/windows-x86_64/gates/semantic.json --gate lua:evidence/windows-x86_64/gates/lua.json --gate save:evidence/windows-x86_64/gates/save.json --gate network:evidence/windows-x86_64/gates/network.json --gate platform:evidence/windows-x86_64/gates/platform.json --output evidence/windows-x86_64/parity-gates.json --exact-build evidence/windows-x86_64/exact-build.json --repository $env:GITHUB_REPOSITORY --commit-sha $env:GITHUB_SHA --release-tag $env:BML_RELEASE_TAG --package bml.stash:evidence/windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg
+          if ($LASTEXITCODE -ne 0) { throw 'aggregate-gates rejected Windows evidence' }
+          $env:PYTHONPATH = 'framework/BaronyModLoader/app'
+          @'
+          import json
+          from pathlib import Path
+          from bml.services.schema_service import validate_public_document
+          path = Path("evidence/windows-x86_64/exact-build.json")
+          document = json.load(path.open(encoding="utf-8"))
+          result = validate_public_document("platform-runtime-evidence", document)
+          if not result.valid: raise SystemExit("platform-runtime-evidence schema rejected exact-build.json")
+          if document["os"] != "windows" or document["architecture"] != "x86_64": raise SystemExit("exact-build target identity mismatch")
+          for section in ("runtime", "game", "adapter", "trust"):
+              if section not in document: raise SystemExit(f"missing exact-build content: {section}")
+          if document["runtime"].get("artifactSha256") is None or document["adapter"].get("artifactSha256") is None: raise SystemExit("missing artifactSha256 content identity")
+          if document["game"].get("executableSha256") is None or document["trust"].get("status") != "verified": raise SystemExit("missing executableSha256 or verified trust identity")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'public schema validation failed' }
+          python packaging/release_evidence.py validate-exact --input evidence/windows-x86_64/exact-build.json --os windows --architecture x86_64 --digest-output evidence/windows-x86_64/exact-build.json.sha256
+          if ($LASTEXITCODE -ne 0) { throw 'exact evidence validation failed' }
+          $digest = (Get-FileHash -Algorithm SHA256 evidence/windows-x86_64/exact-build.json).Hash.ToLowerInvariant()
+          if ((Get-Content evidence/windows-x86_64/exact-build.json.sha256 -Raw).Trim() -ne "$digest  exact-build.json") { throw 'exact evidence digest sidecar mismatch' }
+          python packaging/release_evidence.py probe-target-readiness --exact-input evidence/windows-x86_64/exact-build.json --release-root evidence/windows-x86_64 --os windows --architecture x86_64 --output evidence/windows-x86_64/target-readiness.json
+          if ($LASTEXITCODE -ne 0) { throw 'Windows target readiness probe rejected the adapter' }
+      - name: Upload verified Windows gate artifacts and exact target graph
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: exact-build-windows-x86_64
+          path: evidence/windows-x86_64
+          if-no-files-found: error
+
+  macos-x86_64:
+    name: Licensed macOS x86_64 exact target
+    runs-on: [self-hosted, licensed-barony, macos, x86_64]
+    environment: release-exact-build
+    env:
+      BML_EXACT_PARITY_DRIVER: ${{ vars.BML_MACOS_X86_64_EXACT_PARITY_DRIVER }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight licensed macOS x86_64 runner and immutable annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$BML_EVIDENCE_MODE" = licensed-exact-build || exit 1
+          test "$GITHUB_REF_TYPE" = tag || exit 1
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG" || exit 1
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag || exit 1
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA" || exit 1
+          test -n "$BML_EXACT_PARITY_DRIVER" || exit 1
+          test -x "$BML_EXACT_PARITY_DRIVER" || exit 1
+      - name: Build the ordered public-v1 package inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/macos-x86_64/packages
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import zipfile
+          packages = ((Path("mods/stash"), "bml.stash", "1.0.0"), (Path("mods/runebound-elixirs"), "jml.runebound-elixirs-warrior", "1.0.0"))
+          output = Path("evidence/macos-x86_64/packages")
+          for source, package_id, version in packages:
+              manifest = json.loads((source / "bml-package.json").read_text(encoding="utf-8"))
+              if manifest.get("id") != package_id or manifest.get("version") != version: raise SystemExit(f"nonpublishable package identity: {source}")
+              destination = output / f"{package_id}-{version}.bmlpkg"
+              with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+                  for path in sorted(source.rglob("*")):
+                      if path.is_symlink(): raise SystemExit(f"package contains symlink: {path}")
+                      if not path.is_file(): continue
+                      info = zipfile.ZipInfo(path.relative_to(source).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+                      info.compress_type = zipfile.ZIP_DEFLATED; info.external_attr = 0o100644 << 16
+                      archive.writestr(info, path.read_bytes(), compresslevel=9)
+              print(f"{hashlib.sha256(destination.read_bytes()).hexdigest()}  {destination}")
+          PY
+          test -s evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg || exit 1
+          test -s evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+      - name: Execute every real licensed macOS x86_64 gate and target report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/macos-x86_64/gates
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-x86_64 --gate semantic --output evidence/macos-x86_64/gates/semantic.json
+          test -s evidence/macos-x86_64/gates/semantic.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-x86_64 --gate lua --output evidence/macos-x86_64/gates/lua.json
+          test -s evidence/macos-x86_64/gates/lua.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-x86_64 --gate save --output evidence/macos-x86_64/gates/save.json
+          test -s evidence/macos-x86_64/gates/save.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-x86_64 --gate network --output evidence/macos-x86_64/gates/network.json
+          test -s evidence/macos-x86_64/gates/network.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-x86_64 --gate platform --output evidence/macos-x86_64/gates/platform.json
+          test -s evidence/macos-x86_64/gates/platform.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-x86_64 --gate semantic --gate lua --gate save --gate network --gate platform --output evidence/macos-x86_64/exact-build.json --summary-output evidence/macos-x86_64/summary.json --report-output evidence/macos-x86_64/report.json
+          test -s evidence/macos-x86_64/exact-build.json || exit 1
+          test -s evidence/macos-x86_64/summary.json || exit 1
+          test -s evidence/macos-x86_64/report.json || exit 1
+      - name: Aggregate schema-validate and hash macOS x86_64 exact evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_evidence.py aggregate-gates --os macos --architecture x86_64 --gate semantic:evidence/macos-x86_64/gates/semantic.json --gate lua:evidence/macos-x86_64/gates/lua.json --gate save:evidence/macos-x86_64/gates/save.json --gate network:evidence/macos-x86_64/gates/network.json --gate platform:evidence/macos-x86_64/gates/platform.json --output evidence/macos-x86_64/parity-gates.json --exact-build evidence/macos-x86_64/exact-build.json --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --release-tag "$BML_RELEASE_TAG" --package bml.stash:evidence/macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+          PYTHONPATH=framework/BaronyModLoader/app python - <<'PY'
+          import json
+          from pathlib import Path
+          from bml.services.schema_service import validate_public_document
+          path = Path("evidence/macos-x86_64/exact-build.json")
+          document = json.load(path.open(encoding="utf-8"))
+          result = validate_public_document("platform-runtime-evidence", document)
+          if not result.valid: raise SystemExit("platform-runtime-evidence schema rejected exact-build.json")
+          if document["os"] != "macos" or document["architecture"] != "x86_64": raise SystemExit("exact-build target identity mismatch")
+          for section in ("runtime", "game", "adapter", "trust"):
+              if section not in document: raise SystemExit(f"missing exact-build content: {section}")
+          if document["runtime"].get("artifactSha256") is None or document["adapter"].get("artifactSha256") is None: raise SystemExit("missing artifactSha256 content identity")
+          if document["game"].get("executableSha256") is None or document["trust"].get("status") != "verified": raise SystemExit("missing executableSha256 or verified trust identity")
+          PY
+          python packaging/release_evidence.py validate-exact --input evidence/macos-x86_64/exact-build.json --os macos --architecture x86_64 --digest-output evidence/macos-x86_64/exact-build.json.sha256 || exit 1
+          shasum -a 256 -c evidence/macos-x86_64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py probe-target-readiness --exact-input evidence/macos-x86_64/exact-build.json --release-root evidence/macos-x86_64 --os macos --architecture x86_64 --output evidence/macos-x86_64/target-readiness.json || exit 1
+      - name: Upload verified macOS x86_64 gate artifacts and exact target graph
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: exact-build-macos-x86_64
+          path: evidence/macos-x86_64
+          if-no-files-found: error
+
+  macos-arm64:
+    name: Licensed macOS arm64 exact target
+    runs-on: [self-hosted, licensed-barony, macos, arm64]
+    environment: release-exact-build
+    env:
+      BML_EXACT_PARITY_DRIVER: ${{ vars.BML_MACOS_ARM64_EXACT_PARITY_DRIVER }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight licensed macOS arm64 runner and immutable annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$BML_EVIDENCE_MODE" = licensed-exact-build || exit 1
+          test "$GITHUB_REF_TYPE" = tag || exit 1
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG" || exit 1
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag || exit 1
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA" || exit 1
+          test -n "$BML_EXACT_PARITY_DRIVER" || exit 1
+          test -x "$BML_EXACT_PARITY_DRIVER" || exit 1
+      - name: Build the ordered public-v1 package inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/macos-arm64/packages
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import zipfile
+          packages = ((Path("mods/stash"), "bml.stash", "1.0.0"), (Path("mods/runebound-elixirs"), "jml.runebound-elixirs-warrior", "1.0.0"))
+          output = Path("evidence/macos-arm64/packages")
+          for source, package_id, version in packages:
+              manifest = json.loads((source / "bml-package.json").read_text(encoding="utf-8"))
+              if manifest.get("id") != package_id or manifest.get("version") != version: raise SystemExit(f"nonpublishable package identity: {source}")
+              destination = output / f"{package_id}-{version}.bmlpkg"
+              with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+                  for path in sorted(source.rglob("*")):
+                      if path.is_symlink(): raise SystemExit(f"package contains symlink: {path}")
+                      if not path.is_file(): continue
+                      info = zipfile.ZipInfo(path.relative_to(source).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+                      info.compress_type = zipfile.ZIP_DEFLATED; info.external_attr = 0o100644 << 16
+                      archive.writestr(info, path.read_bytes(), compresslevel=9)
+              print(f"{hashlib.sha256(destination.read_bytes()).hexdigest()}  {destination}")
+          PY
+          test -s evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg || exit 1
+          test -s evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+      - name: Execute every real licensed macOS arm64 gate and target report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/macos-arm64/gates
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-arm64 --gate semantic --output evidence/macos-arm64/gates/semantic.json
+          test -s evidence/macos-arm64/gates/semantic.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-arm64 --gate lua --output evidence/macos-arm64/gates/lua.json
+          test -s evidence/macos-arm64/gates/lua.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-arm64 --gate save --output evidence/macos-arm64/gates/save.json
+          test -s evidence/macos-arm64/gates/save.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-arm64 --gate network --output evidence/macos-arm64/gates/network.json
+          test -s evidence/macos-arm64/gates/network.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-arm64 --gate platform --output evidence/macos-arm64/gates/platform.json
+          test -s evidence/macos-arm64/gates/platform.json || exit 1
+          "$BML_EXACT_PARITY_DRIVER" --package evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg --scenario platform-local-macos-arm64 --gate semantic --gate lua --gate save --gate network --gate platform --output evidence/macos-arm64/exact-build.json --summary-output evidence/macos-arm64/summary.json --report-output evidence/macos-arm64/report.json
+          test -s evidence/macos-arm64/exact-build.json || exit 1
+          test -s evidence/macos-arm64/summary.json || exit 1
+          test -s evidence/macos-arm64/report.json || exit 1
+      - name: Aggregate schema-validate and hash macOS arm64 exact evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_evidence.py aggregate-gates --os macos --architecture arm64 --gate semantic:evidence/macos-arm64/gates/semantic.json --gate lua:evidence/macos-arm64/gates/lua.json --gate save:evidence/macos-arm64/gates/save.json --gate network:evidence/macos-arm64/gates/network.json --gate platform:evidence/macos-arm64/gates/platform.json --output evidence/macos-arm64/parity-gates.json --exact-build evidence/macos-arm64/exact-build.json --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --release-tag "$BML_RELEASE_TAG" --package bml.stash:evidence/macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+          PYTHONPATH=framework/BaronyModLoader/app python - <<'PY'
+          import json
+          from pathlib import Path
+          from bml.services.schema_service import validate_public_document
+          # The public job identity is macos-arm64; the public schema emits macos/arm64.
+          path = Path("evidence/macos-arm64/exact-build.json")
+          document = json.load(path.open(encoding="utf-8"))
+          result = validate_public_document("platform-runtime-evidence", document)
+          if not result.valid: raise SystemExit("platform-runtime-evidence schema rejected exact-build.json")
+          if document["os"] != "macos" or document["architecture"] != "arm64": raise SystemExit("exact-build target identity mismatch")
+          for section in ("runtime", "game", "adapter", "trust"):
+              if section not in document: raise SystemExit(f"missing exact-build content: {section}")
+          if document["runtime"].get("artifactSha256") is None or document["adapter"].get("artifactSha256") is None: raise SystemExit("missing artifactSha256 content identity")
+          if document["game"].get("executableSha256") is None or document["trust"].get("status") != "verified": raise SystemExit("missing executableSha256 or verified trust identity")
+          PY
+          python packaging/release_evidence.py validate-exact --input evidence/macos-arm64/exact-build.json --os macos --architecture arm64 --digest-output evidence/macos-arm64/exact-build.json.sha256 || exit 1
+          shasum -a 256 -c evidence/macos-arm64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py probe-target-readiness --exact-input evidence/macos-arm64/exact-build.json --release-root evidence/macos-arm64 --os macos --architecture arm64 --output evidence/macos-arm64/target-readiness.json || exit 1
+      - name: Upload verified macOS arm64 gate artifacts and exact target graph
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: exact-build-macos-arm64
+          path: evidence/macos-arm64
+          if-no-files-found: error
+
+  public-v1-scenarios:
+    name: Verify every real public-v1 host client and save scenario
+    needs: [linux-x86_64, windows-x86_64, macos-x86_64, macos-arm64]
+    runs-on: [self-hosted, licensed-barony, linux, x86_64]
+    environment: release-exact-build
+    env:
+      BML_PUBLIC_V1_SCENARIO_DRIVER: ${{ vars.BML_PUBLIC_V1_SCENARIO_DRIVER }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Preflight real scenario host against immutable annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$BML_EVIDENCE_MODE" = licensed-exact-build || exit 1
+          test "$GITHUB_REF_TYPE" = tag || exit 1
+          test "$GITHUB_REF_NAME" = "$BML_RELEASE_TAG" || exit 1
+          test "$(git cat-file -t "refs/tags/$BML_RELEASE_TAG")" = tag || exit 1
+          test "$(git rev-parse "$BML_RELEASE_TAG^{}")" = "$GITHUB_SHA" || exit 1
+          test -n "$BML_PUBLIC_V1_SCENARIO_DRIVER" || exit 1
+          test -x "$BML_PUBLIC_V1_SCENARIO_DRIVER" || exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: exact-build-*
+          path: evidence/targets
+      - name: Verify downloaded real gate artifacts before scenario execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s evidence/targets/exact-build-linux-x86_64/gates/semantic.json || exit 1
+          test -s evidence/targets/exact-build-linux-x86_64/gates/lua.json || exit 1
+          test -s evidence/targets/exact-build-linux-x86_64/gates/save.json || exit 1
+          test -s evidence/targets/exact-build-linux-x86_64/gates/network.json || exit 1
+          test -s evidence/targets/exact-build-linux-x86_64/gates/platform.json || exit 1
+          test -s evidence/targets/exact-build-windows-x86_64/gates/semantic.json || exit 1
+          test -s evidence/targets/exact-build-windows-x86_64/gates/lua.json || exit 1
+          test -s evidence/targets/exact-build-windows-x86_64/gates/save.json || exit 1
+          test -s evidence/targets/exact-build-windows-x86_64/gates/network.json || exit 1
+          test -s evidence/targets/exact-build-windows-x86_64/gates/platform.json || exit 1
+          test -s evidence/targets/exact-build-macos-x86_64/gates/semantic.json || exit 1
+          test -s evidence/targets/exact-build-macos-x86_64/gates/lua.json || exit 1
+          test -s evidence/targets/exact-build-macos-x86_64/gates/save.json || exit 1
+          test -s evidence/targets/exact-build-macos-x86_64/gates/network.json || exit 1
+          test -s evidence/targets/exact-build-macos-x86_64/gates/platform.json || exit 1
+          test -s evidence/targets/exact-build-macos-arm64/gates/semantic.json || exit 1
+          test -s evidence/targets/exact-build-macos-arm64/gates/lua.json || exit 1
+          test -s evidence/targets/exact-build-macos-arm64/gates/save.json || exit 1
+          test -s evidence/targets/exact-build-macos-arm64/gates/network.json || exit 1
+          test -s evidence/targets/exact-build-macos-arm64/gates/platform.json || exit 1
+          for target in exact-build-linux-x86_64 exact-build-windows-x86_64 exact-build-macos-x86_64 exact-build-macos-arm64; do
+            test -s "evidence/targets/$target/exact-build.json" || exit 1
+            test -s "evidence/targets/$target/exact-build.json.sha256" || exit 1
+          done
+      - name: Execute same-target all directed host-client and unordered save-handoff scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/public-v1/scenarios
+          for scenario in \
+            platform-local-linux-x86_64 \
+            platform-local-windows-x86_64 \
+            platform-local-macos-x86_64 \
+            platform-local-macos-arm64 \
+            host-linux-x86_64-client-windows-x86_64 \
+            host-linux-x86_64-client-macos-x86_64 \
+            host-linux-x86_64-client-macos-arm64 \
+            host-windows-x86_64-client-linux-x86_64 \
+            host-windows-x86_64-client-macos-x86_64 \
+            host-windows-x86_64-client-macos-arm64 \
+            host-macos-x86_64-client-linux-x86_64 \
+            host-macos-x86_64-client-windows-x86_64 \
+            host-macos-x86_64-client-macos-arm64 \
+            host-macos-arm64-client-linux-x86_64 \
+            host-macos-arm64-client-windows-x86_64 \
+            host-macos-arm64-client-macos-x86_64 \
+            save-linux-x86_64-to-windows-x86_64 \
+            save-linux-x86_64-to-macos-x86_64 \
+            save-linux-x86_64-to-macos-arm64 \
+            save-windows-x86_64-to-macos-x86_64 \
+            save-windows-x86_64-to-macos-arm64 \
+            save-macos-x86_64-to-macos-arm64; do
+            "$BML_PUBLIC_V1_SCENARIO_DRIVER" --scenario "$scenario" --target-evidence evidence/targets --output "evidence/public-v1/scenarios/$scenario.json"
+            test -s "evidence/public-v1/scenarios/$scenario.json" || exit 1
+            sha256sum "evidence/public-v1/scenarios/$scenario.json" > "evidence/public-v1/scenarios/$scenario.json.sha256"
+            sha256sum --check "evidence/public-v1/scenarios/$scenario.json.sha256" || exit 1
+          done
+      - name: Reaggregate every downloaded real target gate graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_evidence.py aggregate-gates --os linux --architecture x86_64 --gate semantic:evidence/targets/exact-build-linux-x86_64/gates/semantic.json --gate lua:evidence/targets/exact-build-linux-x86_64/gates/lua.json --gate save:evidence/targets/exact-build-linux-x86_64/gates/save.json --gate network:evidence/targets/exact-build-linux-x86_64/gates/network.json --gate platform:evidence/targets/exact-build-linux-x86_64/gates/platform.json --output evidence/targets/exact-build-linux-x86_64/parity-gates.json --exact-build evidence/targets/exact-build-linux-x86_64/exact-build.json --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --release-tag "$BML_RELEASE_TAG" --package bml.stash:evidence/targets/exact-build-linux-x86_64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/targets/exact-build-linux-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+          python packaging/release_evidence.py aggregate-gates --os windows --architecture x86_64 --gate semantic:evidence/targets/exact-build-windows-x86_64/gates/semantic.json --gate lua:evidence/targets/exact-build-windows-x86_64/gates/lua.json --gate save:evidence/targets/exact-build-windows-x86_64/gates/save.json --gate network:evidence/targets/exact-build-windows-x86_64/gates/network.json --gate platform:evidence/targets/exact-build-windows-x86_64/gates/platform.json --output evidence/targets/exact-build-windows-x86_64/parity-gates.json --exact-build evidence/targets/exact-build-windows-x86_64/exact-build.json --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --release-tag "$BML_RELEASE_TAG" --package bml.stash:evidence/targets/exact-build-windows-x86_64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/targets/exact-build-windows-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+          python packaging/release_evidence.py aggregate-gates --os macos --architecture x86_64 --gate semantic:evidence/targets/exact-build-macos-x86_64/gates/semantic.json --gate lua:evidence/targets/exact-build-macos-x86_64/gates/lua.json --gate save:evidence/targets/exact-build-macos-x86_64/gates/save.json --gate network:evidence/targets/exact-build-macos-x86_64/gates/network.json --gate platform:evidence/targets/exact-build-macos-x86_64/gates/platform.json --output evidence/targets/exact-build-macos-x86_64/parity-gates.json --exact-build evidence/targets/exact-build-macos-x86_64/exact-build.json --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --release-tag "$BML_RELEASE_TAG" --package bml.stash:evidence/targets/exact-build-macos-x86_64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/targets/exact-build-macos-x86_64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+          python packaging/release_evidence.py aggregate-gates --os macos --architecture arm64 --gate semantic:evidence/targets/exact-build-macos-arm64/gates/semantic.json --gate lua:evidence/targets/exact-build-macos-arm64/gates/lua.json --gate save:evidence/targets/exact-build-macos-arm64/gates/save.json --gate network:evidence/targets/exact-build-macos-arm64/gates/network.json --gate platform:evidence/targets/exact-build-macos-arm64/gates/platform.json --output evidence/targets/exact-build-macos-arm64/parity-gates.json --exact-build evidence/targets/exact-build-macos-arm64/exact-build.json --repository "$GITHUB_REPOSITORY" --commit-sha "$GITHUB_SHA" --release-tag "$BML_RELEASE_TAG" --package bml.stash:evidence/targets/exact-build-macos-arm64/packages/bml.stash-1.0.0.bmlpkg --package jml.runebound-elixirs-warrior:evidence/targets/exact-build-macos-arm64/packages/jml.runebound-elixirs-warrior-1.0.0.bmlpkg || exit 1
+      - name: Revalidate every hash-bound downloaded target graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          python packaging/release_evidence.py validate-exact --input evidence/targets/exact-build-linux-x86_64/exact-build.json --os linux --architecture x86_64 --digest-output evidence/targets/exact-build-linux-x86_64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py validate-exact --input evidence/targets/exact-build-windows-x86_64/exact-build.json --os windows --architecture x86_64 --digest-output evidence/targets/exact-build-windows-x86_64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py validate-exact --input evidence/targets/exact-build-macos-x86_64/exact-build.json --os macos --architecture x86_64 --digest-output evidence/targets/exact-build-macos-x86_64/exact-build.json.sha256 || exit 1
+          python packaging/release_evidence.py validate-exact --input evidence/targets/exact-build-macos-arm64/exact-build.json --os macos --architecture arm64 --digest-output evidence/targets/exact-build-macos-arm64/exact-build.json.sha256 || exit 1
+          find evidence/targets -name exact-build.json.sha256 -print0 | xargs -0 -r sha256sum --check
+      - name: Upload hash-bound public-v1 scenario evidence
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: public-v1-scenario-evidence
+          path: evidence/public-v1/scenarios
+          if-no-files-found: error
