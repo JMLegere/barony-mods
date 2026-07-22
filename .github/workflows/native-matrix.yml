@@ -20,11 +20,11 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
-            test: framework.BaronyModLoader.tests.test_linux_exact_adapter
+            test: tests/test_linux_exact_adapter.py
           - runner: windows-2025
-            test: framework.BaronyModLoader.tests.test_windows_adapter
+            test: tests/test_windows_adapter.py
           - runner: macos-15
-            test: framework.BaronyModLoader.tests.test_macos_exact_adapter
+            test: tests/test_macos_exact_adapter.py
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
@@ -34,4 +34,5 @@ jobs:
         with:
           python-version: "3.11"
       - name: Run fixture-backed adapter contract
-        run: python -m unittest ${{ matrix.test }}
+        working-directory: framework/BaronyModLoader
+        run: python ${{ matrix.test }}

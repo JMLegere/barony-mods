@@ -25,6 +25,8 @@ jobs:
         with:
           python-version: "3.11"
       - name: Validate public fixture schemas
-        run: python -m unittest framework.BaronyModLoader.tests.test_public_schemas
+        working-directory: framework/BaronyModLoader
+        run: python tests/test_public_schemas.py
       - name: Exercise application fixture contracts
-        run: python -m unittest framework.BaronyModLoader.tests.test_release_packaging
+        working-directory: framework/BaronyModLoader
+        run: python tests/test_release_packaging.py
